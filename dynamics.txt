@@ -1,0 +1,88 @@
+
+Dependencies:
+
+app = pA (A = container)
+    +-pB (in used dict of pA, B = container)
+      +-pC (in used dict of pB)
+      +-pStr1 (in used dict of pB)
+    +-pD (in used dict of pA)
+      +-pC (in used dict of pD)
+      +-pStr1 (in used dict of pD)
+
+pA: refcnt=1, Parent=NULL
+pB: refcnt=1, Parent=A
+pC: refcnt=2, Parent=B
+pD: refcnt=1, Parent=A
+pStr1: refcnt=2 (Python String)
+
+*** First, a MUI rules says:
+    an object can be contained (Child) of one and only one container object.
+    => MUIA_Parent can have only one value at any time.
+***
+
+DCB = DisposeCallback
+
+1) Disposing by a (MUI_)DisposeObject:
+
+DisposeObject(A)
+    +-> A_SubDispose(A) (because A is a container)
+        +-> DisposeObject(B)
+            +-> B_SubDispose(B) (because B is a container)
+                +-> DisposeObject(C)
+                    +-> myDispose(C)
+                        +-> DCB(C, pC)
+                            +-> Remove the reference of C in pC, pC stays alive but without address
+                        +-> ROOT DISPOSE(C): C is invalid now
+                +-> myDispose(B)
+                    +-> DCB(B, pB)
+                        +-> Remove the reference of B in pB, pB stays alive but without address
+                        +-> DecRef of pC (refcnt = 1, stay alive)
+                        +-> DecRef of pStr1 (refcnt = 1, stay alive)
+                    +-> ROOT DISPOSE(B): B is invalid now
+        +-> DisposeObject(D)
+            +-> myDispose(D)
+                +-> DCB(D, pD)
+                    +-> Remove the reference of D in pD, pD stays alive but without address
+                    +-> DecRef of pC (refcnt = 0, pC is deallocated, no object associated so no Disposing to do)
+                    +-> DecRef of pStr1 (refcnt = 0, pStr1 is deallocated)
+                +-> ROOT DISPOSE(D): D is invalid now
+        +-> myDispose(A)
+            +-> DCB(A, pA)
+                +-> Remove the reference of A in pA, pA stays alive but without address
+                +-> DecRef of pB (recnt = 0, pC is deallocated, no object associated so no Disposing to do)
+                +-> DecRef of pD (recnt = 0, pC is deallocated, no object associated so no Disposing to do)
+            +-> ROOT DISPOSE(A): A is invalid now
+            
+
+2) Disposing by decref of pA:
+
+del app or pA.dispose()
+
+del app
+    +-> DecRef(pA)
+        +-> refcnt=0
+            +-> PyDeallocate(pA)
+                +-> DisposeObject(A)
+                    +-> cf case 1)
+                +-> DecRef used dict of pA (already empty here)
+                +-> real deallocate of pA
+                
+
+pA.dispose()
+    +-> Read(Parent) => Parent == NULL
+        +-> DecRef(pA)
+            +-> cf cas "del app"
+
+            
+3) Disposing by decref of pB:
+
+=> impossible case, just pA can do that as it own a reference on it.
+=> or it's a code usage error => not handled case => unstability of the system!
+
+
+4) Disposing by a calling dispose method of pB:
+
+pB.dispose()
+    +-> Read(Parent) => Parent != NULL => Exception("used object, undisposable")
+        +-> Exception cause a del app
+            +-> cf cas 2)
