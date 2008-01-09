@@ -9,80 +9,125 @@ app = pA (A = container)
       +-pC (in used dict of pD)
       +-pStr1 (in used dict of pD)
 
-pA: refcnt=1, Parent=NULL
-pB: refcnt=1, Parent=A
-pC: refcnt=2, Parent=B
-pD: refcnt=1, Parent=A
-pStr1: refcnt=2 (Python String)
-
 *** First, a MUI rules says:
-    an object can be contained (Child) of one and only one container object.
+    an object can be contained (Child) by one and only one container object.
     => MUIA_Parent can have only one value at any time.
 ***
 
-DCB = DisposeCallback
+pA: refcnt=1, Parent=NULL
+pB: refcnt=1, Parent=A
+pC: refcnt=2, Parent=B, used by D also (but C is not a child of D, just B)
+pD: refcnt=1, Parent=A
+pStr1: refcnt=2 (Python String)
 
 1) Disposing by a (MUI_)DisposeObject:
 
-DisposeObject(A)
-    +-> A_SubDispose(A) (because A is a container)
+[REQ-01]
+=> If a MUI object is disposed, all ref counts are not changed. All python objects are alive.
+But pA, pB, pC have mui address set to NULL.
+The python tree continue to exist but it's not usable.
+
+a) DisposeObject(A)
+    +-> DisposeChildren(A) (because A is a container)
         +-> DisposeObject(B)
-            +-> B_SubDispose(B) (because B is a container)
+            +-> DisposeChildren(B) (because B is a container)
                 +-> DisposeObject(C)
+                    +-> DisposeChildren(C)
+                        +-> No children, do nothing
                     +-> myDispose(C)
-                        +-> DCB(C, pC)
-                            +-> Remove the reference of C in pC, pC stays alive but without address
-                        +-> ROOT DISPOSE(C): C is invalid now
-                +-> myDispose(B)
-                    +-> DCB(B, pB)
-                        +-> Remove the reference of B in pB, pB stays alive but without address
-                        +-> DecRef of pC (refcnt = 1, stay alive)
-                        +-> DecRef of pStr1 (refcnt = 1, stay alive)
-                    +-> ROOT DISPOSE(B): B is invalid now
+                        +-> Remove the reference of C in pC, pC stays alive but without address
+                    +-> ROOTCLASS Dispose(C): C is invalid now
+            +-> myDispose(B)
+                +-> Remove the reference of B in pB, pB stays alive but without address
+            +-> ROOTCLASS Dispose(B): B is invalid now
         +-> DisposeObject(D)
+            +-> DisposeChildren(D)
+                +-> No children, do nothing
             +-> myDispose(D)
-                +-> DCB(D, pD)
-                    +-> Remove the reference of D in pD, pD stays alive but without address
-                    +-> DecRef of pC (refcnt = 0, pC is deallocated, no object associated so no Disposing to do)
-                    +-> DecRef of pStr1 (refcnt = 0, pStr1 is deallocated)
-                +-> ROOT DISPOSE(D): D is invalid now
-        +-> myDispose(A)
-            +-> DCB(A, pA)
-                +-> Remove the reference of A in pA, pA stays alive but without address
-                +-> DecRef of pB (recnt = 0, pC is deallocated, no object associated so no Disposing to do)
-                +-> DecRef of pD (recnt = 0, pC is deallocated, no object associated so no Disposing to do)
-            +-> ROOT DISPOSE(A): A is invalid now
-            
+                +-> Remove the reference of D in pD, pD stays alive but without address
+            +-> ROOTCLASS Dispose(D): D is invalid now
+    +-> myDispose(A)
+        +-> Remove the reference of A in pA, pA stays alive but without address
+    +-> ROOTCLASS Dispose(A): A is invalid now
 
-2) Disposing by decref of pA:
-
-del app or pA.dispose()
-
-del app
-    +-> DecRef(pA)
-        +-> refcnt=0
-            +-> PyDeallocate(pA)
-                +-> DisposeObject(A)
-                    +-> cf case 1)
-                +-> DecRef used dict of pA (already empty here)
-                +-> real deallocate of pA
-                
-
-pA.dispose()
-    +-> Read(Parent) => Parent == NULL
-        +-> DecRef(pA)
-            +-> cf cas "del app"
-
-            
-3) Disposing by decref of pB:
-
-=> impossible case, just pA can do that as it own a reference on it.
-=> or it's a code usage error => not handled case => unstability of the system!
+b) pA.dispose()
+    +-> DisposeObject(A)
+        +-> cf 1)
 
 
-4) Disposing by a calling dispose method of pB:
+2) Disposing by decref of pA (del pA for example):
 
-pB.dispose()
-    +-> Read(Parent) => Parent != NULL => Exception("used object, undisposable")
-        +-> Exception cause a del app
-            +-> cf cas 2)
+[REQ-02]
+=> If a top Python object is disposed, the Python dep tree is distroyed, as well as the MUI tree.
+
+DecRef(pA)
+    +-> refcnt = 0 -> tp_dealloc(pA)
+        +-> DisposeObject(A) (only if pA.address != NULL)
+            +-> cf 1)
+        +-> DecRef of used dict of pA (refcnt -> 0)
+            +-> DecRef(pB)
+                +-> refcnt = 0 -> tp_dealloc(pB)
+                    +-> pB.Address = NULL => no DisposeObject
+                    +-> DecRef of used dict of pB (refcnt -> 0)
+                        +-> DecRef(pC) (refcnt -> 1, pC in used dict of pD)
+                        +-> DecRef(pStr1) (refcnt -> 0)
+                            +-> tp_free(pStr1)
+                    +-> tp_free(pB)
+            +-> DecRef(pD)
+                +-> refcnt = 0 -> tp_dealloc(pD)
+                    +-> pD.Address = NULL => no DisposeObject
+                    +-> DecRef of used dict of pD (refcnt -> 0)
+                        +-> DecRef(pC)
+                            +-> pC.Address = NULL => no DisposeObject
+                            +-> DecRef of used dict of pC (refcnt -> 0)
+                            +-> tp_free(pC)
+                    +-> tp_free(pD)
+        +-> tp_free(pA)
+
+
+3) Decref of pB (pB is a child of pA):
+
+=> A MUI object can be a child of another one and this child shouldn't
+be disposed before the parent or the memory will be corrupted.
+
+[REQ-03]
+=> if a Python object is dependent on another Python object (in anyway),
+the Python object shouldn't be disposed.
+
+*** Already handled by Python itself. ***
+
+[REQ-04]
+=> if a MUI object is dependent on another MUI/Python object (in anyway),
+this object shouldn't be disposed by Python or MUI.
+
+=> For MUI, calling (MUI_)DisposeObject doesn't return a value, so it's let suppose
+that that OM_DISPOSE should not fail...
+Returning from the OM_DISPOSE without deallocating it may be a solution [REQ-04-A].
+What are side effects?
+
+First, how an object can be linked to another one?
+
+- Attribute: init/set a PyMUI object should keep ref on it.
+(not get even if it returns a MUI object, because it only give a pointer on it) [REQ-04-B].
+
+- DoMethod: some of arguments passed should have a special handling about references.
+When DoMethod has finished, the MUI object may have memorised some pointers on Python objects.
+So these last mustn't be destroyed after the call!
+As all methods are differents, cases should be treat one by one inside the Python
+implementation of classes [REQ-04-C].
+
+WARNING: the reference is strong only in one way: objects used should not be destroyed, but
+it's not block an object that uses some others ones to be destroyed.
+
+
+====================
+== Status         ==
+====================
+
+REQ-01: Done (C module)
+REQ-02: Done (C module)
+REQ-03: Done (trivial)
+REQ-04: Partial
+    REQ-04-A: Not done
+    REQ-04-B: Done (C module)
+    REQ-04-C: Done (C module), but should be used by the Python side.
