@@ -2,9 +2,12 @@
 
 from distutils.core import setup, Extension
 
-module1 = Extension('_muimaster', sources = ['_muimastermodule.c'])
+module1 = Extension('_muimaster', sources = ['src/_muimastermodule.c'])
 
-setup(name = 'PackageName',
+setup(name = 'PyMui',
     version = '1.0',
     description = 'This is a test',
-    ext_modules = [module1])
+    packages = ['pymui'],
+    ext_package = 'pymui',
+    ext_modules = [module1],
+    )

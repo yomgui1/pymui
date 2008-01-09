@@ -44,11 +44,12 @@ class InputEventStruct(Struct):
     
 class PyMuiKeyError(KeyError):
     name = 'Key'
+
     def __init__(self, cl, key):
-        super(PyMuiKeyError, self).__init__()
+        KeyError.__init__(self)
         self.cl = cl
         
-        if isinstance(self.key, basestring):
+        if isinstance(key, basestring):
             self.key = key
         else:
             self.key = hex(key)
@@ -154,6 +155,7 @@ class PyMuiID:
 
     Note for subclasses: attribute '_name' should be defined as a class name
     """
+
     def __init__(self, id):
         self.__id = long(id)
         
@@ -163,11 +165,14 @@ class PyMuiID:
     def __int__(self):
         return int(self.__id)
 
+    def __hex__(self):
+        return hex(self.__id)
+
     def __repr__(self):
         return "<%s: 0x%x>" % (self._name, self.__id)
 
     id = property(fget=lambda self: self.__id,
-                  doc="Returns the id of %s." % self._name)
+                  doc="Returns the id.")
 
 
 class PyMuiMethod(PyMuiID):
@@ -195,7 +200,7 @@ class PyMuiMethod(PyMuiID):
 
 
 class PyMuiAttribute(PyMuiID):
-     _name = 'Attribute'
+    _name = 'Attribute'
      
     def __init__(self, id, isg, type):
         PyMuiID.__init__(self, id)
@@ -206,7 +211,7 @@ class PyMuiAttribute(PyMuiID):
         if filter(lambda x: x not in 'isgk', isg):
             raise ValueError("isg argument should be a string formed with letters i, s, g or k.")
         
-        self.__fl = tuple(x in 'isgk' for x in isg)
+        self.__fl = tuple(x in isg for x in 'isgk')
         self.__tp = type
 
     def init(self, obj, value):
@@ -413,11 +418,13 @@ class Notify(PyMuiObject):
 
     @classmethod
     def GetAttribute(cl, name):
-        if isinstance(name, basestring) and name in cl.mui_attributes:
-            return cl.mui_attributes[name]
+        if isinstance(name, basestring):
+            if name in cl.mui_attributes:
+                return cl.mui_attributes[name]
         else:
+            n = long(name)
             for a in cl.mui_attributes.itervalues():
-                if a.id == name: return a
+                if a.id == n: return a
         raise PyMuiAttributeError(cl, name)
 
     @classmethod
@@ -426,20 +433,24 @@ class Notify(PyMuiObject):
 
     @classmethod
     def HasAttribute(cl, name):
-        if isinstance(name, basestring) and name in cl.mui_attributes:
-            return True
+        if isinstance(name, basestring):
+            if name in cl.mui_attributes:
+                return True
         else:
+            n = long(name)
             for a in cl.mui_attributes.itervalues():
-                if a.id == name: return True
+                if a.id == n: return True
             return False
 
     @classmethod
     def GetMethod(cl, name):
-        if isinstance(name, basestring) and name in cl.mui_methods:
-            return cl.mui_methods[name]
+        if isinstance(name, basestring):
+            if name in cl.mui_methods:
+                return cl.mui_methods[name]
         else:
+            n = long(name)
             for m in cl.mui_methods.itervalues():
-                if m.id == name: return m
+                if m.id == n: return m
         raise PyMuiMethodError(cl, name)
     
     @classmethod
@@ -448,11 +459,13 @@ class Notify(PyMuiObject):
 
     @classmethod
     def HasMethod(cl, name):
-        if isinstance(name, basestring) and name in cl.mui_methods:
-            return True
+        if isinstance(name, basestring):
+            if name in cl.mui_methods:
+                return True
         else:
+            n = long(name)
             for m in cl.mui_methods.itervalues():
-                if m.id == name: return True
+                if m.id == n: return True
             return False
 
     def GetOption(self, key):
@@ -478,7 +491,7 @@ class Notify(PyMuiObject):
         del self.__tags
         
         # set defaults
-        if 'ObjectID' in not tags:
+        if 'ObjectID' not in tags:
             tags['ObjectID'] = _m.newid()
 
         # initialize object tags
@@ -486,10 +499,10 @@ class Notify(PyMuiObject):
             attr.init(self, value)
 
         # create the MUI object
-        self._create(getattr(self, '__clid'), tags)
+        self._create(getattr(self, '__clid'), dict(tags))
 
     def Dispose(self):
-        if !self._dispose():
+        if not self._dispose():
             self.__class__ = _PyDisposedObject
             return False
         return True
@@ -804,19 +817,3 @@ class Text(Area):
 class Group(Area):
     CLASSID = _m.MUIC_Group
     HEADER = None
-
-if __name__ == '__main__':
-    o = Notify()
-    print
-    print dir(o)
-    print 'methods:', ' '.join(o.__class__.mui_methods)
-    print 'attributes:', ' '.join(o.__class__.mui_attributes)
-    print "Get ObjectID value..."
-    v = o.ObjectID
-    print "ObjectID =", v
-    v = 125L
-    print "Set ObjectID to", v
-    o.ObjectID = v
-    print "Try lowlevel call..."
-    v = o._get(long, 0x8042d76e)
-    print "ObjectID =", v
