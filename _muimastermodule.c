@@ -130,7 +130,7 @@ l'instar de Python.
 
 /* Notes pour la documentation utilisateur
 
-- Expliquer le pb de garder des références des valeurs données (_set/_nnset/_get le font automatiquement, pas _do ou tout
+- Expliquer le pb de garder des références des valeurs données (_set/_nnset le font automatiquement, pas _do ou tout
 autre méthodes de classe.).
 
 */
@@ -240,8 +240,8 @@ typedef struct OnAttrChangedMsg_STRUCT {
 
 typedef struct MUIObject_STRUCT {
     CPointer    base;
-    ULONG       refcnt; // Reference counter like in Python but between MUI objects.
-    PyObject *  refdict;
+    PyObject *  refdict; // -> GC mandatory. Used for attributes [REQ-04-B]
+    ULONG       refcnt; // Reference counter like in Python but between MUI objects [REQ-04-C]
 } MUIObject;
 
 typedef struct PyModMCCData_STRUCT {
@@ -252,6 +252,7 @@ typedef struct MCCNode_STRUCT {
     struct MinNode              mn_Node;
     struct MUI_CustomClass *    mn_MCC;
 } MCCNode;
+
 
 /*
 ** Private Prototypes
@@ -395,8 +396,6 @@ all_ins(PyObject *m) {
     if (inss(m, "TIME", __TIME__)) return -1; 
 
     /* BOOPSI general methods */
-    if (insi(m, "OM_ADDMEMBER", (long)OM_ADDMEMBER)) return -1;
-    if (insi(m, "OM_REMMEMBER", (long)OM_REMMEMBER)) return -1;
 
     /* ClassID */
     if (inss(m, "MUIC_Aboutmui", MUIC_Aboutmui)) return -1;
@@ -1208,24 +1207,77 @@ muiobject__do(MUIObject *self, PyObject *args) {
     free(msg);
     return ret;
 }//-
+//+ muiobject__addmember
+static PyObject *
+muiobject__addmember(MUIObject *self, PyObject *args) {
+    MUIObject *child;
+    Object *obj, child_obj;
+
+    obj = GET_ADDRESS(self);
+    CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
+        return NULL;
+
+    child_obj = GET_ADDRESS(child);
+    if (NULL == child_obj) {
+        PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
+        return NULL;
+    }
+
+    DoMethod(obj, OM_ADDMEMBER, child_obj);
+    if (NULL == muiobject__incref(child))
+        return NULL;
+
+    Py_RETURN_TRUE;
+}
+//- muiobject__addmember
+//+ muiobject__remmember
+static PyObject *
+muiobject__remmember(MUIObject *self, PyObject *args) {
+    MUIObject *child;
+    Object *obj, child_obj;
+
+    obj = GET_ADDRESS(self);
+    CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
+        return NULL;
+
+    child_obj = GET_ADDRESS(child);
+    if (NULL == child_obj) {
+        PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
+        return NULL;
+    }
+
+    if (NULL == muiobject__decref(child))
+        return NULL;
+
+    DoMethod(obj, OM_REMMEMBER, child_obj);
+
+    Py_RETURN_TRUE;
+}
+//- muiobject__remmember
 
 //+ MUIObject_Type
 static PyMemberDef muiobject_members[] = {
-    {"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference counter."},
+	{"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference counter."},
     {NULL}  /* Sentinel */
 };
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_incref", (PyCFunction) muiobject__incref,    METH_NOARGS,  muiobject__incref_doc},
-    {"_decref", (PyCFunction) muiobject__decref,    METH_NOARGS,  muiobject__decref_doc},
-    {"_create", (PyCFunction) muiobject__create,    METH_VARARGS, muiobject__create_doc},
-    {"_dispose",(PyCFunction) muiobject__dispose,   METH_NOARGS,  muiobject__dispose_doc},
-    {"_init",   (PyCFunction) muiobject__init,      METH_VARARGS, muiobject__init_doc},
-    {"_get",    (PyCFunction) muiobject__get,       METH_VARARGS, muiobject__get_doc},
-    {"_set",    (PyCFunction) muiobject__set,       METH_VARARGS, muiobject__set_doc},
-    {"_nnset",  (PyCFunction) muiobject__nnset,     METH_VARARGS, muiobject__nnset_doc},
-    {"_notify", (PyCFunction) muiobject__notify,    METH_VARARGS, muiobject__notify_doc},
-    {"_do",     (PyCFunction) muiobject__do,        METH_VARARGS, muiobject__do_doc},
+    {"_incref",     (PyCFunction) muiobject__incref,    METH_NOARGS,  muiobject__incref_doc},
+    {"_decref",     (PyCFunction) muiobject__decref,    METH_NOARGS,  muiobject__decref_doc},
+    {"_create",     (PyCFunction) muiobject__create,    METH_VARARGS, muiobject__create_doc},
+    {"_dispose",    (PyCFunction) muiobject__dispose,   METH_NOARGS,  muiobject__dispose_doc},
+    {"_init",       (PyCFunction) muiobject__init,      METH_VARARGS, muiobject__init_doc},
+    {"_get",        (PyCFunction) muiobject__get,       METH_VARARGS, muiobject__get_doc},
+    {"_set",        (PyCFunction) muiobject__set,       METH_VARARGS, muiobject__set_doc},
+    {"_nnset",      (PyCFunction) muiobject__nnset,     METH_VARARGS, muiobject__nnset_doc},
+    {"_notify",     (PyCFunction) muiobject__notify,    METH_VARARGS, muiobject__notify_doc},
+    {"_do",         (PyCFunction) muiobject__do,        METH_VARARGS, muiobject__do_doc},
+    {"_addmember",  (PyCFunction) muiobject__addmember, METH_VARARGS, NULL},
+    {"_remmember",  (PyCFunction) muiobject__remmember, METH_VARARGS, NULL},
     {NULL, NULL}    /* sentinel */
 };
 
