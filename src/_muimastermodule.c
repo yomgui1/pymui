@@ -1211,7 +1211,7 @@ muiobject__do(MUIObject *self, PyObject *args) {
 static PyObject *
 muiobject__addmember(MUIObject *self, PyObject *args) {
     MUIObject *child;
-    Object *obj, child_obj;
+    Object *obj, *child_obj;
 
     obj = GET_ADDRESS(self);
     CHECK_OBJ(obj);
@@ -1225,7 +1225,7 @@ muiobject__addmember(MUIObject *self, PyObject *args) {
         return NULL;
     }
 
-    DoMethod(obj, OM_ADDMEMBER, child_obj);
+    DoMethod(obj, OM_ADDMEMBER, (ULONG) child_obj);
     if (NULL == muiobject__incref(child))
         return NULL;
 
@@ -1236,7 +1236,7 @@ muiobject__addmember(MUIObject *self, PyObject *args) {
 static PyObject *
 muiobject__remmember(MUIObject *self, PyObject *args) {
     MUIObject *child;
-    Object *obj, child_obj;
+    Object *obj, *child_obj;
 
     obj = GET_ADDRESS(self);
     CHECK_OBJ(obj);
@@ -1253,7 +1253,7 @@ muiobject__remmember(MUIObject *self, PyObject *args) {
     if (NULL == muiobject__decref(child))
         return NULL;
 
-    DoMethod(obj, OM_REMMEMBER, child_obj);
+    DoMethod(obj, OM_REMMEMBER, (ULONG) child_obj);
 
     Py_RETURN_TRUE;
 }
