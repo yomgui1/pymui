@@ -170,6 +170,8 @@ autre méthodes de classe.).
 #define INITFUNC init_muimaster
 #endif
 
+#define NDEBUG
+
 #ifndef NDEBUG
 #define DPRINT(x...) ({ PyObject *o = module?PyObject_GetAttrString(module, "stddebug"):NULL; \
          if ((NULL == o) || !PyInt_AS_LONG(o)) {                         \
@@ -1262,6 +1264,7 @@ muiobject__remmember(MUIObject *self, PyObject *args) {
 //+ MUIObject_Type
 static PyMemberDef muiobject_members[] = {
     {"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference counter."},
+    {"_pyrefcnt", T_ULONG, offsetof(PyObject, ob_refcnt), RO, "Python internal reference counter."},
     {NULL}  /* Sentinel */
 };
 
