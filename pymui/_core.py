@@ -1,7 +1,12 @@
+##
+## @file _core.py
+## @author ROGUEZ "Yomgui" Guillaume
+##
+
 from UserDict import DictMixin
 from itertools import chain
 import weakref
-from pyamiga._core import Struct
+from pyamiga._core import CPointer, Struct
 import pyamiga.intuition as _intuition
 
 debugme = False
@@ -23,15 +28,11 @@ try:
 except:
     from simu import *
 
-CT_POINTER = _m.CPointer
 CT_LONG = int
 CT_ULONG = long
 
 EveryTime = TriggerValue = 0x49893131
 NotTriggerValue = 0x49893133
-
-class PyMuiObject(_m.MUIObject):
-    pass
 
 class InputEventStruct(Struct):
     def __init__(self, address):
@@ -206,7 +207,7 @@ class PyMuiAttribute(PyMuiID):
     def __init__(self, id, isg, type):
         PyMuiID.__init__(self, id)
 
-        assert issubclass(type, (Struct, CT_POINTER, bool, CT_LONG, CT_ULONG, str))
+        assert issubclass(type, (Struct, CPointer, bool, CT_LONG, CT_ULONG, str))
         
         isg = isg.lower()
         if filter(lambda x: x not in 'isgk', isg):
@@ -235,7 +236,7 @@ class PyMuiAttribute(PyMuiID):
         if not self.__fl[2]:
             raise RuntimeError("attribute %s cannot be get" % self.id)
         if issubclass(self.__tp, Struct):
-            return self.__tp(obj._get(CT_POINTER, self.id))
+            return self.__tp(obj._get(CPointer, self.id))
         return obj._get(self.__tp, self.id)
     
     type = property(fget=lambda self: self.__tp,
@@ -395,14 +396,14 @@ class Notify(PyMuiObject):
     METHODS = (
         # (Name, ID [, (<args types>, ) [, <returns type>]])
         
-        ('Export', 0x80420f1c, (CT_POINTER,)),
+        ('Export', 0x80420f1c, (CPointer,)),
         )
     
     ATTRIBUTES = (
         # (Name, ID, <ISGK string>, type)
         
         ('ApplicationObject',   0x8042d3ee, 'g',        PyMuiObject),
-        ('AppMessage',          0x80421955, 'g',        CT_POINTER),
+        ('AppMessage',          0x80421955, 'g',        CPointer),
         ('HelpLine',            0x8042a825, 'isg',      CT_LONG),
         ('HelpNode',            0x80420b85, 'isg',      str),
         ('NoNotify',            0x804237f9, 's',        bool),
@@ -729,10 +730,10 @@ class Window(Notify, PyMuiContainerAndChildMixer):
         ('InputEvent',      0x804247d8, 'g',    InputEventStruct),
 
         ('ActiveObject',    0x80427925, 'sg',   PyMuiObject),
-        ('MouseObject',     0x8042bf9b, 'g',    CT_POINTER),
+        ('MouseObject',     0x8042bf9b, 'g',    CPointer),
 
         ('MenuAction',      0x80427521, 'isg',  CT_ULONG),
-        ('Menustrip',       0x8042855e, 'ig',   CT_POINTER),
+        ('Menustrip',       0x8042855e, 'ig',   CPointer),
         
         ('PublicScreen',    0x804278e4, 'isgk', str),
         ('Screen',          0x8042df4f, 'isgk', _intuition.Screen),

@@ -5,7 +5,7 @@
  ***
  *** @brief Python wrapper for muimaster.library
  ***
-  ******************************************************************************/
+ *******************************************************************************/
 
 /* Dev notes:
 
@@ -156,6 +156,10 @@ autre méthodes de classe.).
 #include <proto/utility.h>
 #include <proto/muimaster.h>
 
+#define USE_PYAMIGA_HELP_MACROS
+#include <pyamiga/_coremod.h>
+#undef DPRINT
+
 //#define NDEBUG
 
 /*
@@ -169,8 +173,6 @@ autre méthodes de classe.).
 #ifndef INITFUNC
 #define INITFUNC init_muimaster
 #endif
-
-#define NDEBUG
 
 #ifndef NDEBUG
 #define DPRINT(x...) ({ PyObject *o = module?PyObject_GetAttrString(module, "stddebug"):NULL; \
@@ -191,17 +193,9 @@ autre méthodes de classe.).
     #define SAVEDS __saveds
 #endif
 
-#define ADD_TYPE(m, s, t) {Py_INCREF(t); PyModule_AddObject(m, s, (PyObject *)(t));}
-
-#define GET_ADDRESS(o) (((CPointer *)(o))->address)
-#define SET_ADDRESS(o, v) (((CPointer *)(o))->address = (APTR)(v)) 
-
-#define CHECK_OBJ(o) if (NULL == (o)) { \
+#define CHECK_OBJ(o) if (NULL == (o)) {                                 \
         PyErr_SetString(PyExc_RuntimeError, "no MUI object associated"); \
         return NULL; }
-
-#define CPointer_Check(op) PyObject_TypeCheck(op, &CPointer_Type)
-#define CPointer_CheckExact(op) ((op)->ob_type == &CPointer_Type)
 
 #define MUIObject_Check(op) PyObject_TypeCheck(op, &MUIObject_Type)
 #define MUIObject_CheckExact(op) ((op)->ob_type == &MUIObject_Type)
@@ -229,11 +223,6 @@ typedef struct DoMsg_STRUCT {
     long data[0];
 } DoMsg;
 
-typedef struct CPointer_STRUCT {
-    PyObject_HEAD
-    APTR address;
-} CPointer;
-
 typedef struct OnAttrChangedMsg_STRUCT {
     PyObject *  py_obj;
     ULONG       attr;
@@ -241,9 +230,9 @@ typedef struct OnAttrChangedMsg_STRUCT {
 } OnAttrChangedMsg;
 
 typedef struct MUIObject_STRUCT {
-    CPointer    base;
-    PyObject *  refdict; // -> GC mandatory. Used for attributes [REQ-04-B]
-    ULONG       refcnt; // Reference counter like in Python but between MUI objects [REQ-04-C]
+    PyAmiga_CPointer    base;
+    PyObject *          refdict; // -> GC mandatory. Used for attributes [REQ-04-B]
+    ULONG               refcnt; // Reference counter like in Python but between MUI objects [REQ-04-C]
 } MUIObject;
 
 typedef struct PyModMCCData_STRUCT {
@@ -266,11 +255,13 @@ typedef struct MCCNode_STRUCT {
 */
 
 static struct Hook OnAttrChangedHook;
-static PyTypeObject CPointer_Type;
 static PyTypeObject MUIObject_Type;
 static ULONG id_counter;
 static Object *global_app;
 static struct MinList classes;
+
+PYAMIGA_CORE_TYPES;
+PYAMIGA_CORE_API;
 
 #ifndef NDEBUG
 static PyObject *module; /* only used in debugging */
@@ -344,7 +335,7 @@ PyModMCC_Dispose(struct IClass *cl, Object *obj) {
     DPRINT("MUI=%p, PyObj=%p\n", obj, pyo);
     
     if (NULL != pyo) {
-        SET_ADDRESS(pyo, NULL);
+        PyAmiga_CPointer_SET_ADDR(pyo, NULL);
     }
 }
 //- PyModMCC_Dispose
@@ -381,93 +372,6 @@ DISPATCHER_END
 ** Private Functions
 */
 
-//+ insi
-static int
-insi(PyObject *module, char *symbol, long value) {
-    return PyModule_AddIntConstant(module, symbol, value);
-}//-
-//+ inss
-static int
-inss(PyObject *module, char *symbol, char *string) {
-    return PyModule_AddStringConstant(module, symbol, string);
-}//-
-//+ all_ins
-static int
-all_ins(PyObject *m) {
-    if (insi(m, "VLatest", (long)MUIMASTER_VLATEST)) return -1;
-    if (inss(m, "TIME", __TIME__)) return -1; 
-
-    /* BOOPSI general methods */
-
-    /* ClassID */
-    if (inss(m, "MUIC_Aboutmui", MUIC_Aboutmui)) return -1;
-    if (inss(m, "MUIC_Application", MUIC_Application)) return -1;
-    if (inss(m, "MUIC_Applist", MUIC_Applist)) return -1;
-    if (inss(m, "MUIC_Area", MUIC_Area)) return -1;
-    if (inss(m, "MUIC_Balance", MUIC_Balance)) return -1;
-    if (inss(m, "MUIC_Bitmap", MUIC_Bitmap)) return -1;
-    if (inss(m, "MUIC_Bodychunk", MUIC_Bodychunk)) return -1;
-    if (inss(m, "MUIC_Boopsi", MUIC_Boopsi)) return -1;
-    if (inss(m, "MUIC_Coloradjust", MUIC_Coloradjust)) return -1;
-    if (inss(m, "MUIC_Colorfield", MUIC_Colorfield)) return -1;
-    if (inss(m, "MUIC_Configdata", MUIC_Configdata)) return -1;
-    if (inss(m, "MUIC_Cycle", MUIC_Cycle)) return -1;
-    if (inss(m, "MUIC_Dataspace", MUIC_Dataspace)) return -1;
-    if (inss(m, "MUIC_Dirlist", MUIC_Dirlist)) return -1;
-    if (inss(m, "MUIC_Dtpic", MUIC_Dtpic)) return -1;
-    if (inss(m, "MUIC_Family", MUIC_Family)) return -1;
-    if (inss(m, "MUIC_Floattext", MUIC_Floattext)) return -1;
-    if (inss(m, "MUIC_Frameadjust", MUIC_Frameadjust)) return -1;
-    if (inss(m, "MUIC_Framedisplay", MUIC_Framedisplay)) return -1;
-    if (inss(m, "MUIC_Gadget", MUIC_Gadget)) return -1;
-    if (inss(m, "MUIC_Gauge", MUIC_Gauge)) return -1;
-    if (inss(m, "MUIC_Group", MUIC_Group)) return -1;
-    if (inss(m, "MUIC_Image", MUIC_Image)) return -1;
-    if (inss(m, "MUIC_Imageadjust", MUIC_Imageadjust)) return -1;
-    if (inss(m, "MUIC_Imagedisplay", MUIC_Imagedisplay)) return -1;
-    if (inss(m, "MUIC_Knob", MUIC_Knob)) return -1;
-    if (inss(m, "MUIC_Levelmeter", MUIC_Levelmeter)) return -1;
-    if (inss(m, "MUIC_List", MUIC_List)) return -1;
-    if (inss(m, "MUIC_Listview", MUIC_Listview)) return -1;
-    if (inss(m, "MUIC_Mccprefs", MUIC_Mccprefs)) return -1;
-    if (inss(m, "MUIC_Menu", MUIC_Menu)) return -1;
-    if (inss(m, "MUIC_Menuitem", MUIC_Menuitem)) return -1;
-    if (inss(m, "MUIC_Menustrip", MUIC_Menustrip)) return -1;
-    if (inss(m, "MUIC_Notify", MUIC_Notify)) return -1;
-    if (inss(m, "MUIC_Numeric", MUIC_Numeric)) return -1;
-    if (inss(m, "MUIC_Numericbutton", MUIC_Numericbutton)) return -1;
-    if (inss(m, "MUIC_Palette", MUIC_Palette)) return -1;
-    if (inss(m, "MUIC_Penadjust", MUIC_Penadjust)) return -1;
-    if (inss(m, "MUIC_Pendisplay", MUIC_Pendisplay)) return -1;
-    if (inss(m, "MUIC_Popasl", MUIC_Popasl)) return -1;
-    if (inss(m, "MUIC_Popframe", MUIC_Popframe)) return -1;
-    if (inss(m, "MUIC_Popimage", MUIC_Popimage)) return -1;
-    if (inss(m, "MUIC_Poplist", MUIC_Poplist)) return -1;
-    if (inss(m, "MUIC_Popobject", MUIC_Popobject)) return -1;
-    if (inss(m, "MUIC_Poppen", MUIC_Poppen)) return -1;
-    if (inss(m, "MUIC_Popscreen", MUIC_Popscreen)) return -1;
-    if (inss(m, "MUIC_Popstring", MUIC_Popstring)) return -1;
-    if (inss(m, "MUIC_Prop", MUIC_Prop)) return -1;
-    if (inss(m, "MUIC_Radio", MUIC_Radio)) return -1;
-    if (inss(m, "MUIC_Rectangle", MUIC_Rectangle)) return -1;
-    if (inss(m, "MUIC_Register", MUIC_Register)) return -1;
-    if (inss(m, "MUIC_Scale", MUIC_Scale)) return -1;
-    if (inss(m, "MUIC_Scrmodelist", MUIC_Scrmodelist)) return -1;
-    if (inss(m, "MUIC_Scrollbar", MUIC_Scrollbar)) return -1;
-    if (inss(m, "MUIC_Scrollgroup", MUIC_Scrollgroup)) return -1;
-    if (inss(m, "MUIC_Semaphore", MUIC_Semaphore)) return -1;
-    if (inss(m, "MUIC_Settings", MUIC_Settings)) return -1;
-    if (inss(m, "MUIC_Settingsgroup", MUIC_Settingsgroup)) return -1;
-    if (inss(m, "MUIC_Slider", MUIC_Slider)) return -1;
-    if (inss(m, "MUIC_String", MUIC_String)) return -1;
-    if (inss(m, "MUIC_Text", MUIC_Text)) return -1;
-    if (inss(m, "MUIC_Virtgroup", MUIC_Virtgroup)) return -1;
-    if (inss(m, "MUIC_Volumelist", MUIC_Volumelist)) return -1;
-    if (inss(m, "MUIC_Window", MUIC_Window)) return -1;
-
-    return 0;
-}
-//-
 //+ convertFromPython
 static LONG
 convertFromPython(PyObject *obj, long *value) {
@@ -475,8 +379,8 @@ convertFromPython(PyObject *obj, long *value) {
 
     if (PyString_Check(obj)) {
         *value = (LONG) PyString_AS_STRING(obj);
-    } else if (CPointer_Check(obj)) {
-        *value = (LONG) GET_ADDRESS(obj);
+    } else if (PyAmiga_CPointer_Check(obj)) {
+        *value = (LONG) PyAmiga_CPointer_GET_ADDR(obj);
     } else {
         PyObject *o = PyNumber_Int(obj);
 
@@ -533,12 +437,12 @@ convertToPython(PyTypeObject *type, long value) {
         }
         
         return v;
-    } else if (PyType_IsSubtype(type, &CPointer_Type)) {
+    } else if (PyType_IsSubtype(type, &PyAmiga_CPointer_Type)) {
         PyObject *v, *args;
         
         args = PyTuple_Pack(1, value);
         if (NULL == args) return NULL;
-        v = PyType_GenericNew(&CPointer_Type, args, NULL);
+        v = PyType_GenericNew(&PyAmiga_CPointer_Type, args, NULL);
         Py_DECREF(args);
 
         return v;
@@ -684,90 +588,19 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
 
 
 /*******************************************************************************************
-** CPointer_Type
-*/
-
-//+ cpointer_init
-static int
-cpointer_init(CPointer *self, PyObject *args) {
-    ULONG value = 0;
-
-    if ((NULL != args) && !PyArg_ParseTuple(args, "|I", &value))
-        return -1;
-
-    self->address = (APTR) value;
-
-    DPRINT("CPointer.init(self=%p, address=%p)\n", self, self->address);
-
-    return 0;
-
-}
-//- cpointer_init
-//+ cpointer_repr
-static PyObject *
-cpointer_repr(CPointer *self) {
-    return PyString_FromFormat("<CPointer at %p, address=%p>", self, self->address);
-}
-//- cpointer_repr
-//+ cpointer_long
-static PyObject *
-cpointer_long(CPointer *self) {
-    return PyLong_FromVoidPtr(self->address);
-}
-//- cpointer_long
-//+ cpointer_int
-static PyObject *
-cpointer_int(CPointer *self) {
-    return PyInt_FromLong((long) self->address);
-}
-//- cpointer_int
-//+ cpointer_nonzero
-static int
-cpointer_nonzero(CPointer *self) {
-    return self->address != NULL;
-}
-//- cpointer_nonzero
-
-//+ CPointer_Type
-static PyMemberDef cpointer_members[] = {
-    {"address", T_ULONG, offsetof(CPointer, address), RO, "Address"},
-    {NULL}  /* Sentinel */
-};
-
-static PyNumberMethods cpointer_as_number = {
-    nb_long         : (unaryfunc)cpointer_long,
-    nb_int          : (unaryfunc)cpointer_int,
-    nb_nonzero      : (inquiry)cpointer_nonzero,
-};
- 
-static PyTypeObject CPointer_Type = {
-    PyObject_HEAD_INIT(NULL)
-
-    tp_name         : "_muimaster.CPointer",
-    tp_basicsize    : sizeof(CPointer),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
-    tp_doc          : "CPointer Objects",     
-
-    tp_new          : PyType_GenericNew,   
-    tp_init         : (initproc)cpointer_init,
-
-    tp_members      : cpointer_members,  
-    tp_repr         : (reprfunc)cpointer_repr,
-    tp_as_number    : &cpointer_as_number,
-};
-//- CPointer_Type
-
-
-/*******************************************************************************************
 ** MUIObject_Type
 */
 
 //+ muiobject_init
 static int
-muiobject_init(MUIObject *self) {
-    if (CPointer_Type.tp_init((PyObject *)self, NULL, NULL) < 0)
-        return -1;
+muiobject_init(MUIObject *self, PyObject *args) {
+    int n = PyTuple_Size(args);
 
+    if (n > 0) {
+        PyErr_Format(PyExc_TypeError, "__init__() takes exactly 1 argument (%u given)", n);
+        return -1;
+    }
+    
     self->refdict = PyDict_New();
     if (NULL == self->refdict)
         return -1;
@@ -779,12 +612,12 @@ muiobject_init(MUIObject *self) {
     return 0;
 }
 //- muiobject_init
-//+ muiobject_dealloc()
+//+ muiobject_dealloc
 static void
 muiobject_dealloc(MUIObject *self) {
     Object *obj;
     
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     DPRINT("MUIObject.dealloc(self=%p, refcnt=%lu, MUI=%p)\n", self, self->refcnt, obj);
 
     if (NULL != obj) {        
@@ -802,33 +635,33 @@ muiobject_dealloc(MUIObject *self) {
     Py_XDECREF(self->refdict);
     ((PyObject *) self)->ob_type->tp_free((PyObject *)self);
 }
-//-
-//+ muiobject_repr()
+//- muiobject_dealloc
+//+ muiobject_repr
 static PyObject *
 muiobject_repr(MUIObject *self) {
     Object *obj;
     
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     if (NULL != obj)
         return PyString_FromFormat("<MUIObject at %p, MUI object at %p>", self, obj);
     else
         return PyString_FromFormat("<MUIObject at %p, MUI object disposed>", self);
 }
-//- muiobject_repr()
-//+ muiobject_traverse()
+//- muiobject_repr
+//+ muiobject_traverse
 static int
 muiobject_traverse(MUIObject *self, visitproc visit, void *arg) {
     return visit(self->refdict, arg);
 }
-//-muiobject_traverse()
-//+ muiobject_clear()
+//- muiobject_traverse
+//+ muiobject_clear
 static int
 muiobject_clear(MUIObject *self) {
     PyDict_Clear(self->refdict);
     return 0;
 }
-//- muiobject_clear()
-//+ muiobject__incref()
+//- muiobject_clear
+//+ muiobject__incref
 /*! \cond */
 PyDoc_STRVAR(muiobject__incref_doc,
 "_incref() -> None\n\
@@ -844,7 +677,7 @@ muiobject__incref(MUIObject *self)
     Object *obj;
     
     // Increment the MUI reference counter only if a MUI object exists.
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     assert(self->refcnt < ULONG_MAX);
@@ -858,8 +691,8 @@ muiobject__incref(MUIObject *self)
 
     Py_RETURN_NONE;
 }
-//- muiobject__incref()
-//+ muiobject__decref()
+//- muiobject__incref
+//+ muiobject__decref
 /*! \cond */
 PyDoc_STRVAR(muiobject__decref_doc,
 "_decref() -> None\n\
@@ -875,7 +708,7 @@ muiobject__decref(MUIObject *self)
     Object *obj;
     
     // Decrement the MUI reference counter only if a MUI object exists.
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (self->refcnt) {
@@ -889,8 +722,8 @@ muiobject__decref(MUIObject *self)
 
     Py_RETURN_NONE;
 }
-//- muiobject__decref()
-//+ muiobject__create()
+//- muiobject__decref
+//+ muiobject__create
 /*! \cond */
 PyDoc_STRVAR(muiobject__create_doc,
 "_create(ClassID [, data]) -> bool\n\
@@ -909,7 +742,7 @@ muiobject__create(MUIObject *self, PyObject *args) {
     struct TagItem *tags;
 
     /* Checking that no MUI object is already linked */
-    mui_obj = GET_ADDRESS(self);
+    mui_obj = PyAmiga_CPointer_GET_ADDR(self);
     if (NULL != mui_obj) {
         PyErr_SetString(PyExc_RuntimeError, "the MUI object is already created");
         return NULL;
@@ -975,11 +808,11 @@ muiobject__create(MUIObject *self, PyObject *args) {
         return NULL;
     }
 
-    SET_ADDRESS(self, mui_obj);
+    PyAmiga_CPointer_SET_ADDR(self, mui_obj);
     Py_RETURN_TRUE;
 }
-//-
-//+ muiobject__dispose()
+//- muiobject__create
+//+ muiobject__dispose
 /*! \cond */
 PyDoc_STRVAR(muiobject__dispose_doc,
 "_dispose() -> bool\n\
@@ -993,7 +826,7 @@ static PyObject *
 muiobject__dispose(MUIObject *self) {
     Object *obj;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     DPRINT("PyObj: %p, MUI obj: %p, refcnt=%lu\n", self, obj, self->refcnt);
@@ -1004,12 +837,12 @@ muiobject__dispose(MUIObject *self) {
     }
     
     MUI_DisposeObject(obj);
-    SET_ADDRESS(self, NULL);
+    PyAmiga_CPointer_SET_ADDR(self, NULL);
 
     Py_RETURN_TRUE;
 }
-//-
-//+ muiobject__init()
+//- muiobject__dispose
+//+ muiobject__init
 /*! \cond */
 PyDoc_STRVAR(muiobject__init_doc,
 "_init(attr, value, keep) -> int\n\
@@ -1030,8 +863,8 @@ muiobject__init(MUIObject *self, PyObject *args) {
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__get()
+//- muiobject__init
+//+ muiobject__get
 /*! \cond */
 PyDoc_STRVAR(muiobject__get_doc,
 "_get(attr, attr_type, array=False) -> object\n\
@@ -1047,7 +880,7 @@ muiobject__get(MUIObject *self, PyObject *args) {
     ULONG attr;
     ULONG value;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
     if (!PyArg_ParseTuple(args, "O!I:_get", &PyType_Type, &type, &attr))
@@ -1064,8 +897,8 @@ muiobject__get(MUIObject *self, PyObject *args) {
     /* Convert value into the right Python object */
     return convertToPython(type, value);
 }
-//-
-//+ muiobject__set()
+//- muiobject__get
+//+ muiobject__set
 /*! \cond */
 PyDoc_STRVAR(muiobject__set_doc,
 "_set(attr, value, keep) -> int\n\
@@ -1081,7 +914,7 @@ muiobject__set(MUIObject *self, PyObject *args) {
     ULONG attr;
     LONG value;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
     if (_set_base(self, args, &attr, &value))
@@ -1096,8 +929,8 @@ muiobject__set(MUIObject *self, PyObject *args) {
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__nnset()
+//- muiobject__set
+//+ muiobject__nnset
 /*! \cond */
 PyDoc_STRVAR(muiobject__nnset_doc,
 "_nnset(attr, value, keep) -> int\n\
@@ -1111,7 +944,7 @@ muiobject__nnset(MUIObject *self, PyObject *args) {
     ULONG attr;
     LONG value;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (_set_base(self, args, &attr, &value))
@@ -1121,8 +954,8 @@ muiobject__nnset(MUIObject *self, PyObject *args) {
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__notify()
+//- muiobject__nnset
+//+ muiobject__notify
 /*! \cond */
 PyDoc_STRVAR(muiobject__notify_doc,
 "_notify(trigattr, trigvalue)\n\
@@ -1136,7 +969,7 @@ muiobject__notify(MUIObject *self, PyObject *args) {
     LONG trigattr, trigvalue, value;
     Object *obj;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "IO", &trigattr, &v))
@@ -1162,8 +995,8 @@ muiobject__notify(MUIObject *self, PyObject *args) {
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__do()
+//- muiobject__notify
+//+ muiobject__do
 /*! \cond */
 PyDoc_STRVAR(muiobject__do_doc,
 "_do(method, args)\n\
@@ -1178,7 +1011,7 @@ muiobject__do(MUIObject *self, PyObject *args) {
     DoMsg *msg;
     int meth, i, n;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "IO!", &meth, &PyTuple_Type, &meth_data))
@@ -1208,20 +1041,20 @@ muiobject__do(MUIObject *self, PyObject *args) {
 
     free(msg);
     return ret;
-}//-
+}//- muiobject__do
 //+ muiobject__addmember
 static PyObject *
 muiobject__addmember(MUIObject *self, PyObject *args) {
     MUIObject *child;
     Object *obj, *child_obj;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
         return NULL;
 
-    child_obj = GET_ADDRESS(child);
+    child_obj = PyAmiga_CPointer_GET_ADDR(child);
     if (NULL == child_obj) {
         PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
         return NULL;
@@ -1240,13 +1073,13 @@ muiobject__remmember(MUIObject *self, PyObject *args) {
     MUIObject *child;
     Object *obj, *child_obj;
 
-    obj = GET_ADDRESS(self);
+    obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
         return NULL;
 
-    child_obj = GET_ADDRESS(child);
+    child_obj = PyAmiga_CPointer_GET_ADDR(child);
     if (NULL == child_obj) {
         PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
         return NULL;
@@ -1292,7 +1125,6 @@ static PyTypeObject MUIObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
     
-    tp_base         : &CPointer_Type,
     tp_init         : (initproc)muiobject_init,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
@@ -1303,7 +1135,7 @@ static PyTypeObject MUIObject_Type = {
     tp_methods      : muiobject_methods,
     tp_members      : muiobject_members,
 };
-//-
+//- MUIObject_Type
 
  
 /*
@@ -1381,10 +1213,10 @@ _muimaster__initapp(PyObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O!:_initapp", &MUIObject_Type, &mo))
         return NULL;
 
-    obj = GET_ADDRESS(mo);
+    obj = PyAmiga_CPointer_GET_ADDR(mo);
     CHECK_OBJ(obj);
 
-    /* don't assign global_app directly with return of GET_ADDRESS,
+    /* don't assign global_app directly with return of PyAmiga_CPointer_GET_ADDR,
     ** as CHECK_OBJ() can cause a return of this function.
     */
 
@@ -1408,7 +1240,7 @@ static PyMethodDef _muimaster_methods[] = {
 ** Public Functions
 */
 
-//+ PyMorphOS_CloseModule()
+//+ PyMorphOS_CloseModule
 void
 PyMorphOS_CloseModule(void) {
     MCCNode *node;
@@ -1437,7 +1269,84 @@ PyMorphOS_CloseModule(void) {
 
     DPRINT("Bye\n");
 }
-//-
+//- PyMorphOS_CloseModule
+//+ all_ins
+static int
+all_ins(PyObject *m) {
+    INSI(m, "VLatest", (long)MUIMASTER_VLATEST);
+    INSS(m, "TIME", __TIME__); 
+
+    /* BOOPSI general methods */
+
+    /* ClassID */
+    INSS(m, "MUIC_Aboutmui", MUIC_Aboutmui);
+    INSS(m, "MUIC_Application", MUIC_Application);
+    INSS(m, "MUIC_Applist", MUIC_Applist);
+    INSS(m, "MUIC_Area", MUIC_Area);
+    INSS(m, "MUIC_Balance", MUIC_Balance);
+    INSS(m, "MUIC_Bitmap", MUIC_Bitmap);
+    INSS(m, "MUIC_Bodychunk", MUIC_Bodychunk);
+    INSS(m, "MUIC_Boopsi", MUIC_Boopsi);
+    INSS(m, "MUIC_Coloradjust", MUIC_Coloradjust);
+    INSS(m, "MUIC_Colorfield", MUIC_Colorfield);
+    INSS(m, "MUIC_Configdata", MUIC_Configdata);
+    INSS(m, "MUIC_Cycle", MUIC_Cycle);
+    INSS(m, "MUIC_Dataspace", MUIC_Dataspace);
+    INSS(m, "MUIC_Dirlist", MUIC_Dirlist);
+    INSS(m, "MUIC_Dtpic", MUIC_Dtpic);
+    INSS(m, "MUIC_Family", MUIC_Family);
+    INSS(m, "MUIC_Floattext", MUIC_Floattext);
+    INSS(m, "MUIC_Frameadjust", MUIC_Frameadjust);
+    INSS(m, "MUIC_Framedisplay", MUIC_Framedisplay);
+    INSS(m, "MUIC_Gadget", MUIC_Gadget);
+    INSS(m, "MUIC_Gauge", MUIC_Gauge);
+    INSS(m, "MUIC_Group", MUIC_Group);
+    INSS(m, "MUIC_Image", MUIC_Image);
+    INSS(m, "MUIC_Imageadjust", MUIC_Imageadjust);
+    INSS(m, "MUIC_Imagedisplay", MUIC_Imagedisplay);
+    INSS(m, "MUIC_Knob", MUIC_Knob);
+    INSS(m, "MUIC_Levelmeter", MUIC_Levelmeter);
+    INSS(m, "MUIC_List", MUIC_List);
+    INSS(m, "MUIC_Listview", MUIC_Listview);
+    INSS(m, "MUIC_Mccprefs", MUIC_Mccprefs);
+    INSS(m, "MUIC_Menu", MUIC_Menu);
+    INSS(m, "MUIC_Menuitem", MUIC_Menuitem);
+    INSS(m, "MUIC_Menustrip", MUIC_Menustrip);
+    INSS(m, "MUIC_Notify", MUIC_Notify);
+    INSS(m, "MUIC_Numeric", MUIC_Numeric);
+    INSS(m, "MUIC_Numericbutton", MUIC_Numericbutton);
+    INSS(m, "MUIC_Palette", MUIC_Palette);
+    INSS(m, "MUIC_Penadjust", MUIC_Penadjust);
+    INSS(m, "MUIC_Pendisplay", MUIC_Pendisplay);
+    INSS(m, "MUIC_Popasl", MUIC_Popasl);
+    INSS(m, "MUIC_Popframe", MUIC_Popframe);
+    INSS(m, "MUIC_Popimage", MUIC_Popimage);
+    INSS(m, "MUIC_Poplist", MUIC_Poplist);
+    INSS(m, "MUIC_Popobject", MUIC_Popobject);
+    INSS(m, "MUIC_Poppen", MUIC_Poppen);
+    INSS(m, "MUIC_Popscreen", MUIC_Popscreen);
+    INSS(m, "MUIC_Popstring", MUIC_Popstring);
+    INSS(m, "MUIC_Prop", MUIC_Prop);
+    INSS(m, "MUIC_Radio", MUIC_Radio);
+    INSS(m, "MUIC_Rectangle", MUIC_Rectangle);
+    INSS(m, "MUIC_Register", MUIC_Register);
+    INSS(m, "MUIC_Scale", MUIC_Scale);
+    INSS(m, "MUIC_Scrmodelist", MUIC_Scrmodelist);
+    INSS(m, "MUIC_Scrollbar", MUIC_Scrollbar);
+    INSS(m, "MUIC_Scrollgroup", MUIC_Scrollgroup);
+    INSS(m, "MUIC_Semaphore", MUIC_Semaphore);
+    INSS(m, "MUIC_Settings", MUIC_Settings);
+    INSS(m, "MUIC_Settingsgroup", MUIC_Settingsgroup);
+    INSS(m, "MUIC_Slider", MUIC_Slider);
+    INSS(m, "MUIC_String", MUIC_String);
+    INSS(m, "MUIC_Text", MUIC_Text);
+    INSS(m, "MUIC_Virtgroup", MUIC_Virtgroup);
+    INSS(m, "MUIC_Volumelist", MUIC_Volumelist);
+    INSS(m, "MUIC_Window", MUIC_Window);
+
+    return 0;
+}
+//- all_ins
 
 //+ INITFUNC()
 PyMODINIT_FUNC
@@ -1446,6 +1355,8 @@ INITFUNC(void) {
 
     MUIMasterBase = PyMorphOS_OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (!MUIMasterBase) return;
+
+    if (import__core() < 0) return;
 
     id_counter = 0;
     global_app = NULL;
@@ -1456,14 +1367,13 @@ INITFUNC(void) {
     OnAttrChangedHook.h_SubEntry = (HOOKFUNC) &OnAttrChanged; 
     
     /* New Python types initialization */
-    if (PyType_Ready(&CPointer_Type) < 0) return;
+    MUIObject_Type.tp_base = &PyAmiga_CPointer_Type;
     if (PyType_Ready(&MUIObject_Type) < 0) return;
 
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
 
-    ADD_TYPE(m, "CPointer", &CPointer_Type);
-    ADD_TYPE(m, "MUIObject", &MUIObject_Type);
+    ADD_TYPE(m, "PyMuiObject", &MUIObject_Type);
 
     if (all_ins(m)) return;
 
