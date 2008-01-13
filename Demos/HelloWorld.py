@@ -2,8 +2,8 @@ from pymui import *
 
 app = Application()
 
-mainwin = Window(app,
-    Title="Rebootator for AmigaOS 4.0",
+mainwin = Window(
+    Title="HelloWorld - PyMUI demo test",
     LeftEdge=-2,
     TopEdge=-2,
     Width=320,
@@ -11,28 +11,32 @@ mainwin = Window(app,
  
 win = Aboutmui(app)
 win.Notify('CloseRequest', True, win.Set, 'Open', False)
-win.Open = True      
 
-g = VGroup(mainwin)
+app.AddChild(mainwin)
+
+g = VGroup()
 
 # just a simple text gadget
-root = Text(g, "\033cHello! I'm a very good program!\nClose me now...",
+root = Text("\033cHello! I'm a very good program!\nClose me now...",
             Draggable=True,
             Frame=MUIV_Frame_String)
 
-g2 = HGroup(g)    
-SimpleButton(g2, "Close")
-SimpleButton(g2, "Me")
-SimpleButton(g2, "Now!")
+g2 = HGroup()
 
-# Creates our mwin window with our text gadget inside
+g2.AddChild(SimpleButton("Close"))
+g2.AddChild(SimpleButton("Me"))
+g2.AddChild(SimpleButton("Now!"))
 
+g.AddChild(root)  
+g.AddChild(g2)
+
+mainwin.AddChild(g)
 mainwin.Open = True
 mainwin.Notify('CloseRequest', True, app.ReturnID, -1)
+
+win.Open = True    
 
 # Go!
 
 app.Mainloop()
-
-
 

@@ -1042,57 +1042,6 @@ muiobject__do(MUIObject *self, PyObject *args) {
     free(msg);
     return ret;
 }//- muiobject__do
-//+ muiobject__addmember
-static PyObject *
-muiobject__addmember(MUIObject *self, PyObject *args) {
-    MUIObject *child;
-    Object *obj, *child_obj;
-
-    obj = PyAmiga_CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
-        return NULL;
-
-    child_obj = PyAmiga_CPointer_GET_ADDR(child);
-    if (NULL == child_obj) {
-        PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
-        return NULL;
-    }
-
-    DoMethod(obj, OM_ADDMEMBER, (ULONG) child_obj);
-    if (NULL == muiobject__incref(child))
-        return NULL;
-
-    Py_RETURN_TRUE;
-}
-//- muiobject__addmember
-//+ muiobject__remmember
-static PyObject *
-muiobject__remmember(MUIObject *self, PyObject *args) {
-    MUIObject *child;
-    Object *obj, *child_obj;
-
-    obj = PyAmiga_CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &child))
-        return NULL;
-
-    child_obj = PyAmiga_CPointer_GET_ADDR(child);
-    if (NULL == child_obj) {
-        PyErr_SetString(PyExc_ValueError, "given MUI object is died!");
-        return NULL;
-    }
-
-    if (NULL == muiobject__decref(child))
-        return NULL;
-
-    DoMethod(obj, OM_REMMEMBER, (ULONG) child_obj);
-
-    Py_RETURN_TRUE;
-}
-//- muiobject__remmember
 
 //+ MUIObject_Type
 static PyMemberDef muiobject_members[] = {
@@ -1112,8 +1061,6 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_nnset",      (PyCFunction) muiobject__nnset,     METH_VARARGS, muiobject__nnset_doc},
     {"_notify",     (PyCFunction) muiobject__notify,    METH_VARARGS, muiobject__notify_doc},
     {"_do",         (PyCFunction) muiobject__do,        METH_VARARGS, muiobject__do_doc},
-    {"_addmember",  (PyCFunction) muiobject__addmember, METH_VARARGS, NULL},
-    {"_remmember",  (PyCFunction) muiobject__remmember, METH_VARARGS, NULL},
     {NULL, NULL}    /* sentinel */
 };
 
@@ -1277,6 +1224,8 @@ all_ins(PyObject *m) {
     INSS(m, "TIME", __TIME__); 
 
     /* BOOPSI general methods */
+    INSI(m, "OM_ADDMEMBER", OM_ADDMEMBER);
+    INSI(m, "OM_REMMEMBER", OM_REMMEMBER);
 
     /* ClassID */
     INSS(m, "MUIC_Aboutmui", MUIC_Aboutmui);
