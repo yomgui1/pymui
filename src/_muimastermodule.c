@@ -412,16 +412,21 @@ static PyObject *
 convertToPython(PyTypeObject *type, long value) {   
     DPRINT("type: %p (%s), value: %ld %lu %#lx\n", type, type->tp_name, (ULONG) value, value, (ULONG) value);
 
-    if (type == &PyString_Type) {
-        if (NULL != value) return PyString_FromString((char *)value);
-        Py_RETURN_NONE;
-    } else if (type == &PyBool_Type) {
+    if (type == &PyInt_Type)
+        return PyInt_FromLong(value);
+    else if (type == &PyLong_Type)
+        return PyLong_FromUnsignedLong(value);
+    else if (type == &PyBool_Type)
         return PyBool_FromLong(value);
-    } else if (PyType_IsSubtype(type, &MUIObject_Type)) {
+
+    /* Others supported types are pointers now */
+
+    if (0 == value)
+        Py_RETURN_NONE;
+
+    if (PyType_IsSubtype(type, &MUIObject_Type)) {
         PyObject *v;
         Object *obj;
-
-        if (NULL == value) Py_RETURN_NONE;
 
         obj = (Object *) value;
         if (!get(obj, MUIA_PyMod_PyObject, &v)) {
@@ -437,25 +442,14 @@ convertToPython(PyTypeObject *type, long value) {
         }
         
         return v;
-    } else if (PyType_IsSubtype(type, &PyAmiga_CPointer_Type)) {
-        PyObject *v, *args;
-        
-        args = PyTuple_Pack(1, value);
-        if (NULL == args) return NULL;
-        v = PyType_GenericNew(&PyAmiga_CPointer_Type, args, NULL);
-        Py_DECREF(args);
+    } else if (PyType_IsSubtype(type, &PyAmiga_CPointer_Type))
+        return PyAmiga_CPointer_New((void *) value);
+     else if (PyType_IsSubtype(type, &PyString_Type))
+        return PyString_FromString((char *)value);
 
-        return v;
-    }
-    else if (type == &PyInt_Type)
-        return PyInt_FromLong(value);
-    else if (type == &PyLong_Type)
-        return PyLong_FromUnsignedLong(value);
-
-    PyErr_SetString(PyExc_TypeError, "unsupported convert type");
-    return NULL;
+    return PyErr_Format(PyExc_TypeError, "unsupported convert type: %s", type->tp_name);
 }
-//-
+//- convertToPython
 //+ OnAttrChanged
 static void
 OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg)  { 
