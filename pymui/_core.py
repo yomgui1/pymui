@@ -651,6 +651,9 @@ class Notify(PyMuiObject):
     def _GetAttrType(self, attr):
         return self.GetAttribute(attr).type
 
+    def _OnBoopsiMethod(self, id, msg):
+        print "MUI wants call method %s , data @ %s" % (hex(id), hex(msg))
+
     def Set(self, attr, value):
         self.GetAttribute(attr).set(self, value)
 
@@ -788,7 +791,6 @@ class Application(Notify, ContainerMixer):
     def __init__(self, *args, **kwds):
         super(Application, self).__init__(*args, **kwds)
         ContainerMixer.__init__(self)
-        _m._initapp(self)
 
     def Init(self):
         pass
@@ -796,15 +798,15 @@ class Application(Notify, ContainerMixer):
     def Term(self):
         pass
 
-    def Mainloop(self):
+    def Run(self):
         self.Init()
         try:
-            _m.mainloop()
+            _m.mainloop(self)
         finally:
             self.Term()
 
     def CheckParent(self, parent):
-        raise SyntaxError("Application instance cannot be a child")
+        raise SyntaxError("Application instance cannot be a child of anything")
         
     #
     ## Children handling functions requested by the ContainerMixer class

@@ -327,16 +327,19 @@ PyModMCC_New(struct IClass *cl, Object *obj, struct opSet *msg) {
 }
 //- PyModMCC_New
 //+ PyModMCC_Dispose
-static void
-PyModMCC_Dispose(struct IClass *cl, Object *obj) {
+static ULONG
+PyModMCC_Dispose(struct IClass *cl, Object *obj, Msg msg) {
     PyModMCCData *data = INST_DATA(cl, obj);
     PyObject *pyo = data->pmd_PyObject;
 
     DPRINT("MUI=%p, PyObj=%p\n", obj, pyo);
     
+    // The python object may has been already unlinked
     if (NULL != pyo) {
         PyAmiga_CPointer_SET_ADDR(pyo, NULL);
     }
+
+    return DoSuperMethodA(cl, obj, msg);
 }
 //- PyModMCC_Dispose
 //+ PyModMCC_Get
@@ -354,12 +357,47 @@ PyModMCC_Get(struct IClass *cl, Object *obj, struct opGet *msg) {
 //- PyModMCC_Get
 //+ PyMod MCC Dispatcher
 DISPATCHER(PyModMCC) {
+    PyModMCCData *data;
+    PyObject *pyobj;
+
     //DPRINT("cl=%p, obj=%p, method=%#x\n", cl, obj, msg->MethodID);
     
     switch (msg->MethodID) {
-        case OM_NEW: return PyModMCC_New(cl, obj, (APTR) msg);
-        case OM_DISPOSE: PyModMCC_Dispose(cl, obj); break;
-        case OM_GET: return PyModMCC_Get(cl, obj, (APTR) msg);
+    case OM_NEW:     return PyModMCC_New(cl, obj, (APTR) msg);
+    case OM_DISPOSE: return PyModMCC_Dispose(cl, obj, (APTR) msg);
+    case OM_GET:     return PyModMCC_Get(cl, obj, (APTR) msg);
+
+        /* following methods should never be handled by a Python user method */
+    case OM_SET:
+    case MUIM_Notify:
+    case MUIM_CallHook:
+        return DoSuperMethodA(cl, obj, msg);
+        
+    }
+
+    /* Try to call Python a method for this BOOPSI method, if exists */
+    data = INST_DATA(cl, obj);
+    pyobj = data->pmd_PyObject;
+    if (NULL != pyobj) {
+        PyObject *result_obj;
+
+        Py_INCREF(pyobj); // because a bad method can destroy this object
+        result_obj = PyObject_CallMethod(pyobj, "_OnBoopsiMethod", "kk", msg->MethodID, (ULONG)(msg + 1));
+        Py_DECREF(pyobj);
+        
+        if (NULL != result_obj) {
+            LONG res;
+
+            /* Do not call super ? */
+            if (result_obj != Py_None)
+                res = PyLong_AsUnsignedLong(result_obj);
+            else
+                res = DoSuperMethodA(cl, obj, msg);
+
+            Py_DECREF(result_obj);
+            return res;
+        } else
+            return 0;
     }
     
     return DoSuperMethodA(cl, obj, msg);
@@ -453,21 +491,26 @@ convertToPython(PyTypeObject *type, long value) {
 //+ OnAttrChanged
 static void
 OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg)  { 
-    PyObject *res, *attr_obj, *value_obj;
+    PyObject *res, *attr_obj, *value_obj, *py_obj;
     LONG value = msg->value;
 
-    DPRINT("Attribute %#lx Changed for PyMCC object @ %p (MUI=%p) to %ld %lu %p\n",
-           msg->attr, msg->py_obj, obj, value, (ULONG) value, (APTR) value);
+    py_obj = msg->py_obj;
 
+    DPRINT("Attribute %#lx Changed for PyMCC object @ %p (MUI=%p) to %ld %lu %p\n",
+           msg->attr, py_obj, obj, value, (ULONG) value, (APTR) value);
+
+    Py_INCREF(py_obj); // to prevent that our object was deleted during methods calls.
+    
     /* Get the attribute type */
     attr_obj = Py_BuildValue("I", msg->attr);
     if (NULL == attr_obj) return;
 
     DPRINT("Calling _GetAttrType(attr_obj = %p)...\n", attr_obj);
-    res = PyObject_CallMethod(msg->py_obj, "_GetAttrType", "O", attr_obj);
+    res = PyObject_CallMethod(py_obj, "_GetAttrType", "O", attr_obj);
     if ((NULL == res) || (res == Py_None)) {
         Py_DECREF(attr_obj);
         Py_XDECREF(res);
+        Py_DECREF(py_obj);
         PyErr_Format(PyExc_RuntimeError, "can't determinate type for attribute %#x", msg->attr);
         return;
     }
@@ -477,17 +520,19 @@ OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg)  {
     Py_DECREF(res);
     if (NULL == value_obj) {
         Py_DECREF(attr_obj);
+        Py_DECREF(py_obj);
         return;
     }
     
     /* Call the high-level notify method */
     DPRINT("Calling OnAttrChanged(attr_obj = %p, value_obj = %p)...\n", attr_obj, value_obj);
-    PyObject_CallMethod(msg->py_obj, "_OnAttrChanged", "OO", attr_obj, value_obj);
+    PyObject_CallMethod(py_obj, "_OnAttrChanged", "OO", attr_obj, value_obj);
 
     // nothing to do more... so don't take care about result of this call
     
     Py_DECREF(attr_obj);
     Py_DECREF(value_obj);
+    Py_DECREF(py_obj);
 }
 //-
 //+ _keep_ref
@@ -744,7 +789,7 @@ muiobject__create(MUIObject *self, PyObject *args) {
 
     data = NULL;
     tags = NULL;
-    if (!PyArg_ParseTuple(args, "s|O!:_create", &cl, &PyDict_Type, &data))
+    if (!PyArg_ParseTuple(args, "s|O!", &cl, &PyDict_Type, &data))
         return NULL;
 
     if (NULL != data) {
@@ -792,6 +837,11 @@ muiobject__create(MUIObject *self, PyObject *args) {
         tags[i].ti_Tag = TAG_DONE;
     }
 
+    /* Notes: Here, Python objects passed througth function argument have their references increased
+     * case by case depending on flags of each attributes defined in mui_attribute dict of the class.
+     * But a call to the _init method should be done to handle that before calling _create.
+     */
+
     mui_obj = myMUI_NewObject(self, cl, tags);
     DPRINT("MUI_NewObject(\"%s\") = %p\n", cl, mui_obj);
     
@@ -830,7 +880,7 @@ muiobject__dispose(MUIObject *self) {
         Py_RETURN_FALSE;
     }
     
-    MUI_DisposeObject(obj);
+    MUI_DisposeObject(obj); // should not call any Python code (done by PyModMCC).
     PyAmiga_CPointer_SET_ADDR(self, NULL);
 
     Py_RETURN_TRUE;
@@ -877,7 +927,7 @@ muiobject__get(MUIObject *self, PyObject *args) {
     obj = PyAmiga_CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
-    if (!PyArg_ParseTuple(args, "O!I:_get", &PyType_Type, &type, &attr))
+    if (!PyArg_ParseTuple(args, "O!I", &PyType_Type, &type, &attr))
         return NULL;
 
     DPRINT("type: %s, attr: 0x%08x\n", type->tp_name, attr);
@@ -980,8 +1030,12 @@ muiobject__notify(MUIObject *self, PyObject *args) {
     else
         value = trigvalue;
 
-    /* Not needed to increment self reference because notifications
-       are destroyed in the same time as the MUI object */
+    /* Notes: Like in _do, the hook OnAttrChangedHook cannot be called
+     * if the Python object self is deallocated (except by a bad design inside a MUI class, that does
+     * some DoMethod on died MUI obejcts... but I can't do anything for that here :-p).
+     * Because if self is deallocated, muiobject_dealloc() will call MUI_DisposeObject on self!
+     * And as calls are synchrones, calling _notify will raise an exception during the CHECK_OBJ().
+     */
  
     DoMethod(obj, MUIM_Notify, trigattr, trigvalue,
         MUIV_Notify_Self, 5,
@@ -1030,10 +1084,20 @@ muiobject__do(MUIObject *self, PyObject *args) {
         DPRINT("  args[%u]: %d %u 0x%08x\n", i, *ptr, (ULONG) *ptr, *ptr);
     }
 
+    /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
+     * even if this call cause some Python code to be executed causing a DECREF of these objects.
+     * This is protected by the fact that objects have their ref counter increased until they remains
+     * inside the argument tuple of this function.
+     * So here there is no need to INCREF argument python objects.
+     */
+
     msg->MethodID = meth;
     ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
-
     free(msg);
+
+    if (PyErr_Occurred())
+        return NULL;
+
     return ret;
 }//- muiobject__do
 
@@ -1085,10 +1149,10 @@ static PyTypeObject MUIObject_Type = {
 ** List of functions exported by this module reside here
 */
 
-//+ _muimaster_mainloop()
+//+ _muimaster_mainloop
 /*! \cond */
 PyDoc_STRVAR(_muimaster_mainloop_doc,
-"mainloop().\n\
+"mainloop(app) -> None.\n\
 \n\
 Simple main loop.\n\
 The loop exits when the app object received a MUIV_Application_ReturnID_Quit\n\
@@ -1096,22 +1160,27 @@ or by a sending a SIGBREAKF_CTRL_C to the task.\n\
 \n\
 Notes:\n\
  - SIGBREAKF_CTRL_C signal generates a PyExc_KeyboardInterrupt exception\n\
- - no checks if app is really an application MUI object");
+ - doesn't check if app is really an application MUI object");
 /*! \endcond */
 
 static PyObject *
-_muimaster_mainloop(PyObject *self) {
+_muimaster_mainloop(PyObject *self, PyObject *args) {
     ULONG sigs = 0;
+    PyObject *pyapp;
+    Object *app;
     
-    DPRINT("global_app = %p\n", global_app);
-
-    if (NULL == global_app) {
-        PyErr_SetString(PyExc_RuntimeError, "No Application created");
+    if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &pyapp))
         return NULL;
-    }
+
+    app = PyAmiga_CPointer_GET_ADDR(pyapp);
+    CHECK_OBJ(app);
+
+    /* This code will not check that the given object is really an Application object;
+     * That should be checked by the caller!
+     */
 
     DPRINT("Goes into mainloop...\n");
-    while (DoMethod(global_app, MUIM_Application_NewInput, (ULONG) &sigs) != MUIV_Application_ReturnID_Quit) {
+    while (DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs) != MUIV_Application_ReturnID_Quit) {
         //DPRINT("sigs=%x\n", sigs);
         if (sigs)
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
@@ -1131,8 +1200,8 @@ _muimaster_mainloop(PyObject *self) {
     
     Py_RETURN_NONE;
 }
-//-
-//+ _muimaster_newid()
+//- _muimaster_mainloop
+//+ _muimaster_newid
 /*! \cond */
 PyDoc_STRVAR(_muimaster_newid_doc,
 "newid() -> long.\n\
@@ -1144,35 +1213,12 @@ static PyObject *
 _muimaster_newid(PyObject *self) {
     return PyLong_FromUnsignedLong(++id_counter);
 }
-//-
-//+ _muimaster__initapp()
-static PyObject *
-_muimaster__initapp(PyObject *self, PyObject *args) {
-    PyObject *mo;
-    Object *obj;
-
-    if (!PyArg_ParseTuple(args, "O!:_initapp", &MUIObject_Type, &mo))
-        return NULL;
-
-    obj = PyAmiga_CPointer_GET_ADDR(mo);
-    CHECK_OBJ(obj);
-
-    /* don't assign global_app directly with return of PyAmiga_CPointer_GET_ADDR,
-    ** as CHECK_OBJ() can cause a return of this function.
-    */
-
-    global_app = obj; 
-    DPRINT("App obj = %p now\n", obj);
-
-    Py_RETURN_NONE;
-}
-//-
+//- _muimaster_newid
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", (PyCFunction) _muimaster_mainloop, METH_NOARGS, _muimaster_mainloop_doc},
     {"newid", (PyCFunction) _muimaster_newid, METH_NOARGS, _muimaster_newid_doc},
-    {"_initapp", (PyCFunction) _muimaster__initapp, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
