@@ -19,7 +19,8 @@ from UserDict import DictMixin
 from itertools import chain
 import weakref
 from pyamiga._core import *
-import pyamiga.intuition as _intuition
+from pyamiga._exec import List, Node
+import pyamiga.intuition as _intui
 
 debugme = False
 
@@ -45,6 +46,8 @@ CT_ULONG = long
 
 EveryTime = TriggerValue = 0x49893131
 NotTriggerValue = 0x49893133
+
+isiterable = lambda x: hasattr(x, '__iter__')
 
 class InputEventStruct(Struct):
     def __init__(self, address):
@@ -100,19 +103,19 @@ PyMuiObjectArray = CArrayFactory('PyMuiObjectArray', PyMuiObject)
 ##############################################################################
 ### ERRORS
 ##############################################################################
-    
+
 class PyMuiKeyError(KeyError):
     name = 'Key'
 
     def __init__(self, cl, key):
         KeyError.__init__(self)
         self.cl = cl
-        
+
         if isinstance(key, basestring):
             self.key = key
         else:
             self.key = hex(key)
-            
+
     def __str__(self):
         return "%s %s doesn't exist for PyMUI class %s." % (self.name, self.key, self.cl.__name__)
 
@@ -136,7 +139,7 @@ class _PyDisposedObject(object):
         if not hasattr(self, "_name"):
             self._name = "[unknown]"
         return self.reprStr % self._name
-    
+
     def __getattr__(self, *args):
         if not hasattr(self, "_name"):
             self._name = "[unknown]"
@@ -145,9 +148,41 @@ class _PyDisposedObject(object):
     def __nonzero__(self):
         return 0
 
+##############################################################################
+### Basic classes
+##############################################################################
+
+class PyMuiObjectIterator:
+    def __init__(self, node):
+        assert isinstance(node, Node)
+        self.node = node
+        
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if self.node:
+            addr, self.node = _intui.NextObject(self.node)
+            if addr:
+                return PyMuiObject(addr)
+        raise StopIteration
+
+class PyMuiObjectList(List):
+    def __contains__(self, o):
+        for x in self:
+            if x == o:
+                return True
+
+    def __iter__(self):
+        return PyMuiObjectIterator(self.head)
+    
+class PyMuiObjectMinList(PyMuiObjectList):
+    def __init__(self, address):
+        List.__init__(self, address, True)
+
 class ContainerMixer:
     def __init__(self):
-        self.__children = []
+        self.__children = set()
 
     def _AddChild(self, child):
         raise NotImplementedError("Class %s doesn't implement method _AddChild" % self.__class__.__name__)
@@ -159,43 +194,63 @@ class ContainerMixer:
         raise NotImplementedError("Class %s doesn't implement method _IsChild" % self.__class__.__name__)
 
     def __contains__(self, child):
-        return child in self.__children or self._IsChild(child)
+        if child in self.__children:
+            return True
+        if self._IsChild(child):
+            self.__children.add(child)
+            return True
+        return False
 
     def CheckChild(self, child):
         assert isinstance(child, PyMuiObject)
         self._CheckChild(child)
         if hasattr(child, 'CheckParent'):
             child.CheckParent(self)
-        
+
     def AddChild(self, child):
-        if hasattr(child, '__iter__'):
+        if isiterable(child):
             for o in child:
                 if o in self:
                     raise PyMuiError("object %s already child of %s\n" % (o, self))
                 self.CheckChild(o)
                 if not self._AddChild(o):
                     return False
+                self.__children.add(o)
             return True
+        elif not child:
+            raise TypeError('null child')
+        elif child in self:
+            raise PyMuiError("object %s already child of %s\n" % (child, self))
         else:
-            if child in self:
-                raise PyMuiError("object %s already child of %s\n" % (child, self))
             self.CheckChild(child)
-            return self._AddChild(child)
+            if self._AddChild(child):
+                self.__children.add(child)
+                return True
+            return False
 
     def RemChild(self, child):
-        if hasattr(child, '__iter__'):
+        if isiterable(child):
             for o in child:
                 if o not in self:
                     raise PyMuiError("object %s is not a child of %s\n" % (o, self))
                 self.CheckChild(o)
                 if not self._RemChild(o):
                     return False
+                self.__children.remove(o)
             return True
+        elif not child:
+            raise TypeError('null child')
+        elif child in self:
+            raise PyMuiError("object %s is not a child of %s\n" % (child, self))
         else:
-            if child in self:
-                raise PyMuiError("object %s is not a child of %s\n" % (child, self))
             self.CheckChild(o)   
-            return self._RemChild(child)
+            if self._RemChild(child):
+                self.__children.remove(child)
+                return True
+            return False
+
+    children = property(fget=lambda self: iter(self.__children),
+                        doc="Iterable on a list of children")
 
 ##############################################################################
 ### Attributes and methods tools
@@ -211,7 +266,7 @@ class PyMuiID:
 
     def __init__(self, id):
         self.__id = long(id)
-        
+
     def __long__(self):
         return self.__id
 
@@ -229,10 +284,10 @@ class PyMuiID:
 
 class PyMuiMethod(PyMuiID):
     _name = 'Method'
-    
+
     def __init__(self, id, t_args=(), t_ret=CT_LONG):
         PyMuiID.__init__(self, id)
-        
+
         if not isinstance(t_args, tuple):
             raise TypeError("t_args should be a tuple instance, not '%s'" % type(t_args).__name__)
 
@@ -244,7 +299,7 @@ class PyMuiMethod(PyMuiID):
         def func(*args):
             o()._do(self.id, args)
         return func
-    
+
     t_ret = property(fget=lambda self: self.__t_ret,
                      doc="Returns the C type of method returns value:")
     t_args = property(fget=lambda self: self.__t_args,
@@ -252,16 +307,16 @@ class PyMuiMethod(PyMuiID):
 
 class PyMuiAttribute(PyMuiID):
     _name = 'Attribute'
-     
+
     def __init__(self, id, isg, type):
         PyMuiID.__init__(self, id)
 
         assert issubclass(type, (Struct, CPointer, bool, CT_LONG, CT_ULONG, str))
-        
+
         isg = isg.lower()
         if filter(lambda x: x not in 'isgk', isg):
             raise ValueError("isg argument should be a string formed with letters i, s, g or k.")
-        
+
         self.__fl = tuple(x in isg for x in 'isgk')
         self.__tp = type
 
@@ -280,14 +335,14 @@ class PyMuiAttribute(PyMuiID):
             raise TypeError("Value for attribute 0x%x should be of type %s, not %s"
                             % (self.id, self.__tp.__name__, type(value).__name__))
         obj._set(self.id, value, self.Keep)
-        
+
     def get(self, obj):
         if not self.__fl[2]:
             raise RuntimeError("attribute %s cannot be get" % self.id)
         if issubclass(self.__tp, Struct):
             return self.__tp(obj._get(CPointer, self.id))
         return obj._get(self.__tp, self.id)
-    
+
     type = property(fget=lambda self: self.__tp,
                     doc="Returns the type of attribute.")
     CanInit = property(fget=lambda self: self.__fl[0],
@@ -307,7 +362,7 @@ class PyMuiAttrOptionDict(object, DictMixin):
 
     def __getitem__(self, key):
         return self.__d[self.__mcl.GetAttribute(key)]
-    
+
     def __setitem__(self, key, value):
         self.__d[self.__mcl.GetAttribute(key)] = value
 
@@ -373,13 +428,13 @@ class PyMuiAttributeDict(InheritedDict):
 ##############################################################################
 ### PyMCC base
 ##############################################################################
-    
+
 class MetaPyMCC(type):
     def __new__(meta, name, bases, dct):
         debug()
         debug('name  :', name)
         debug('bases :', bases)
-        
+
         # Fetch some class customization constants
         if bases:
             header = getattr(bases[0], '__header', name)
@@ -389,7 +444,7 @@ class MetaPyMCC(type):
 
         meths = dct.pop('METHODS', ())
         attrs = dct.pop('ATTRIBUTES', ())
-        
+
         if bases:
             tb = getattr(bases[0], '__tb', 0)
         else:
@@ -414,7 +469,7 @@ class MetaPyMCC(type):
         adbases = filter(None, (getattr(b, '__mui_attrs', None) for b in bases))
         ad = dct['__mui_attrs'] = PyMuiAttributeDict(attrs, tagbase=tb, bases=adbases)
         del adbases
-        
+
         debug('dct   :', sorted(dct.keys()))
         return type.__new__(meta, name, bases, dct)
 
@@ -432,10 +487,10 @@ class MetaPyMCC(type):
 
 class Notify(PyMuiObject):
     __metaclass__ = MetaPyMCC
-    
+
     CLASSID = MUIC_Notify
     HEADER = None
-    
+
     METHODS = (
         # (Name, ID [, (<args types>, ) [, <returns type>]])
 
@@ -446,32 +501,32 @@ class Notify(PyMuiObject):
 
         # Not documented, so not supported :-P
         # GetConfigItem
-        
-        ('Export',          0x80420f1c, (PyMuiObject,)),
-        ('Import',          0x8042d012, (PyMuiObject,)),
-        ('WriteLong',       0x80428d86, (CT_ULONG, CPointer)),
-        ('WriteString',     0x80424bf4, (str, CPointer)),
+
+        ('Export',      0x80420f1c, (PyMuiObject,)),
+        ('Import',      0x8042d012, (PyMuiObject,)),
+        ('WriteLong',   0x80428d86, (CT_ULONG, CPointer)),
+        ('WriteString', 0x80424bf4, (str, CPointer)),
         )
-    
+
     ATTRIBUTES = (
         # (Name, ID, <ISGK string>, type)
-        
-        ('ApplicationObject',   0x8042d3ee, 'g',        PyMuiObject),
-        ('AppMessage',          0x80421955, 'g',        CPointer),
-        ('HelpLine',            0x8042a825, 'isg',      CT_LONG),
-        ('HelpNode',            0x80420b85, 'isgk',     str),
-        ('NoNotify',            0x804237f9, 's',        bool),
-        ('ObjectID',            0x8042d76e, 'isg',      CT_ULONG),
-        ('Parent',              0x8042e35f, 'g',        PyMuiObject),
-        ('Revision',            0x80427eaa, 'g',        CT_LONG),
-        ('UserData',            0x80420313, 'isg',      CT_ULONG),
-        ('Version',             0x80422301, 'g',        CT_LONG),
+
+        ('ApplicationObject', 0x8042d3ee, 'g',        PyMuiObject),
+        ('AppMessage',        0x80421955, 'g',        CPointer),
+        ('HelpLine',          0x8042a825, 'isg',      CT_LONG),
+        ('HelpNode',          0x80420b85, 'isgk',     str),
+        ('NoNotify',          0x804237f9, 's',        bool),
+        ('ObjectID',          0x8042d76e, 'isg',      CT_ULONG),
+        ('Parent',            0x8042e35f, 'g',        PyMuiObject),
+        ('Revision',          0x80427eaa, 'g',        CT_LONG),
+        ('UserData',          0x80420313, 'isg',      CT_ULONG),
+        ('Version',           0x80422301, 'g',        CT_LONG),
         )
-    
+
     def __init__(self, **kwds):
         self.PreCreate(**kwds)
         self.Create(**kwds)
-        
+
     def __getattr__(self, k):
         # uses the normal getattr way in first
         # then the MUI attributes search.
@@ -525,7 +580,7 @@ class Notify(PyMuiObject):
             for m in cl.mui_methods.itervalues():
                 if m.id == n: return m
         raise PyMuiMethodError(cl, name)
-    
+
     @classmethod
     def GetMethodID(cl, name):
         return cl.GetMethod(name).id
@@ -567,7 +622,7 @@ class Notify(PyMuiObject):
 
         tags = self.__tags
         del self.__tags
-        
+
         # set defaults
         if 'ObjectID' not in tags:
             tags['ObjectID'] = _m.newid()
@@ -587,7 +642,7 @@ class Notify(PyMuiObject):
 
     def Notify(self, attr, value, callback, *args):
         """Notify(attr, value, callback, *args) -> bool
-        
+
         Call this function to create a new Notification event
         on the calling instance object.
         If an MUI attribute is changing to the given value,
@@ -629,7 +684,7 @@ class Notify(PyMuiObject):
             if t[0] is callback:
                 nl.remove(t)
                 return
-            
+
         raise ValueError("No notification recorded for attribute %x and callback %s" % (attr.id, callback))
 
     def _OnAttrChanged(self, id, value):
@@ -645,7 +700,7 @@ class Notify(PyMuiObject):
                     _a.append(~value)
                 else:
                     _a.append(x)
-                
+
             callback(*_a)
 
     def _GetAttrType(self, attr):
@@ -670,21 +725,21 @@ class Notify(PyMuiObject):
 class Family(Notify):
     CLASSID = MUIC_Family
     HEADER = None
-    
+
     METHODS = (
-        ('AddHead',     0x8042e200, (PyMuiObject, )),
-        ('AddTail',     0x8042d752, (PyMuiObject, )),
-        ('Insert',      0x80424d34, (PyMuiObject, PyMuiObject)),
-        ('Remove',      0x8042f8a9, (PyMuiObject, )),
-        ('Sort',        0x80421c49, (PyMuiObject, CPointer)),
-        ('Transfer',    0x8042c14a, (PyMuiObject, PyMuiObjectArray)),
+        ('AddHead',  0x8042e200, (PyMuiObject, )),
+        ('AddTail',  0x8042d752, (PyMuiObject, )),
+        ('Insert',   0x80424d34, (PyMuiObject, PyMuiObject)),
+        ('Remove',   0x8042f8a9, (PyMuiObject, )),
+        ('Sort',     0x80421c49, (PyMuiObject, CPointer)),
+        ('Transfer', 0x8042c14a, (PyMuiObject, PyMuiObjectArray)),
         )
-    
+
     ATTRIBUTES = (    
-        #('Child',   0x8042c696, 'ik', PyMuiObject),
-        ('List',    0x80424b9e, 'g',  CPointer),
+        #('Child', 0x8042c696, 'ik', PyMuiObject),
+        ('List',   0x80424b9e, 'g',  PyMuiObjectMinList),
         )
-    
+
 #=============================================================================
 # Menustrip
 #-----------------------------------------------------------------------------
@@ -692,7 +747,7 @@ class Family(Notify):
 class Menustrip(Family):
     CLASSID = MUIC_Menustrip
     HEADER = None
-    
+
     ATTRIBUTES = (    
         ('Enabled', 0x8042815b, 'isg', bool),
         )
@@ -704,7 +759,7 @@ class Menustrip(Family):
 class Menu(Family):
     CLASSID = MUIC_Menu
     HEADER = None
-    
+
     ATTRIBUTES = (    
         ('Enabled', 0x8042ed48, 'isg',  bool),
         ('Title',   0x8042a0e3, 'isgk', str),
@@ -719,17 +774,17 @@ MUIV_Menuitem_Shortcut_Check = -1
 class Menuitem(Family):
     CLASSID = MUIC_Menuitem
     HEADER = None
-    
+
     ATTRIBUTES = (    
-        ('Checked',         0x8042562a, 'isg',  bool),
-        ('Checkit',         0x80425ace, 'isg',  bool),
-        ('CommandString',   0x8042b9cc, 'isg',  bool),
-        ('Enabled',         0x8042ae0f, 'isg',  bool),
-        ('Exclude',         0x80420bc6, 'isg',  CT_LONG),
-        ('Shortcut',        0x80422030, 'isgk', str),
-        ('Title',           0x804218be, 'isgk', str),
-        ('Toggle',          0x80424d5c, 'isg',  bool),
-        ('Trigger',         0x80426f32, 'g',    MenuItemStruct),
+        ('Checked',       0x8042562a, 'isg',  bool),
+        ('Checkit',       0x80425ace, 'isg',  bool),
+        ('CommandString', 0x8042b9cc, 'isg',  bool),
+        ('Enabled',       0x8042ae0f, 'isg',  bool),
+        ('Exclude',       0x80420bc6, 'isg',  CT_LONG),
+        ('Shortcut',      0x80422030, 'isgk', str),
+        ('Title',         0x804218be, 'isgk', str),
+        ('Toggle',        0x80424d5c, 'isg',  bool),
+        ('Trigger',       0x80426f32, 'g',    MenuItemStruct),
         )
 
 #=============================================================================
@@ -737,60 +792,66 @@ class Menuitem(Family):
 #-----------------------------------------------------------------------------
 
 class Application(Notify, ContainerMixer):
+    """Application(...) -> instance
+
+    Python wrapper on MUI Application class.
+    """
+    
     CLASSID = MUIC_Application
     HEADER = None
-    
+
     METHODS = (
-        ('AboutMUI',            0x8042d21d, (PyMuiObject, )),
-        ('AddInputHandler',     0x8042f099, (PyMuiInputHandlerNodeStruct, )),
-        ('CheckRefresh',        0x80424d68),
-        #('InputBuffered',       0x80427e59),
-        ('Load',                0x8042f90d, (str, )),
-        #('NewInput',            0x80423ba6, (, )),
-        ('OpenConfigWindow',    0x804299ba, (CT_ULONG, )),
-        #('PushMethod',          0x80429ef8, (, )),
-        ('RemInputHandler',     0x8042e7af, (PyMuiInputHandlerNodeStruct, )),
-        ('ReturnID',            0x804276ef, (CT_ULONG, )),
-        ('Save',                0x804227ef, (str, )),
-        ('SetConfigItem',       0x80424a80, (CT_ULONG, CPointer)),
-        ('ShowHelp',            0x80426479, (PyMuiObject, str, str, CT_LONG)),
+        ('AboutMUI',         0x8042d21d, (PyMuiObject, )),
+        ('AddInputHandler',  0x8042f099, (PyMuiInputHandlerNodeStruct, )),
+        ('CheckRefresh',     0x80424d68),
+        #('InputBuffered',   0x80427e59),
+        ('Load',             0x8042f90d, (str, )),
+        #('NewInput',        0x80423ba6, (, )),
+        ('OpenConfigWindow', 0x804299ba, (CT_ULONG, )),
+        #('PushMethod',      0x80429ef8, (, )),
+        ('RemInputHandler',  0x8042e7af, (PyMuiInputHandlerNodeStruct, )),
+        ('ReturnID',         0x804276ef, (CT_ULONG, )),
+        ('Save',             0x804227ef, (str, )),
+        ('SetConfigItem',    0x80424a80, (CT_ULONG, CPointer)),
+        ('ShowHelp',         0x80426479, (PyMuiObject, str, str, CT_LONG)),
         )
     ATTRIBUTES = (    
-        ('Active',          0x804260ab, 'isg',  bool),
-        ('Author',          0x80424842, 'igk',  str),
-        ('Base',            0x8042e07a, 'igk',  str),
-        ('Broker',          0x8042dbce, 'g',    CPointer),
-        ('BrokerHook',      0x80428f4b, 'isgk', CPointer),
-        ('BrokerPort',      0x8042e0ad, 'g',    CPointer),
-        ('BrokerPri',       0x8042c8d0, 'ig',   CT_LONG),
-        ('Commands',        0x80428648, 'isgk', CPointer),
-        ('Copyright',       0x8042ef4d, 'igk',  str),
-        ('Description',     0x80421fc6, 'igk',  str),
-        ('DiskObject',      0x804235cb, 'isgk', CPointer),
-        ('DoubleStart',     0x80423bc6, 'g',    bool),
-        ('DropObject',      0x80421266, 'isk',  PyMuiObject),
-        ('ForceQuit',       0x804257df, 'g',    bool),
-        ('HelpFile',        0x804293f4, 'isgk', str),
-        ('Iconified',       0x8042a07f, 'sg',   bool),
-        ('MenuAction',      0x80428961, 'g',    CT_ULONG),
-        ('MenuHelp',        0x8042540b, 'g',    CT_ULONG),
-        ('Menustrip',       0x804252d9, 'ik',   PyMuiObject),
-        ('RexxHook',        0x80427c42, 'isgk', CPointer),
-        ('RexxMsg',         0x8042fd88, 'g',    CPointer),
-        ('RexxString',      0x8042d711, 's',    str),
-        ('SingleTask',      0x8042a2c8, 'i',    bool),
-        ('Sleep',           0x80425711, 's',    bool),
-        ('Title',           0x804281b8, 'igk',  LimitedStringFactory('AppTitleStr', 30)),
-        ('UseCommodities',  0x80425ee5, 'i',    bool),
-        ('UseRexx',         0x80422387, 'i',    bool),
-        ('Version',         0x8042b33f, 'igk',  str),
-        #('Window',         0x8042bfe0, 'ik',    PyMuiObject),
-        ('WindowList',      0x80429abe, 'g',    CPointer),
+        ('Active',         0x804260ab, 'isg',  bool),
+        ('Author',         0x80424842, 'igk',  str),
+        ('Base',           0x8042e07a, 'igk',  str),
+        ('Broker',         0x8042dbce, 'g',    CPointer),
+        ('BrokerHook',     0x80428f4b, 'isgk', CPointer),
+        ('BrokerPort',     0x8042e0ad, 'g',    CPointer),
+        ('BrokerPri',      0x8042c8d0, 'ig',   CT_LONG),
+        ('Commands',       0x80428648, 'isgk', CPointer),
+        ('Copyright',      0x8042ef4d, 'igk',  str),
+        ('Description',    0x80421fc6, 'igk',  str),
+        ('DiskObject',     0x804235cb, 'isgk', CPointer),
+        ('DoubleStart',    0x80423bc6, 'g',    bool),
+        ('DropObject',     0x80421266, 'isk',  PyMuiObject),
+        ('ForceQuit',      0x804257df, 'g',    bool),
+        ('HelpFile',       0x804293f4, 'isgk', str),
+        ('Iconified',      0x8042a07f, 'sg',   bool),
+        ('MenuAction',     0x80428961, 'g',    CT_ULONG),
+        ('MenuHelp',       0x8042540b, 'g',    CT_ULONG),
+        ('Menustrip',      0x804252d9, 'ik',   PyMuiObject),
+        ('RexxHook',       0x80427c42, 'isgk', CPointer),
+        ('RexxMsg',        0x8042fd88, 'g',    CPointer),
+        ('RexxString',     0x8042d711, 's',    str),
+        ('SingleTask',     0x8042a2c8, 'i',    bool),
+        ('Sleep',          0x80425711, 's',    bool),
+        ('Title',          0x804281b8, 'igk',  LimitedStringFactory('AppTitleStr', 30)),
+        ('UseCommodities', 0x80425ee5, 'i',    bool),
+        ('UseRexx',        0x80422387, 'i',    bool),
+        ('Version',        0x8042b33f, 'igk',  str),
+        #('window',         0x8042bfe0, 'i',    PyMuiObject),
+        ('WindowList',     0x80429abe, 'g',    PyMuiObjectList),
         )
 
-    def __init__(self, *args, **kwds):
+    def __init__(self, Window=None, *args, **kwds):
         super(Application, self).__init__(*args, **kwds)
         ContainerMixer.__init__(self)
+        self.AddChild(Window)
 
     def Init(self):
         pass
@@ -807,11 +868,11 @@ class Application(Notify, ContainerMixer):
 
     def CheckParent(self, parent):
         raise SyntaxError("Application instance cannot be a child of anything")
-        
+
     #
     ## Children handling functions requested by the ContainerMixer class
     #
-    
+
     def _CheckChild(self, child):
         if not isinstance(child, Window):
             raise TypeError("Application accept only Window instances as children")
@@ -821,6 +882,9 @@ class Application(Notify, ContainerMixer):
 
     def _RemChild(self, child):
         return self.RemMember(child)
+
+    def _IsChild(self, child):
+        return child in self.WindowList
 
 #=============================================================================
 # Window
@@ -870,10 +934,10 @@ class Window(Notify, ContainerMixer):
 
     others arguments: see the Notify.
     """
-    
+
     CLASSID = MUIC_Window
     HEADER = None
-    
+
     ATTRIBUTES = (
         ('RootObject',      0x8042cba5, 'isgk', PyMuiObject),
         ('DefaultObject',   0x804294d7, 'isgk', PyMuiObject),
@@ -885,12 +949,12 @@ class Window(Notify, ContainerMixer):
         ('TopEdge',         0x80427c66, 'ig',   CT_LONG),
         ('Width',           0x8042dcae, 'ig',   CT_LONG),
         ('Height',          0x80425846, 'ig',   CT_LONG),
-        
+
         ('AltLeftEdge',     0x80422d65, 'ig',   CT_LONG),
         ('AltTopEdge',      0x8042e99b, 'ig',   CT_LONG),
         ('AltWidth',        0x804260f4, 'ig',   CT_LONG),
         ('AltHeight',       0x8042cce3, 'ig',   CT_LONG),
-        
+
         ('AppWindow',       0x804280cf, 'i',    bool),
         ('Backdrop',        0x8042c0bb, 'i',    bool),
         ('Borderless',      0x80429b79, 'i',    bool),
@@ -903,14 +967,14 @@ class Window(Notify, ContainerMixer):
 
         ('Activate',        0x80428d2f, 'isg',  bool),
         ('NoMenus',         0x80429df5, 'is',   bool),
-        
+
         ('FancyDrawing',            0x8042bd0e, 'isg',  bool),
         ('ID',                      0x804201bd, 'isg',  CT_ULONG),
         ('Title',                   0x8042ad3d, 'isgk', str),
         ('UseBottomBorderScroller', 0x80424e79, 'isg',  bool),
         ('UseLeftBorderScroller',   0x8042433e, 'isg',  bool),
         ('UseRightBorderScroller',  0x8042c05e, 'isg',  bool),
-      
+
         ('Sleep',           0x8042e7db, 'sg',   bool),
         ('Open',            0x80428aa0, 'sg',   bool),
         ('CloseRequest',    0x8042e86e, 'g',    bool),
@@ -921,9 +985,9 @@ class Window(Notify, ContainerMixer):
 
         ('MenuAction',      0x80427521, 'isg',  CT_ULONG),
         ('Menustrip',       0x8042855e, 'ig',   CPointer),
-        
+
         ('PublicScreen',    0x804278e4, 'isgk', str),
-        ('Screen',          0x8042df4f, 'isgk', _intuition.Screen),
+        ('Screen',          0x8042df4f, 'isgk', _intui.Screen),
         ('ScreenTitle',     0x804234b0, 'isgk', str),
         )
 
@@ -931,12 +995,12 @@ class Window(Notify, ContainerMixer):
         if title:
             kwds['Title'] = title
         self.PreCreate(**kwds)
-        
+
         root = PyMuiObject()
         root._create(MUIC_Rectangle)
-        
+
         self.SetOption('RootObject', root)
-        
+
         self.Create(**kwds)
         ContainerMixer.__init__(self)      
 
@@ -985,7 +1049,7 @@ class Aboutmui(Window):
 
     def _CheckChild(self, child):
         raise SyntaxError("Aboutmui instance doesn't accept children")
-        
+
 #=============================================================================
 # Area
 #-----------------------------------------------------------------------------
@@ -1035,13 +1099,13 @@ class Rectangle(Area):
     CLASSID = MUIC_Rectangle
     HEADER = None
     ATTRIBUTES = (
-        ('BarTitle',    0x80426689, 'ig',   str),
-        ('HBar',        0x8042c943, 'ig',   bool),
-        ('VBar',        0x80422204, 'ig',   bool),
+        ('BarTitle', 0x80426689, 'ig',   str),
+        ('HBar',     0x8042c943, 'ig',   bool),
+        ('VBar',     0x80422204, 'ig',   bool),
         )
 
 HVSpace = lambda p: Rectangle(p)
- 
+
 #=============================================================================
 # Text
 #-----------------------------------------------------------------------------
@@ -1049,7 +1113,7 @@ HVSpace = lambda p: Rectangle(p)
 class Text(Area):
     CLASSID = _m.MUIC_Text
     HEADER = None
-    
+
     ATTRIBUTES = (
         ('Contents', 0x8042f8dc, 'isgk', str),
         ('PreParse', 0x8042566d, 'isgk', str),
@@ -1060,22 +1124,42 @@ class Text(Area):
         kwds.setdefault('Contents', text)
         super(Text, self).__init__(**kwds)
 
-SimpleButton = lambda t: Text(t,
-    Frame=MUIV_Frame_Button,
-    InputMode=MUIV_InputMode_RelVerify,
-    PreParse="\033c")
+SimpleButton = lambda text: Text(text,
+                                 Frame=MUIV_Frame_Button,
+                                 InputMode=MUIV_InputMode_RelVerify,
+                                 PreParse="\033c")
 
 #=============================================================================
 # Group
 #-----------------------------------------------------------------------------
- 
+
+MUIV_Group_ActivePage_First   =  0
+MUIV_Group_ActivePage_Last    = -1
+MUIV_Group_ActivePage_Prev    = -2
+MUIV_Group_ActivePage_Next    = -3
+MUIV_Group_ActivePage_Advance = -4
+
 class Group(Area, ContainerMixer):
     CLASSID = MUIC_Group
     HEADER = None
 
     ATTRIBUTES = (
-        ('Horiz', 0x8042536b, 'i', bool),
-        #(', 'isgk', str),
+        ('ActivePage',   0x80424199, 'isg', CT_LONG),
+        ('ChildList',    0x80424748, 'g',   PyMuiObjectList),
+
+        ('Spacing',      0x8042866d, 'is',  CT_LONG),
+        ('HorizSpacing', 0x8042c651, 'isg', CT_LONG),
+        ('VertSpacing',  0x8042e1bf, 'isg', CT_LONG),
+
+        ('Columns',      0x8042f416, 'is',  CT_LONG),
+        ('Rows',         0x8042b68f, 'is',  CT_LONG),
+
+        ('Horiz',        0x8042536b, 'i',   bool),
+        ('SameHeight',   0x8042037e, 'i',   bool),
+        ('SameWidth',    0x8042b3ec, 'i',   bool),
+        ('SameSize',     0x80420860, 'i',   bool),
+        ('PageMode',     0x80421a5f, 'i',   bool),
+        ('LayoutHook',   0x8042c3b2, 'i',   CPointer),
         )
 
     def __init__(self, *args, **kwds):
@@ -1093,15 +1177,8 @@ class Group(Area, ContainerMixer):
         return self.RemMember(child)
 
     def _IsChild(self, child):
-        pass
+        return child.Parent is self
 
-class HGroup(Group):
-    def __init__(self, *args, **kwds):
-        kwds['Horiz'] = True
-        Group.__init__(self, *args, **kwds)
+HGroup = lambda *args, **kwds: Group(Horiz=True, *args, **kwds)
+VGroup = lambda *args, **kwds: Group(Horiz=False, *args, **kwds)
 
-class VGroup(Group):
-    def __init__(self, *args, **kwds):
-        kwds['Horiz'] = False
-        Group.__init__(self, *args, **kwds)
- 
