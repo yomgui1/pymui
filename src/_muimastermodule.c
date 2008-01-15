@@ -1217,7 +1217,7 @@ _muimaster_newid(PyObject *self) {
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
-    {"mainloop", (PyCFunction) _muimaster_mainloop, METH_NOARGS, _muimaster_mainloop_doc},
+    {"mainloop", (PyCFunction) _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {"newid", (PyCFunction) _muimaster_newid, METH_NOARGS, _muimaster_newid_doc},
     {NULL, NULL} /* Sentinel */
 };
