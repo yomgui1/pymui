@@ -1024,6 +1024,9 @@ class Window(Notify, ContainerMixer):
     def _RemChild(self, child):
         raise RuntimeError("You can't remove the root object of a window. Use AddChild().")
 
+    def _IsChild(self, child):
+        return self == child.WindowObject
+
 #=============================================================================
 # Aboutmui
 #-----------------------------------------------------------------------------
@@ -1122,6 +1125,12 @@ class Text(Area):
 
     def __init__(self, text='', **kwds):
         kwds.setdefault('Contents', text)
+        c = kwds.get('HiChar', None)
+        if c and isinstance(HiChar, basestring):
+            if len(c) == 1:
+                kwds['HiChar'] = ord(HiChar[0])
+            else:
+                raise TypeError("HiChar expected a character, but string of length %u found" % len(c))
         super(Text, self).__init__(**kwds)
 
 SimpleButton = lambda text: Text(text,
@@ -1164,7 +1173,7 @@ class Group(Area, ContainerMixer):
 
     def __init__(self, *args, **kwds):
         Area.__init__(self, *args, **kwds)
-        ContainerMixer.__init__(self) 
+        ContainerMixer.__init__(self)
 
     def _CheckChild(self, child):
         if not isinstance(child, Area):
@@ -1177,7 +1186,7 @@ class Group(Area, ContainerMixer):
         return self.RemMember(child)
 
     def _IsChild(self, child):
-        return child.Parent is self
+        return self == child.Parent
 
 HGroup = lambda *args, **kwds: Group(Horiz=True, *args, **kwds)
 VGroup = lambda *args, **kwds: Group(Horiz=False, *args, **kwds)
