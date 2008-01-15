@@ -498,12 +498,12 @@ OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg)  {
 
     DPRINT("Attribute %#lx Changed for PyMCC object @ %p (MUI=%p) to %ld %lu %p\n",
            msg->attr, py_obj, obj, value, (ULONG) value, (APTR) value);
-
-    Py_INCREF(py_obj); // to prevent that our object was deleted during methods calls.
     
     /* Get the attribute type */
     attr_obj = Py_BuildValue("I", msg->attr);
     if (NULL == attr_obj) return;
+
+    Py_INCREF(py_obj); // to prevent that our object was deleted during methods calls.     
 
     DPRINT("Calling _GetAttrType(attr_obj = %p)...\n", attr_obj);
     res = PyObject_CallMethod(py_obj, "_GetAttrType", "O", attr_obj);
@@ -581,7 +581,7 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
     /* First check if this ClassID wasn't sub-classed before */
     DPRINT("Searching for ClassID '%s'\n", id);
     ForeachNode(&classes, node) {
-        if (node->mn_MCC->mcc_Super->cl_ID == id) {
+        if (!strcmp(id, node->mn_MCC->mcc_Super->cl_ID)) {
             mcc = node->mn_MCC;
             break;
         }

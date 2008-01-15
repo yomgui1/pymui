@@ -36,8 +36,8 @@ else:
         pass
 
 try:
-    from _muimaster import *
     import _muimaster as _m
+    from _muimaster import *
 except:
     from simu import *
 

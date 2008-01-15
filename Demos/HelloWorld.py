@@ -38,5 +38,5 @@ win.Open = True
 
 # Go!
 
-app.Mainloop()
+app.Run()
 

@@ -40,5 +40,5 @@ class HelloWorld(Application):
 # Go !
 
 app = HelloWorld()
-app.Mainloop()
+app.Run()
 
