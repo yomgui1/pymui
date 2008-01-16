@@ -707,7 +707,19 @@ class Notify(PyMuiObject):
         return self.GetAttribute(attr).type
 
     def _OnBoopsiMethod(self, id, msg):
-        print "MUI wants call method %s , data @ %s" % (hex(id), hex(msg))
+        n = hex(id)   
+        try:
+            m = self.GetMethod(id)
+            print m
+        except:
+            pass
+        else:
+            for k, v in self.__class__.mui_methods.iteritems():
+                print ".", v
+                if v.id == m:
+                    n = k
+                    break
+        #print "MUI wants call method %s, data @ %s" % (n, hex(msg))
 
     def Set(self, attr, value):
         self.GetAttribute(attr).set(self, value)
@@ -851,7 +863,8 @@ class Application(Notify, ContainerMixer):
     def __init__(self, Window=None, *args, **kwds):
         super(Application, self).__init__(*args, **kwds)
         ContainerMixer.__init__(self)
-        self.AddChild(Window)
+        if Window:
+            self.AddChild(Window)
 
     def Init(self):
         pass
@@ -1087,6 +1100,7 @@ class Area(Notify):
         ('FrameTitle',  0x8042d1c7, 'i',    str),
         ('InputMode',   0x8042fb04, 'i',    CT_LONG),
         ('Draggable',   0x80420b6e, 'isg',  bool),
+        ('WindowObject', 0x8042669e, 'g',   PyMuiObject),
         )
 
     def CheckParent(self, parent):
