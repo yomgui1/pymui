@@ -322,7 +322,7 @@ PyModMCC_New(struct IClass *cl, Object *obj, struct opSet *msg) {
     /* Setup instance data */
     data = INST_DATA(cl, obj);
     data->pmd_PyObject = pyo;
-    
+
     return (ULONG) obj;
 }
 //- PyModMCC_New
@@ -337,6 +337,7 @@ PyModMCC_Dispose(struct IClass *cl, Object *obj, Msg msg) {
     // The python object may has been already unlinked
     if (NULL != pyo) {
         PyAmiga_CPointer_SET_ADDR(pyo, NULL);
+        data->pmd_PyObject = NULL;
     }
 
     return DoSuperMethodA(cl, obj, msg);
@@ -368,36 +369,41 @@ DISPATCHER(PyModMCC) {
     case OM_GET:     return PyModMCC_Get(cl, obj, (APTR) msg);
 
         /* following methods should never be handled by a Python user method */
-    case OM_SET:
     case MUIM_Notify:
     case MUIM_CallHook:
+    case MUIM_Application_NewInput:
+    case 0x80428910:
+    case 0x8042295f:
+    case 0x80426688:
         return DoSuperMethodA(cl, obj, msg);
         
     }
 
     /* Try to call Python a method for this BOOPSI method, if exists */
-    data = INST_DATA(cl, obj);
-    pyobj = data->pmd_PyObject;
-    if (NULL != pyobj) {
-        PyObject *result_obj;
+    if (msg->MethodID & TAG_USER) {
+        data = INST_DATA(cl, obj);
+        pyobj = data->pmd_PyObject;
+        if (NULL != pyobj) {
+            PyObject *result_obj;
 
-        Py_INCREF(pyobj); // because a bad method can destroy this object
-        result_obj = PyObject_CallMethod(pyobj, "_OnBoopsiMethod", "kk", msg->MethodID, (ULONG)(msg + 1));
-        Py_DECREF(pyobj);
-        
-        if (NULL != result_obj) {
-            LONG res;
+            Py_INCREF(pyobj); // because a bad method can destroy this object
+            result_obj = PyObject_CallMethod(pyobj, "_OnBoopsiMethod", "kk", msg->MethodID, (ULONG)(msg + 1));
+            Py_DECREF(pyobj);
 
-            /* Do not call super ? */
-            if (result_obj != Py_None)
-                res = PyLong_AsUnsignedLong(result_obj);
-            else
-                res = DoSuperMethodA(cl, obj, msg);
+            if (NULL != result_obj) {
+                LONG res;
 
-            Py_DECREF(result_obj);
-            return res;
-        } else
-            return 0;
+                /* Do not call super ? */
+                if (result_obj != Py_None)
+                    res = PyLong_AsUnsignedLong(result_obj);
+                else
+                    res = DoSuperMethodA(cl, obj, msg);
+
+                Py_DECREF(result_obj);
+                return res;
+            } else
+                return 0;
+        }
     }
     
     return DoSuperMethodA(cl, obj, msg);
@@ -630,15 +636,37 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
 ** MUIObject_Type
 */
 
+//+ muiobject_new
+static PyObject *
+muiobject_new(PyTypeObject *type, PyObject *args)
+{
+    MUIObject *self = NULL;
+
+    if (!PyArg_ParseTuple(args, "|O!", &MUIObject_Type, &self))
+        return NULL;
+
+    if (NULL != self) {
+        Py_INCREF((PyObject *) self);
+        return (PyObject *) self;
+    }
+
+    self = (MUIObject *) type->tp_alloc(type, 0);
+    DPRINT("self=%p\n", self);
+    return (PyObject *) self;
+}
+//- muiobject_new
+
 //+ muiobject_init
 static int
 muiobject_init(MUIObject *self, PyObject *args) {
-    int n = PyTuple_Size(args);
+    MUIObject *obj = NULL;
 
-    if (n > 0) {
-        PyErr_Format(PyExc_TypeError, "__init__() takes exactly 1 argument (%u given)", n);
-        return -1;
-    }
+    if (!PyArg_ParseTuple(args, "|O!", &MUIObject_Type, &obj))
+        return NULL;
+
+    /* already initialized object (see tp_new) */
+    if (NULL != obj)
+        return 0;
     
     self->refdict = PyDict_New();
     if (NULL == self->refdict)
@@ -1130,6 +1158,7 @@ static PyTypeObject MUIObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
     
+    tp_new          : (newfunc)muiobject_new,
     tp_init         : (initproc)muiobject_init,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
