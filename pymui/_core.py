@@ -39,7 +39,8 @@ try:
     import _muimaster as _m
     from _muimaster import *
 except:
-    from simu import *
+    #from simu import *
+    pass
 
 CT_LONG = int
 CT_ULONG = long
@@ -49,17 +50,17 @@ NotTriggerValue = 0x49893133
 
 isiterable = lambda x: hasattr(x, '__iter__')
 
-class InputEventStruct(Struct):
+class InputEventStruct(CStructure):
     def __init__(self, address):
-        Struct.__init__(self, address, 0, "InputEvent")
+        CStructure.__init__(self, address, 0, "InputEvent")
 
-class MenuItemStruct(Struct):
+class MenuItemStruct(CStructure):
     def __init__(self, address):
-        Struct.__init__(self, address, 0, "MenuItem")
+        CStructure.__init__(self, address, 0, "MenuItem")
 
-class PyMuiInputHandlerNodeStruct(Struct):
+class PyMuiInputHandlerNodeStruct(CStructure):
     def __init__(self, address):
-        Struct.__init__(self, address, 0, "MUI_InputHandlerNode")
+        CStructure.__init__(self, address, 0, "MUI_InputHandlerNode")
 
 class MetaLimitedString(type):
     def __new__(metacl, name, bases, dct):
@@ -164,7 +165,8 @@ class PyMuiObjectIterator:
         if self.node:
             addr, self.node = _intui.NextObject(self.node)
             if addr:
-                return PyMuiObject(addr)
+                obj = PyMuiObject(addr)
+                return obj
         raise StopIteration
 
 class PyMuiObjectList(List):
@@ -311,7 +313,7 @@ class PyMuiAttribute(PyMuiID):
     def __init__(self, id, isg, type):
         PyMuiID.__init__(self, id)
 
-        assert issubclass(type, (Struct, CPointer, bool, CT_LONG, CT_ULONG, str))
+        assert issubclass(type, (CStructure, CPointer, bool, CT_LONG, CT_ULONG, str))
 
         isg = isg.lower()
         if filter(lambda x: x not in 'isgk', isg):
@@ -339,7 +341,7 @@ class PyMuiAttribute(PyMuiID):
     def get(self, obj):
         if not self.__fl[2]:
             raise RuntimeError("attribute %s cannot be get" % self.id)
-        if issubclass(self.__tp, Struct):
+        if issubclass(self.__tp, CStructure):
             return self.__tp(obj._get(CPointer, self.id))
         return obj._get(self.__tp, self.id)
 
@@ -474,6 +476,8 @@ class MetaPyMCC(type):
         return type.__new__(meta, name, bases, dct)
 
     def __init__(cl, name, bases, dct):
+        return type.__init__(cl, name, bases, dct)
+        
         debug("\nMethods list for class", name)
         for n, m in dct['__mui_meths'].iteritems():
             debug("  0x%08x: %s" % (m.id, n))
@@ -710,16 +714,14 @@ class Notify(PyMuiObject):
         n = hex(id)   
         try:
             m = self.GetMethod(id)
-            print m
         except:
             pass
         else:
             for k, v in self.__class__.mui_methods.iteritems():
-                print ".", v
-                if v.id == m:
+                if v.id == m.id:
                     n = k
                     break
-        #print "MUI wants call method %s, data @ %s" % (n, hex(msg))
+        print "MUI wants call method %s, data @ %s" % (n, hex(msg))
 
     def Set(self, attr, value):
         self.GetAttribute(attr).set(self, value)
@@ -1049,7 +1051,7 @@ class Aboutmui(Window):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Application', 0x80422523, 'i', PyMuiObject),
+        ('Application', 0x80422523, 'ik', PyMuiObject),
         )
 
     def __init__(self, app=None):

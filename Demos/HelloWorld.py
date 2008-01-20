@@ -8,7 +8,7 @@ mainwin = Window(
     TopEdge=-2,
     Width=320,
     Height=64)
- 
+
 win = Aboutmui(app)
 win.Notify('CloseRequest', True, win.Set, 'Open', False)
 

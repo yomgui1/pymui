@@ -230,9 +230,9 @@ typedef struct OnAttrChangedMsg_STRUCT {
 } OnAttrChangedMsg;
 
 typedef struct MUIObject_STRUCT {
-    PyAmiga_CPointer    base;
-    PyObject *          refdict; // -> GC mandatory. Used for attributes [REQ-04-B]
-    ULONG               refcnt; // Reference counter like in Python but between MUI objects [REQ-04-C]
+    CPointer    base;
+    PyObject *  refdict; // -> GC mandatory. Used for attributes [REQ-04-B]
+    ULONG       refcnt;  // Reference counter like in Python but between MUI objects [REQ-04-C]
 } MUIObject;
 
 typedef struct PyModMCCData_STRUCT {
@@ -260,8 +260,8 @@ static ULONG id_counter;
 static Object *global_app;
 static struct MinList classes;
 
-PYAMIGA_CORE_TYPES;
-PYAMIGA_CORE_API;
+PYAMIGA_CORE_DECL_TYPES;
+PYAMIGA_CORE_DECL_API;
 
 #ifndef NDEBUG
 static PyObject *module; /* only used in debugging */
@@ -336,7 +336,7 @@ PyModMCC_Dispose(struct IClass *cl, Object *obj, Msg msg) {
     
     // The python object may has been already unlinked
     if (NULL != pyo) {
-        PyAmiga_CPointer_SET_ADDR(pyo, NULL);
+        CPointer_SET_ADDR(pyo, NULL);
         data->pmd_PyObject = NULL;
     }
 
@@ -423,8 +423,8 @@ convertFromPython(PyObject *obj, long *value) {
 
     if (PyString_Check(obj)) {
         *value = (LONG) PyString_AS_STRING(obj);
-    } else if (PyAmiga_CPointer_Check(obj)) {
-        *value = (LONG) PyAmiga_CPointer_GET_ADDR(obj);
+    } else if (CPointer_Check(obj)) {
+        *value = (LONG) CPointer_GET_ADDR(obj);
     } else {
         PyObject *o = PyNumber_Int(obj);
 
@@ -486,8 +486,8 @@ convertToPython(PyTypeObject *type, long value) {
         }
         
         return v;
-    } else if (PyType_IsSubtype(type, &PyAmiga_CPointer_Type))
-        return PyAmiga_CPointer_New((void *) value);
+    } else if (PyType_IsSubtype(type, &CPointer_Type))
+        return CPointer_New((void *) value, NULL, NULL);
      else if (PyType_IsSubtype(type, &PyString_Type))
         return PyString_FromString((char *)value);
 
@@ -636,38 +636,38 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
 ** MUIObject_Type
 */
 
-//+ muiobject_new
+//+ muiobject_call
 static PyObject *
-muiobject_new(PyTypeObject *type, PyObject *args)
+muiobject_call(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
-    MUIObject *self = NULL;
+    Object *obj = NULL;
+    MUIObject *self;
 
-    if (!PyArg_ParseTuple(args, "|O!", &MUIObject_Type, &self))
+    DPRINT("coucou\n");
+
+    if (!PyArg_ParseTuple(args, "|O&", CPointer_Convert, &obj))
         return NULL;
 
-    if (NULL != self) {
+    DPRINT("obj = %p\n", obj);
+
+    if (NULL != obj) {
+        if (!get(obj, MUIA_PyMod_PyObject, &self) || (NULL == self))
+            return PyErr_Format(PyExc_TypeError, "Given address (%p) doesn't seem to be a PyMuiObject", obj);
+    
+        DPRINT("old self=%p\n", self);
         Py_INCREF((PyObject *) self);
         return (PyObject *) self;
     }
 
-    self = (MUIObject *) type->tp_alloc(type, 0);
-    DPRINT("self=%p\n", self);
+    self = (MUIObject *) type->tp_new(type, args, kwds);
+    DPRINT("new self=%p\n", self);
     return (PyObject *) self;
 }
-//- muiobject_new
-
+//- muiobject_call
 //+ muiobject_init
 static int
-muiobject_init(MUIObject *self, PyObject *args) {
-    MUIObject *obj = NULL;
-
-    if (!PyArg_ParseTuple(args, "|O!", &MUIObject_Type, &obj))
-        return NULL;
-
-    /* already initialized object (see tp_new) */
-    if (NULL != obj)
-        return 0;
-    
+muiobject_init(MUIObject *self)
+{
     self->refdict = PyDict_New();
     if (NULL == self->refdict)
         return -1;
@@ -676,7 +676,7 @@ muiobject_init(MUIObject *self, PyObject *args) {
         
     DPRINT("MUIObject.init(self=%p)\n", self);
 
-    return 0;
+    return CPointer_Init((PyObject *) self, NULL, NULL, NULL);
 }
 //- muiobject_init
 //+ muiobject_dealloc
@@ -684,7 +684,7 @@ static void
 muiobject_dealloc(MUIObject *self) {
     Object *obj;
     
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     DPRINT("MUIObject.dealloc(self=%p, refcnt=%lu, MUI=%p)\n", self, self->refcnt, obj);
 
     if (NULL != obj) {        
@@ -700,7 +700,7 @@ muiobject_dealloc(MUIObject *self) {
     }
 
     Py_XDECREF(self->refdict);
-    ((PyObject *) self)->ob_type->tp_free((PyObject *)self);
+    CPointer_Type.tp_dealloc((PyObject *) self);
 }
 //- muiobject_dealloc
 //+ muiobject_repr
@@ -708,7 +708,7 @@ static PyObject *
 muiobject_repr(MUIObject *self) {
     Object *obj;
     
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     if (NULL != obj)
         return PyString_FromFormat("<MUIObject at %p, MUI object at %p>", self, obj);
     else
@@ -744,7 +744,7 @@ muiobject__incref(MUIObject *self)
     Object *obj;
     
     // Increment the MUI reference counter only if a MUI object exists.
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     assert(self->refcnt < ULONG_MAX);
@@ -775,7 +775,7 @@ muiobject__decref(MUIObject *self)
     Object *obj;
     
     // Decrement the MUI reference counter only if a MUI object exists.
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (self->refcnt) {
@@ -809,7 +809,7 @@ muiobject__create(MUIObject *self, PyObject *args) {
     struct TagItem *tags;
 
     /* Checking that no MUI object is already linked */
-    mui_obj = PyAmiga_CPointer_GET_ADDR(self);
+    mui_obj = CPointer_GET_ADDR(self);
     if (NULL != mui_obj) {
         PyErr_SetString(PyExc_RuntimeError, "the MUI object is already created");
         return NULL;
@@ -880,7 +880,7 @@ muiobject__create(MUIObject *self, PyObject *args) {
         return NULL;
     }
 
-    PyAmiga_CPointer_SET_ADDR(self, mui_obj);
+    CPointer_SET_ADDR(self, mui_obj);
     Py_RETURN_TRUE;
 }
 //- muiobject__create
@@ -898,7 +898,7 @@ static PyObject *
 muiobject__dispose(MUIObject *self) {
     Object *obj;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     DPRINT("PyObj: %p, MUI obj: %p, refcnt=%lu\n", self, obj, self->refcnt);
@@ -909,7 +909,7 @@ muiobject__dispose(MUIObject *self) {
     }
     
     MUI_DisposeObject(obj); // should not call any Python code (done by PyModMCC).
-    PyAmiga_CPointer_SET_ADDR(self, NULL);
+    CPointer_SET_ADDR(self, NULL);
 
     Py_RETURN_TRUE;
 }
@@ -952,7 +952,7 @@ muiobject__get(MUIObject *self, PyObject *args) {
     ULONG attr;
     ULONG value;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
     if (!PyArg_ParseTuple(args, "O!I", &PyType_Type, &type, &attr))
@@ -986,7 +986,7 @@ muiobject__set(MUIObject *self, PyObject *args) {
     ULONG attr;
     LONG value;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
     if (_set_base(self, args, &attr, &value))
@@ -1016,7 +1016,7 @@ muiobject__nnset(MUIObject *self, PyObject *args) {
     ULONG attr;
     LONG value;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (_set_base(self, args, &attr, &value))
@@ -1041,7 +1041,7 @@ muiobject__notify(MUIObject *self, PyObject *args) {
     LONG trigattr, trigvalue, value;
     Object *obj;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "IO", &trigattr, &v))
@@ -1087,7 +1087,7 @@ muiobject__do(MUIObject *self, PyObject *args) {
     DoMsg *msg;
     int meth, i, n;
 
-    obj = PyAmiga_CPointer_GET_ADDR(self);
+    obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
 
     if (!PyArg_ParseTuple(args, "IO!", &meth, &PyTuple_Type, &meth_data))
@@ -1158,13 +1158,13 @@ static PyTypeObject MUIObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
     
-    tp_new          : (newfunc)muiobject_new,
     tp_init         : (initproc)muiobject_init,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
     tp_traverse     : (traverseproc)muiobject_traverse,
     tp_clear        : (inquiry)muiobject_clear,
 
+    tp_call         : (ternaryfunc)muiobject_call, 
     tp_repr         : (reprfunc)muiobject_repr,
     tp_methods      : muiobject_methods,
     tp_members      : muiobject_members,
@@ -1201,7 +1201,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O!", &MUIObject_Type, &pyapp))
         return NULL;
 
-    app = PyAmiga_CPointer_GET_ADDR(pyapp);
+    app = CPointer_GET_ADDR(pyapp);
     CHECK_OBJ(app);
 
     /* This code will not check that the given object is really an Application object;
@@ -1385,7 +1385,7 @@ INITFUNC(void) {
     OnAttrChangedHook.h_SubEntry = (HOOKFUNC) &OnAttrChanged; 
     
     /* New Python types initialization */
-    MUIObject_Type.tp_base = &PyAmiga_CPointer_Type;
+    MUIObject_Type.tp_base = &CPointer_Type;
     if (PyType_Ready(&MUIObject_Type) < 0) return;
 
     /* Module creation/initialization */

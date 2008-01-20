@@ -33,8 +33,7 @@ class HelloWorld(Application):
         self.win.Notify('CloseRequest', True, self.ReturnID, -1)
         self.win.Open = True
 
-        about = Aboutmui(self, about)
-        self.AddChild(about)
+        about = Aboutmui(self)
         about.Notify('CloseRequest', True, about.Set, 'Open', False)
 
 # Go !
