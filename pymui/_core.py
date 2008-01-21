@@ -1,19 +1,7 @@
+###
+## \file _core.py
+## \author ROGUEZ "Yomgui" Guillaume
 ##
-## @file _core.py
-## @author ROGUEZ "Yomgui" Guillaume
-##
-
-## TODO
-##
-# General:
-# * adding twice or more a child causes endless loop at dispose().
-# => Add a checking in AddChild() method.
-
-#### Designing a class ####
-#
-## Attributes:
-#
-
 
 from UserDict import DictMixin
 from itertools import chain
@@ -39,8 +27,7 @@ try:
     import _muimaster as _m
     from _muimaster import *
 except:
-    #from simu import *
-    pass
+    from simu import *
 
 CT_LONG = int
 CT_ULONG = long
@@ -83,23 +70,6 @@ class LimitedStringBase(str):
             raise ValueError("String too long (limited to %lu)" % self.__class__.limit)
 
 LimitedStringFactory = lambda n, x: MetaLimitedString(n, (LimitedStringBase,), {'limit': x})
-
-class MetaCArray(type):
-    def __new__(metacl, name, bases, dct):
-        limit = dct.pop('type', 0)
-        cl = type.__new__(metacl, name, bases, dct)
-        cl.__type = type
-        return cl
-
-    def __setLimit(cl, limit):
-        assert limit >= 0
-        type.__limit = limit
-
-    type = property(fget=lambda cl: cl.__type)
-
-CArrayFactory = lambda n, x: MetaCArray(n, (CPointer,), {'type': x})
-
-PyMuiObjectArray = CArrayFactory('PyMuiObjectArray', PyMuiObject)
 
 ##############################################################################
 ### ERRORS
@@ -152,6 +122,38 @@ class _PyDisposedObject(object):
 ##############################################################################
 ### Basic classes
 ##############################################################################
+
+class MetaCArray(type):
+    def __new__(metacl, name, bases, dct):
+        limit = dct.pop('type', 0)
+        cl = type.__new__(metacl, name, bases, dct)
+        cl.__type = type
+        return cl
+
+    def __setLimit(cl, limit):
+        assert limit >= 0
+        type.__limit = limit
+
+    type = property(fget=lambda cl: cl.__type)
+
+class CArrayIterator:
+    def __init__(self, pointer, type):
+        assert isinstance(pointer, type)
+        self.ptr = pointer
+        self.create = getattr(type, 'FromPtr', type)
+        
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if self.ptr:
+            self.ptr = self.ptr.advance()
+            if self.ptr:
+                return self.create(self.ptr)
+        raise StopIteration
+        
+CArrayFactory = lambda n, x: MetaCArray(n, (CPointer,), {'type': x})
+PyMuiObjectArray = CArrayFactory('PyMuiObjectArray', PyMuiObject)
 
 class PyMuiObjectIterator:
     def __init__(self, node):
@@ -432,6 +434,9 @@ class PyMuiAttributeDict(InheritedDict):
 ##############################################################################
 
 class MetaPyMCC(type):
+    __ids = []
+    __idscnt = -1
+    
     def __new__(meta, name, bases, dct):
         debug()
         debug('name  :', name)
@@ -488,6 +493,19 @@ class MetaPyMCC(type):
 
     mui_methods = property(fget=lambda cl: getattr(cl, '__mui_meths'))
     mui_attributes = property(fget=lambda cl: getattr(cl, '__mui_attrs'))
+
+    @classmethod
+    def NewId(cl):
+        while True:
+            cl.__idscnt += 1
+            if cl.__idscnt not in cl.__ids:
+                return cl.__idscnt
+
+    @classmethod
+    def RecordId(cl, id):
+        if cl.__idscnt in cl.__ids:
+            raise PyMuiError("ObjectID %u already given" % id)
+        cl.__ids.append(id)
 
 class Notify(PyMuiObject):
     __metaclass__ = MetaPyMCC
@@ -600,6 +618,9 @@ class Notify(PyMuiObject):
                 if m.id == n: return True
             return False
 
+    def HasOption(self, key):
+        return key in self.__tags
+
     def GetOption(self, key, default=None):
         try:
             return self.__tags[key]
@@ -613,12 +634,8 @@ class Notify(PyMuiObject):
         for k, v in kwds.iteritems():
             self.__tags[k] = v
 
-    def PreCreate(self, tags=None, **kwds):
-        if not isinstance(tags, PyMuiAttrOptionDict):
-            self.__tags = PyMuiAttrOptionDict(self, tags)
-        else:
-            self.__tags = tags
-        self.__tags.update(kwds)
+    def PreCreate(self, **kwds):
+        self.__tags = PyMuiAttrOptionDict(self, kwds)
         self.__nd = {} # notifications dictionary
 
     def Create(self, **kwds):
@@ -627,9 +644,11 @@ class Notify(PyMuiObject):
         tags = self.__tags
         del self.__tags
 
-        # set defaults
+        # Auto ID generation if not set
         if 'ObjectID' not in tags:
-            tags['ObjectID'] = _m.newid()
+            tags['ObjectID'] = self.__class__.NewId()
+        else:
+            self.__class__.RecordId(tags['ObjectID'])
 
         # initialize object tags
         for attr, value in tags.iteritems():
@@ -816,7 +835,7 @@ class Application(Notify, ContainerMixer):
 
     METHODS = (
         ('AboutMUI',         0x8042d21d, (PyMuiObject, )),
-        ('AddInputHandler',  0x8042f099, (PyMuiInputHandlerNodeStruct, )),
+        #('AddInputHandler',  0x8042f099, (PyMuiInputHandlerNodeStruct, )),
         ('CheckRefresh',     0x80424d68),
         #('InputBuffered',   0x80427e59),
         ('Load',             0x8042f90d, (str, )),
@@ -858,15 +877,14 @@ class Application(Notify, ContainerMixer):
         ('UseCommodities', 0x80425ee5, 'i',    bool),
         ('UseRexx',        0x80422387, 'i',    bool),
         ('Version',        0x8042b33f, 'igk',  str),
-        #('window',         0x8042bfe0, 'i',    PyMuiObject),
         ('WindowList',     0x80429abe, 'g',    PyMuiObjectList),
         )
 
-    def __init__(self, Window=None, *args, **kwds):
-        super(Application, self).__init__(*args, **kwds)
+    def __init__(self, window=None, **kwds):
+        super(Application, self).__init__(**kwds)
         ContainerMixer.__init__(self)
-        if Window:
-            self.AddChild(Window)
+        if window:
+            self.AddChild(window)
 
     def Init(self):
         pass
@@ -1011,10 +1029,10 @@ class Window(Notify, ContainerMixer):
             kwds['Title'] = title
         self.PreCreate(**kwds)
 
-        root = PyMuiObject()
-        root._create(MUIC_Rectangle)
-
-        self.SetOption('RootObject', root)
+        if not self.HasOption('RootObject'):
+            root = PyMuiObject()
+            root._create(MUIC_Rectangle)
+            self.SetOption('RootObject', root)
 
         self.Create(**kwds)
         ContainerMixer.__init__(self)      
@@ -1050,15 +1068,10 @@ class Aboutmui(Window):
     CLASSID = MUIC_Aboutmui
     HEADER = None
 
-    ATTRIBUTES = (
-        ('Application', 0x80422523, 'ik', PyMuiObject),
-        )
-
-    def __init__(self, app=None):
-        self.PreCreate()
-        if app is not None:
-            self.SetOption('Application', app)
-        self.Create()
+    def __init__(self, app=None, *kwds):
+        super(Aboutmui, self).__init__(*kwds)
+        if app:
+           app.AddChild(self)
 
     def CheckParent(self, parent):
         if not isinstance(parent, Application):
@@ -1126,6 +1139,45 @@ class Rectangle(Area):
 HVSpace = lambda p: Rectangle(p)
 
 #=============================================================================
+# Balance
+#-----------------------------------------------------------------------------
+
+class Balance(Area):
+    CLASSID = MUIC_Balance
+    HEADER = None
+
+#=============================================================================
+# Image
+#-----------------------------------------------------------------------------
+
+class Image(Area):
+    CLASSID = MUIC_Image
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('FontMatch',       0x8042815d, 'i', bool),
+        ('FontMatchHeight', 0x80429f26, 'i', bool),
+        ('FontMatchWidth',  0x804239bf, 'i', bool),
+        ('FreeHoriz',       0x8042da84, 'i', bool),
+        ('FreeVert',        0x8042ea28, 'i', bool),
+        #('OldImage',        0x80424f3d, 'i', CPointer),
+        ('Spec',            0x804233d5, 'i', str),
+        ('State',           0x8042a3ad, 'is', CT_LONG),
+        )
+
+#=============================================================================
+# Bitmap
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Bodychunk
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
 # Text
 #-----------------------------------------------------------------------------
 
@@ -1135,8 +1187,11 @@ class Text(Area):
 
     ATTRIBUTES = (
         ('Contents', 0x8042f8dc, 'isgk', str),
-        ('PreParse', 0x8042566d, 'isgk', str),
+        ('PreParse', 0x8042566d, 'isgk', str), # XXX: k ?
         ('HiChar',   0x804218ff, 'i',    CT_LONG),
+        ('SetMax',   0x80424d0a, 'i',    bool),
+        ('SetMin',   0x80424e10, 'i',    bool),
+        ('SetVMax',  0x80420d8b, 'i',    bool),
         )
 
     def __init__(self, text='', **kwds):
@@ -1153,6 +1208,220 @@ SimpleButton = lambda text: Text(text,
                                  Frame=MUIV_Frame_Button,
                                  InputMode=MUIV_InputMode_RelVerify,
                                  PreParse="\033c")
+
+#=============================================================================
+# Gadget
+#-----------------------------------------------------------------------------
+
+class Gadget(Area):
+    CLASSID = _m.MUIC_Gadget
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Gadget', 0x8042ec1a, 'g', CPointer),
+        )
+
+#=============================================================================
+# String
+#-----------------------------------------------------------------------------
+
+MUIV_String_Format_Left   = 0
+MUIV_String_Format_Center = 1
+MUIV_String_Format_Right  = 2
+
+class String(Gadget):
+    CLASSID = _m.MUIC_String
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Accept',         0x8042e3e1, 'isgk', str),
+        ('Acknowledge',    0x8042026c, 'g',    str),
+        ('AdvanceOnCR',    0x804226de, 'isg',  bool),
+        ('AttachedList',   0x80420fd2, 'isgk', PyMuiObject),
+        ('BufferPos',      0x80428b6c, 'sg',   CT_LONG),
+        ('Contents',       0x80428ffd, 'isgk', str),
+        ('DisplayPos',     0x8042ccbf, 'sg',   CT_LONG),
+        #Not supported: ('EditHook',       0x80424c33, 'isg',  CPointer),
+        ('Format',         0x80427484, 'ig',   CT_LONG),
+        ('Integer',        0x80426e8a, 'isg',  CT_ULONG),
+        ('LonelyEditHook', 0x80421569, 'isg',  bool),
+        ('MaxLen',         0x80424984, 'ig',   CT_LONG),
+        ('Reject',         0x8042179c, 'isgk', str),
+        ('Secret',         0x80428769, 'ig',   bool),
+        )
+
+#=============================================================================
+# Boopsi
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Prop
+#-----------------------------------------------------------------------------
+
+MUIV_Prop_UseWinBorder_None   = 0
+MUIV_Prop_UseWinBorder_Left   = 1
+MUIV_Prop_UseWinBorder_Right  = 2
+MUIV_Prop_UseWinBorder_Bottom = 3
+
+class Prop(Gadget):
+    CLASSID = _m.MUIC_Prop
+    HEADER = None
+
+    METHODS = (
+        ('Decrease', 0x80420dd1, (CT_LONG, )),
+        ('Increase', 0x8042cac0, (CT_LONG, )),
+        )
+
+    ATTRIBUTES = (
+        ('Entries',      0x8042fbdb, 'isg', CT_LONG),
+        ('First',        0x8042d4b2, 'isg', CT_LONG),
+        ('Horiz',        0x8042f4f3, 'ig',  bool),
+        ('Slider',       0x80429c3a, 'isg', bool),
+        ('UseWinBorder', 0x8042deee, 'i',   CT_LONG),
+        ('Visible',      0x8042fea6, 'isg', CT_LONG),
+        )
+
+#=============================================================================
+# Gauge
+#-----------------------------------------------------------------------------
+
+class Gauge(Area):
+    CLASSID = _m.MUIC_Gauge
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Current',  0x8042f0dd, 'isg',  CT_LONG),
+        ('Divide',   0x8042d8df, 'isg',  bool),
+        ('Horiz',    0x804232dd, 'i',    bool),
+        ('InfoText', 0x8042bf15, 'isgk', str),
+        ('Max',      0x8042bcdb, 'isg',  CT_LONG),
+        )
+
+#=============================================================================
+# Scale
+#-----------------------------------------------------------------------------
+
+class Scale(Area):
+    CLASSID = _m.MUIC_Scale
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Horiz', 0x8042919a, 'isg', bool),
+        )
+
+#=============================================================================
+# Colorfield
+#-----------------------------------------------------------------------------
+
+class Colorfield(Area):
+    CLASSID = _m.MUIC_Colorfield
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Blue',  0x8042d3b0, 'isg', CT_ULONG),
+        ('Green', 0x80424466, 'isg', CT_ULONG),
+        ('Pen',   0x8042713a, 'g',   CT_ULONG),
+        ('Red',   0x804279f6, 'isg', CT_ULONG),
+        #Not supported: ('RGB',   0x8042677a, 'isg', CPointer),
+        )
+
+#=============================================================================
+# List
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Floattext
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Volumelist
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Scrmodelist
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Dirlist
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Numeric
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Knob
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Levelmeter
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Numericbutton
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Slider
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Framedisplay
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Popframe
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Imagedisplay
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Popimage
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Pendisplay
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Poppen
+#-----------------------------------------------------------------------------
+
+## TODO
 
 #=============================================================================
 # Group
@@ -1207,3 +1476,253 @@ class Group(Area, ContainerMixer):
 HGroup = lambda *args, **kwds: Group(Horiz=True, *args, **kwds)
 VGroup = lambda *args, **kwds: Group(Horiz=False, *args, **kwds)
 
+#=============================================================================
+# Mccprefs
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Register
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Penadjust
+#-----------------------------------------------------------------------------
+
+class Penadjust(Group):
+    CLASSID = MUIC_Penadjust
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('PSIMode', 0x80421cbb, 'i', bool),
+        )
+
+#=============================================================================
+# Settingsgroup
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Settings
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Frameadjust
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Imageadjust
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Virtgroup
+#-----------------------------------------------------------------------------
+
+class Virtgroup(Group):
+    CLASSID = MUIC_Virtgroup
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Height', 0x80423038, 'g',   CT_LONG),
+        ('Input',  0x80427f7e, 'i',   bool),
+        ('Left',   0x80429371, 'isg', CT_LONG),
+        ('Top',    0x80425200, 'isg', CT_LONG),
+        ('Width',  0x80427c49, 'g',   CT_LONG),
+        )
+
+#=============================================================================
+# Scrollgroup
+#-----------------------------------------------------------------------------
+
+class Scrollgroup(Group):
+    CLASSID = MUIC_Scrollgroup
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Contents',     0x80421261, 'igk', PyMuiObject),
+        ('FreeHoriz',    0x804292f3, 'i',   bool),
+        ('FreeVert',     0x804224f2, 'i',   bool),
+        ('HorizBar',     0x8042b63d, 'g',   PyMuiObject),
+        ('UseWinBorder', 0x804284c1, 'i',   bool),
+        ('VertBar',      0x8042cdc0, 'g',   PyMuiObject),
+        )
+
+#=============================================================================
+# Scrollbar
+#-----------------------------------------------------------------------------
+
+MUIV_Scrollbar_Type_Default = 0
+MUIV_Scrollbar_Type_Bottom  = 1
+MUIV_Scrollbar_Type_Top     = 2
+MUIV_Scrollbar_Type_Sym     = 3
+
+class Scrollbar(Group):
+    CLASSID = MUIC_Scrollbar
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Type', 0x8042fb6b, 'i', CT_LONG),
+        )
+
+#=============================================================================
+# Listview
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Radio
+#-----------------------------------------------------------------------------
+
+class Radio(Group):
+    CLASSID = MUIC_Radio
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Active', 0x80429b41, 'isg', CT_LONG),
+        #Not supported: ('Entries', 0x8042b6a1, 'i', ),
+        )
+
+#=============================================================================
+# Cycle
+#-----------------------------------------------------------------------------
+
+class Cycle(Group):
+    CLASSID = MUIC_Cycle
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Active', 0x80421788, 'isg', CT_LONG),
+        #Not supported: ('Entries', 0x80420629, 'i', ),
+        )
+
+#=============================================================================
+# Coloradjust
+#-----------------------------------------------------------------------------
+
+class Coloradjust(Group):
+    CLASSID = MUIC_Coloradjust
+    HEADER = None
+
+    ATTRIBUTES = (
+        ('Blue',   0x8042b8a3, 'isg', CT_ULONG),
+        ('Green',  0x804285ab, 'isg', CT_ULONG),
+        ('ModeID', 0x8042ec59, 'isg', CT_ULONG),
+        ('Red',    0x80420eaa, 'isg', CT_ULONG),
+        #Not supported: ('RGB', 0x8042f899, 'isg', ),
+        )
+
+#=============================================================================
+# Palette
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Popstring
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Popobject
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Poplist
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Popscreen
+#-----------------------------------------------------------------------------
+
+class Popscreen(Group):
+    CLASSID = MUIC_Popscreen
+    HEADER = None
+
+#=============================================================================
+# Popasl
+#-----------------------------------------------------------------------------
+
+## TODO
+
+#=============================================================================
+# Semaphore
+#-----------------------------------------------------------------------------
+
+class Semaphore(Notify):
+    CLASSID = MUIC_Semaphore
+    HEADER = None
+
+    METHODS = (
+        ('Attempt',       0x80426ce2),
+        ('AttemptShared', 0x80422551),
+        ('Obtain',        0x804276f0),
+        ('ObtainShared',  0x8042ea02),
+        ('Release',       0x80421f2d),
+        )
+
+#=============================================================================
+# Applist
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Cclist
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Dataspace
+#-----------------------------------------------------------------------------
+
+class Dataspace(Semaphore):
+    CLASSID = MUIC_Dataspace
+    HEADER = None
+
+    METHODS = (
+        ('Add',      0x80423366, (str, CT_LONG, CT_ULONG)),
+        ('Clear',    0x8042b6c9),
+        ('Find',     0x8042832c, (CT_ULONG, )),
+        #Not supported: ('Merge',    0x80423e2b, (PyMuiObject)),
+        #Not supported: ('ReadIFF',  0x80420dfb, (CPointer, )),
+        ('Remove',   0x8042dce1, (CT_ULONG, )),
+        #Not supported: ('WriteIFF', 0x80425e8e, (CPointer, CT_ULONG, CT_ULONG)),
+        )
+
+    ATTRIBUTES = (
+        #Not supported: ('Pool', 0x80424cf9, 'i', CPointer),
+        )
+
+    def Add(self, data, id):
+        return self.DoMuiMethod('Add', data, len(data), id)
+
+#=============================================================================
+# Configdata
+#-----------------------------------------------------------------------------
+
+## MUI PRIVATE
+
+#=============================================================================
+# Dtpic
+#-----------------------------------------------------------------------------
+
+class Dtpic(Semaphore):
+    CLASSID = MUIC_Dtpic
+    HEADER = None
