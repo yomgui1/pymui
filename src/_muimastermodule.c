@@ -1,9 +1,9 @@
 /***************************************************************************//**
- *** @file _muimastermodule.c
- *** @author ROGUEZ "Yomgui" Guillaume
- *** @date 2007/06/06
+ *** \file _muimastermodule.c
+ *** \author ROGUEZ "Yomgui" Guillaume
+ *** \date 2007/06/06
  ***
- *** @brief Python wrapper for muimaster.library
+ *** \brief Python wrapper for muimaster.library
  ***
  *******************************************************************************/
 
@@ -246,18 +246,11 @@ typedef struct MCCNode_STRUCT {
 
 
 /*
-** Private Prototypes
-*/
-
-
-/*
 ** Private Variables
 */
 
 static struct Hook OnAttrChangedHook;
 static PyTypeObject MUIObject_Type;
-static ULONG id_counter;
-static Object *global_app;
 static struct MinList classes;
 
 PYAMIGA_CORE_DECL_TYPES;
@@ -429,7 +422,7 @@ convertFromPython(PyObject *obj, long *value) {
         PyObject *o = PyNumber_Int(obj);
 
         if (NULL == o) {
-            PyErr_Format(PyExc_TypeError, "can't convert a %s object into an integer", obj->ob_type->tp_name);
+            PyErr_Format(PyExc_TypeError, "can't convert a %s object into an integer", OBJ_TNAME(obj));
             return -1;
         }
 
@@ -442,7 +435,7 @@ convertFromPython(PyObject *obj, long *value) {
         Py_DECREF(o);
     }
 
-    DPRINT("%s object converted into integer: %ld %lu %lx\n", obj->ob_type->tp_name,
+    DPRINT("%s object converted into integer: %ld %lu %lx\n", OBJ_TNAME(obj),
            (LONG) *value, (ULONG) *value, (ULONG) *value);
 
     return 0;
@@ -636,34 +629,6 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
 ** MUIObject_Type
 */
 
-//+ muiobject_call
-static PyObject *
-muiobject_call(PyTypeObject *type, PyObject *args, PyObject *kwds)
-{
-    Object *obj = NULL;
-    MUIObject *self;
-
-    DPRINT("coucou\n");
-
-    if (!PyArg_ParseTuple(args, "|O&", CPointer_Convert, &obj))
-        return NULL;
-
-    DPRINT("obj = %p\n", obj);
-
-    if (NULL != obj) {
-        if (!get(obj, MUIA_PyMod_PyObject, &self) || (NULL == self))
-            return PyErr_Format(PyExc_TypeError, "Given address (%p) doesn't seem to be a PyMuiObject", obj);
-    
-        DPRINT("old self=%p\n", self);
-        Py_INCREF((PyObject *) self);
-        return (PyObject *) self;
-    }
-
-    self = (MUIObject *) type->tp_new(type, args, kwds);
-    DPRINT("new self=%p\n", self);
-    return (PyObject *) self;
-}
-//- muiobject_call
 //+ muiobject_init
 static int
 muiobject_init(MUIObject *self)
@@ -1164,7 +1129,6 @@ static PyTypeObject MUIObject_Type = {
     tp_traverse     : (traverseproc)muiobject_traverse,
     tp_clear        : (inquiry)muiobject_clear,
 
-    tp_call         : (ternaryfunc)muiobject_call, 
     tp_repr         : (reprfunc)muiobject_repr,
     tp_methods      : muiobject_methods,
     tp_members      : muiobject_members,
@@ -1230,24 +1194,10 @@ _muimaster_mainloop(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 //- _muimaster_mainloop
-//+ _muimaster_newid
-/*! \cond */
-PyDoc_STRVAR(_muimaster_newid_doc,
-"newid() -> long.\n\
-\n\
-Return a long integer, unique per process.");
-/*! \endcond */
-
-static PyObject *
-_muimaster_newid(PyObject *self) {
-    return PyLong_FromUnsignedLong(++id_counter);
-}
-//- _muimaster_newid
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", (PyCFunction) _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
-    {"newid", (PyCFunction) _muimaster_newid, METH_NOARGS, _muimaster_newid_doc},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -1377,7 +1327,6 @@ INITFUNC(void) {
     if (import__core() < 0) return;
 
     id_counter = 0;
-    global_app = NULL;
     NEWLIST(&classes);
 
     /* Notification hook initialization */
