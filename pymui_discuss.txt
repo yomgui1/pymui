@@ -1,21 +1,30 @@
 => create a new CPointer instance with address = 0x1234
+
 CPointer(0x1234) => CPointer instance
 
+
 => and for NULL address?
+
 CPointer(0) and CPointer(None) return None.
 
+
 => Is CPointer() valid ?
+
 -> Yes, give a None for CPointer.
 -> For subclass, no rules. For example: RastPort() give a new allocated rastport.
 
+
 => create a new PyMuiObject instance (CPointer subtype):
+
 PyMuiObject()
 -> Don't give any arguments. No MUI object associated until _create() called with right arguments.
 
 => create a PyMuiObject from a NULL address:
 -> Like CPointer
 
+
 => create a PyMuiObject instance from a existant C Object pointer.
+
 PyMuiObject(0x1234) => instance
 -> it's not a new instance. Just get the PyMuiObject from the given Object address, incref the py object and return it.
 

@@ -158,7 +158,6 @@ autre méthodes de classe.).
 
 #define USE_PYAMIGA_HELP_MACROS
 #include <pyamiga/_coremod.h>
-#undef DPRINT
 
 //#define NDEBUG
 
@@ -172,17 +171,6 @@ autre méthodes de classe.).
 
 #ifndef INITFUNC
 #define INITFUNC init_muimaster
-#endif
-
-#ifndef NDEBUG
-#define DPRINT(x...) ({ PyObject *o = module?PyObject_GetAttrString(module, "stddebug"):NULL; \
-         if ((NULL == o) || !PyInt_AS_LONG(o)) {                         \
-             KPrintF("%s:%u: ", __FUNCTION__, __LINE__); KPrintF(##x);  \
-         } else {                                                       \
-             printf("%s:%u: ", __FUNCTION__, __LINE__); printf(##x);    \
-         } })
-#else
-#define DPRINT(x...)
 #endif
 
 #if defined __GNUC__
@@ -255,10 +243,6 @@ static struct MinList classes;
 
 PYAMIGA_CORE_DECL_TYPES;
 PYAMIGA_CORE_DECL_API;
-
-#ifndef NDEBUG
-static PyObject *module; /* only used in debugging */
-#endif
 
 
 /*
@@ -629,21 +613,53 @@ myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
 ** MUIObject_Type
 */
 
-//+ muiobject_init
+//+ muiobject_new
+static PyObject *
+muiobject_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+{
+    MUIObject *self;
+    Object *obj = NULL;
+    char *keys[] = {"address", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O&:PyMuiObject", keys,
+                                     CPointer_Convert, &obj))
+        return NULL;
+
+    if (NULL != obj) {
+        /* obtain from the Object the associated PyMuiObject and returns it */
+        if (!get(obj, MUIA_PyMod_PyObject, &self) || (NULL == self))
+            return PyErr_Format(PyExc_RuntimeError, "Object @ %p doesn't seem to be associated with a PyMuiObject.");
+
+        DPRINT("Associated object to %p: %p\n", obj, self);
+
+        Py_INCREF((PyObject *) self);
+        return (PyObject *) self;
+    }
+
+    self = (MUIObject *) type->tp_alloc(type, 0);
+    if ((NULL == self) || CPointer_Init((PyObject *) self, (APTR)0xDEADBEAF, NULL, NULL))
+        Py_CLEAR(self);
+    else {
+        CPointer_SET_ADDR(self, NULL);
+
+        self->refdict = PyDict_New();
+        if (NULL != self->refdict)
+            self->refcnt = 0;
+        else
+            Py_CLEAR(self);
+    }
+
+    DPRINT("MUIObject.init(self=%p)\n", self);
+
+    return (PyObject *) self;
+}
+//- muiobject_new
 static int
 muiobject_init(MUIObject *self)
 {
-    self->refdict = PyDict_New();
-    if (NULL == self->refdict)
-        return -1;
-
-    self->refcnt = 0;
-        
-    DPRINT("MUIObject.init(self=%p)\n", self);
-
-    return CPointer_Init((PyObject *) self, NULL, NULL, NULL);
+    printf("muiobject_init called\n");
+    return 0;
 }
-//- muiobject_init
 //+ muiobject_dealloc
 static void
 muiobject_dealloc(MUIObject *self) {
@@ -1123,6 +1139,7 @@ static PyTypeObject MUIObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
     
+    tp_new          : (newfunc)muiobject_new,
     tp_init         : (initproc)muiobject_init,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
@@ -1211,10 +1228,6 @@ void
 PyMorphOS_CloseModule(void) {
     MCCNode *node;
 
-    #ifndef NDEBUG
-    module = NULL;
-    #endif
-    
     DPRINT("Closing module...\n");
 
     /* Destroy all PyMod classes */
@@ -1326,7 +1339,6 @@ INITFUNC(void) {
 
     if (import__core() < 0) return;
 
-    id_counter = 0;
     NEWLIST(&classes);
 
     /* Notification hook initialization */
@@ -1340,15 +1352,9 @@ INITFUNC(void) {
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
 
-    ADD_TYPE(m, "PyMuiObject", &MUIObject_Type);
+    ADD_TYPE(m, "MUIObject", &MUIObject_Type);
 
     if (all_ins(m)) return;
-
-#ifndef NDEBUG
-    /* Debugging */
-    module = m;
-    PyModule_AddObject(m, "stddebug", PyInt_FromLong(FALSE));
-#endif
 }
 //-
 
