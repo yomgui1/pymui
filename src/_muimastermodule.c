@@ -425,97 +425,45 @@ convertFromPython(PyObject *obj, long *value) {
     return 0;
 }
 //-
-//+ convertToPython
-/*
-** Convert a given value into the right Python type object
-*/
-static PyObject *
-convertToPython(PyTypeObject *type, long value) {   
-    DPRINT("type: %p (%s), value: %ld %lu %#lx\n", type, type->tp_name, (ULONG) value, value, (ULONG) value);
-
-    if (type == &PyInt_Type)
-        return PyInt_FromLong(value);
-    else if (type == &PyLong_Type)
-        return PyLong_FromUnsignedLong(value);
-    else if (type == &PyBool_Type)
-        return PyBool_FromLong(value);
-
-    /* Others supported types are pointers now */
-
-    if (0 == value)
-        Py_RETURN_NONE;
-
-    if (PyType_IsSubtype(type, &MUIObject_Type)) {
-        PyObject *v;
-        Object *obj;
-
-        obj = (Object *) value;
-        if (!get(obj, MUIA_PyMod_PyObject, &v)) {
-            PyErr_SetString(PyExc_RuntimeError, "not handled given object");
-            return NULL;
-        }
-        
-        if (NULL != v) {
-            Py_INCREF(v);
-        } else {
-            PyErr_SetString(PyExc_RuntimeError, "linked Python object is NULL");
-            return NULL;
-        }
-        
-        return v;
-    } else if (PyType_IsSubtype(type, &CPointer_Type))
-        return CPointer_New((void *) value, NULL, NULL);
-     else if (PyType_IsSubtype(type, &PyString_Type))
-        return PyString_FromString((char *)value);
-
-    return PyErr_Format(PyExc_TypeError, "unsupported convert type: %s", type->tp_name);
-}
-//- convertToPython
 //+ OnAttrChanged
 static void
-OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg)  { 
-    PyObject *res, *attr_obj, *value_obj, *py_obj;
+OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg) {
+    PyObject *res, *pyo_attr, *pyo_value;
     LONG value = msg->value;
 
-    py_obj = msg->py_obj;
-
     DPRINT("Attribute %#lx Changed for PyMCC object @ %p (MUI=%p) to %ld %lu %p\n",
-           msg->attr, py_obj, obj, value, (ULONG) value, (APTR) value);
+           msg->attr, msg->py_obj, obj, value, (ULONG) value, (APTR) value);
     
-    /* Get the attribute type */
-    attr_obj = Py_BuildValue("I", msg->attr);
-    if (NULL == attr_obj) return;
+    Py_INCREF(msg->py_obj); // to prevent that our object was deleted during methods calls.
 
-    Py_INCREF(py_obj); // to prevent that our object was deleted during methods calls.     
+    /* Get the attribute object */
+    DPRINT("Calling py_obj.GetAttribute(id=0x%08x)...\n", msg->attr);
+    pyo_attr = PyObject_CallMethod(msg->py_obj, "GetAttribute", "k", msg->attr);
+    if (NULL != pyo_attr) {
+        DPRINT("attr found: %p\n", pyo_attr);
 
-    DPRINT("Calling _GetAttrType(attr_obj = %p)...\n", attr_obj);
-    res = PyObject_CallMethod(py_obj, "_GetAttrType", "O", attr_obj);
-    if ((NULL == res) || (res == Py_None)) {
-        Py_DECREF(attr_obj);
-        Py_XDECREF(res);
-        Py_DECREF(py_obj);
-        PyErr_Format(PyExc_RuntimeError, "can't determinate type for attribute %#x", msg->attr);
-        return;
+        /* Convert the integer value into its Python representation */
+        DPRINT("Get attr.format)...\n");
+        res = PyObject_GetAttributeString(pyo_attr, "format");
+        if (NULL != res) {
+            char *format = PyString_AS_STRING(res);
+            DPRINT("format: '%s'\n", format);
+
+            /* Converting this attribute into right Python object */
+            pyo_value = Py_BuildValue(format, value);
+            Py_DECREF(res);
+            if (NULL != pyo_value) {
+                /* Call the high-level notify method */
+                DPRINT("Calling OnAttrChanged(pyo_attr: %p, pyo_value: %p)...\n", pyo_attr, pyo_value);
+                PyObject_CallMethod(msg->py_obj, "_OnAttrChanged", "OO", pyo_attr, pyo_value);
+
+                Py_DECREF(pyo_value);
+            }
+        }
+        Py_DECREF(pyo_attr);
     }
-
-    /* Converting this attribute into right Python object */
-    value_obj = convertToPython((PyTypeObject *)res, value);
-    Py_DECREF(res);
-    if (NULL == value_obj) {
-        Py_DECREF(attr_obj);
-        Py_DECREF(py_obj);
-        return;
-    }
-    
-    /* Call the high-level notify method */
-    DPRINT("Calling OnAttrChanged(attr_obj = %p, value_obj = %p)...\n", attr_obj, value_obj);
-    PyObject_CallMethod(py_obj, "_OnAttrChanged", "OO", attr_obj, value_obj);
-
-    // nothing to do more... so don't take care about result of this call
-    
-    Py_DECREF(attr_obj);
-    Py_DECREF(value_obj);
-    Py_DECREF(py_obj);
+    Py_DECREF(msg->py_obj);
+    return;
 }
 //-
 //+ _keep_ref
@@ -618,26 +566,42 @@ static PyObject *
 muiobject_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     MUIObject *self;
-    Object *obj = NULL;
+    PyObject *obj = NULL;
+    APTR address = NULL;
     char *keys[] = {"address", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O&:PyMuiObject", keys,
-                                     CPointer_Convert, &obj))
-        return NULL;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O:PyMuiObject", keys, &obj))
+        return NULL
 
     if (NULL != obj) {
-        /* obtain from the Object the associated PyMuiObject and returns it */
-        if (!get(obj, MUIA_PyMod_PyObject, &self) || (NULL == self))
-            return PyErr_Format(PyExc_RuntimeError, "Object @ %p doesn't seem to be associated with a PyMuiObject.");
+        if (MUIObject_Check(obj)) {
+            DPRINT("direct MUIObject @ %p (type='%s')\n", obj, OBJ_TNAME(obj));
+            Py_INCREF((PyObject *) self);
+            return (PyObject *) self; /* WARNING: the init method of the 'self' type may be called after
+                                       * return if 'type' is a subclass of MUIObject_Type.
+                                       */
+        }
 
-        DPRINT("Associated object to %p: %p\n", obj, self);
+        /* Now try to obtain an address from the given object */
+        if (!CPointer_Convert((PyObject *) obj, &address))
+            return NULL;
+
+        if (NULL == address) Py_RETURN_NONE;
+
+        /* obtain from the Object the associated PyMuiObject and returns it */
+        if (!get(address, MUIA_PyMod_PyObject, &self) || (NULL == self))
+            return PyErr_Format(PyExc_RuntimeError, "Object @ %p doesn't seem to be associated with a PyMuiObject.", address);
+
+        DPRINT("Associated object to %p: %p\n", address, self);
 
         Py_INCREF((PyObject *) self);
-        return (PyObject *) self;
+        return (PyObject *) self; /* WARNING: the init method of the 'self' type may be called after
+                                   * return if 'type' is a subclass of MUIObject_Type.
+                                   */
     }
 
     self = (MUIObject *) type->tp_alloc(type, 0);
-    if ((NULL == self) || CPointer_Init((PyObject *) self, (APTR)0xDEADBEAF, NULL, NULL))
+    if ((NULL == self) || CPointer_Init((PyObject *) self, (APTR)-1, NULL, NULL))
         Py_CLEAR(self);
     else {
         CPointer_SET_ADDR(self, NULL);
@@ -654,12 +618,6 @@ muiobject_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return (PyObject *) self;
 }
 //- muiobject_new
-static int
-muiobject_init(MUIObject *self)
-{
-    printf("muiobject_init called\n");
-    return 0;
-}
 //+ muiobject_dealloc
 static void
 muiobject_dealloc(MUIObject *self) {
@@ -920,10 +878,11 @@ muiobject__init(MUIObject *self, PyObject *args) {
 //+ muiobject__get
 /*! \cond */
 PyDoc_STRVAR(muiobject__get_doc,
-"_get(attr, attr_type, array=False) -> object\n\
+"_get(attr, format) -> object\n\
 \n\
 Try to obtain the attribute value of the MUI object by calling \n\
-the BOOPSI function GetAttr().");
+the BOOPSI function GetAttr().
+The value returned by GetAttr() is converted by Py_BuildValue() using format.");
 /*! \endcond */
 
 static PyObject *
@@ -932,14 +891,15 @@ muiobject__get(MUIObject *self, PyObject *args) {
     Object *obj;
     ULONG attr;
     ULONG value;
+    char *format;
 
     obj = CPointer_GET_ADDR(self);
     CHECK_OBJ(obj);
  
-    if (!PyArg_ParseTuple(args, "O!I", &PyType_Type, &type, &attr))
+    if (!PyArg_ParseTuple(args, "Is", &attr, &format))
         return NULL;
 
-    DPRINT("type: %s, attr: 0x%08x\n", type->tp_name, attr);
+    DPRINT("attr: 0x%08x, format='%s'\n", attr, format);
 
     if (get(obj, attr, &value) == 0)
         return PyErr_Format(PyExc_ValueError,
@@ -948,7 +908,7 @@ muiobject__get(MUIObject *self, PyObject *args) {
     DPRINT("value: %d %u 0x%08x\n", (LONG)value, value, (APTR) value);
 
     /* Convert value into the right Python object */
-    return convertToPython(type, value);
+    return Py_BuildValue(format, value);
 }
 //- muiobject__get
 //+ muiobject__set
@@ -1352,7 +1312,7 @@ INITFUNC(void) {
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
 
-    ADD_TYPE(m, "MUIObject", &MUIObject_Type);
+    ADD_TYPE(m, "PyMuiObject", &MUIObject_Type);
 
     if (all_ins(m)) return;
 }

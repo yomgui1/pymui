@@ -29,8 +29,6 @@ try:
 except:
     from simu import *
 
-CT_LONG = int
-CT_ULONG = long
 
 EveryTime = TriggerValue = 0x49893131
 NotTriggerValue = 0x49893133
@@ -48,28 +46,6 @@ class MenuItemStruct(CStructure):
 class PyMuiInputHandlerNodeStruct(CStructure):
     def __init__(self, address):
         CStructure.__init__(self, address, 0, "MUI_InputHandlerNode")
-
-class MetaLimitedString(type):
-    def __new__(metacl, name, bases, dct):
-        limit = dct.pop('limit', 0)
-        cl = type.__new__(metacl, name, bases, dct)
-        cl.__limit = limit
-        return cl
-
-    def __setLimit(cl, limit):
-        assert limit >= 0
-        cl.__limit = limit
-
-    limit = property(fget=lambda cl: cl.__limit,
-                     fset=__setLimit)
-
-class LimitedStringBase(str):
-    def __init__(self, *args, **kwds):
-        str.__init__(self, *args, **kwds)
-        if len(self) > self.__class__.limit:
-            raise ValueError("String too long (limited to %lu)" % self.__class__.limit)
-
-LimitedStringFactory = lambda n, x: MetaLimitedString(n, (LimitedStringBase,), {'limit': x})
 
 ##############################################################################
 ### ERRORS
@@ -123,6 +99,96 @@ class _PyDisposedObject(object):
 ### Basic classes
 ##############################################################################
 
+## Convertors used to transfert value between Python and MUI
+
+class MetaConvertor(type):
+    """MetaConvertor
+
+    Metaclass for Convertor subclasses classes.
+    This metaclass records Convertor subclasses created with ConvertorFactory function.
+
+    See documentation of ConvertorFactory() to create new Convertors.
+    
+    To obtain a suitable convertor for a given type, call Convertor(type),
+    where type is your type object. Raise a KeyError if no convertors have been found
+    for this type.
+    """
+    
+    __convs = {} # Convertors depository
+
+    def __new__(metacl, name, bases, dct):
+        debug("MetaConvertor.__new__ called:", name)
+        
+        if name == 'Convertor':
+            return type.__new__(metacl, name, bases, dct)
+        
+        # Check for type attribute
+        t = dct['type']
+        if not isinstance(t, type):
+            raise TypeError("'type' argument should be a type, not %s" % type(t).__name__)
+
+        # Check for format attribute
+        f = dct['format']
+        if not isinstance(f, str):
+            raise TypeError("'format' argument should be a string, not %s" % type(f).__name__)
+        if not f:
+            raise TypeError("'format' argument should be non empty")
+
+        # Generate a key for recording and check if doesn't exist
+        if t in metacl.__convs:
+            raise RuntimeError("type %s has already a registered convertor: '%s'" % (t.__name__,
+                                                                                     metacl.__convs[k].__name__))
+
+        # Create the ney Convertor class and record it
+        conv = type.__new__(metacl, name+'_Convertor', bases, dct)
+        metacl.__convs[t] = conv
+        return conv
+
+    @staticmethod
+    def GetConvertor(x):
+        if not isinstance(x, type):
+            raise TypeError("%s object is not a type object" % type(x).__name__)
+        debug("Searching for a convertor for %s type..." % x.__name__)
+        if isinstance(x, Convertor):
+            return c            
+        if x in MetaConvertor.__convs:
+            return MetaConvertor.__convs[x]
+        else:
+            for k in MetaConvertor.__convs:
+                if issubclass(x, k):
+                    return MetaConvertor.__convs[k]
+        raise KeyError("Cannot find a suitable Convertor class for type %s" % x.__name__)
+
+class Convertor(object):
+    __metaclass__ = MetaConvertor
+    
+    def __new__(cl, obj):
+        debug("Convertor.__new__ called:", obj)
+        assert not isinstance(obj, Convertor)
+        # Create a new object of cl.type type, without calling the __init__ method
+        return cl.type.__new__(cl.type, obj)
+
+ConvertorFactory = lambda n, t, f: MetaConvertor(n, (Convertor, ), {'type': t, 'format': f})
+
+# Registring some Convertors
+BOOLConvertor = ConvertorFactory('BOOL', bool, 'b')
+LONGConvertor = ConvertorFactory('LONG', int, 'i')
+ULONGConvertor = ConvertorFactory('ULONG', int, 'I')
+APTRConvertor = ConvertorFactory('APTR', CPointer, 'i')
+STRPTRConvertor = ConvertorFactory('STRPTR', str, 's')
+
+# PyMuiObjectConvertor()
+#   Existance of this class is to convert the representation of a C MUI Object pointer
+#   into its corresponding PyMuiObject.
+#   Mechanism is implemented directly in C in the new method of PyMuiObject type.
+#   But this class is mandatory because when Python will call this new method,
+#   it will return the same object, subtype of PyMuiObject and not PyMuiObjectConvertor.
+#   As the type argument (PyMuiObjectConvertor so) is not the type or subtype of the
+#   returned object, no __init__ method is called. Exactly what we want.
+PyMuiObjectConvertor = ConvertorFactory('PyMuiObject', PyMuiObject)
+
+# CArray factory
+
 class MetaCArray(type):
     def __new__(metacl, name, bases, dct):
         limit = dct.pop('type', 0)
@@ -137,10 +203,9 @@ class MetaCArray(type):
     type = property(fget=lambda cl: cl.__type)
 
 class CArrayIterator:
-    def __init__(self, pointer, type):
-        assert isinstance(pointer, type)
-        self.ptr = pointer
-        self.create = getattr(type, 'FromPtr', type)
+    def __init__(self, address, type):
+        self.array = CPointer(address)
+        self.conv = Convertor.GetConvertor(type)
         
     def __iter__(self):
         return self
@@ -151,24 +216,49 @@ class CArrayIterator:
             if self.ptr:
                 return self.create(self.ptr)
         raise StopIteration
-        
+
+
 CArrayFactory = lambda n, x: MetaCArray(n, (CPointer,), {'type': x})
 PyMuiObjectArray = CArrayFactory('PyMuiObjectArray', PyMuiObject)
 
+# Limited string class factory
+
+class MetaLimitedString(type):
+    def __new__(metacl, name, bases, dct):
+        limit = dct.pop('limit', 0)
+        cl = type.__new__(metacl, name, bases, dct)
+        cl.__limit = limit
+        return cl
+
+    def __setLimit(cl, limit):
+        assert limit >= 0
+        cl.__limit = limit
+
+    limit = property(fget=lambda cl: cl.__limit,
+                     fset=__setLimit)
+
+class LimitedStringBase(str):
+    def __init__(self, *args, **kwds):
+        str.__init__(self, *args, **kwds)
+        if len(self) > self.__class__.limit:
+            raise ValueError("String too long (limited to %lu)" % self.__class__.limit)
+
+LimitedStringFactory = lambda n, x: MetaLimitedString(n, (LimitedStringBase,), {'limit': x})
+
+# C List of C Object converted to PyMuiObject
+
 class PyMuiObjectIterator:
     def __init__(self, node):
-        assert isinstance(node, Node)
-        self.node = node
+        self.n = int(node)
         
     def __iter__(self):
         return self
 
     def next(self):
-        if self.node:
-            addr, self.node = _intui.NextObject(self.node)
-            if addr:
-                obj = PyMuiObject(addr)
-                return obj
+        if self.n:
+            x, self.n = _intui.NextObject(self.n)
+            if x:
+                return PyMuiObjectConvertor(x)
         raise StopIteration
 
 class PyMuiObjectList(List):
@@ -181,8 +271,10 @@ class PyMuiObjectList(List):
         return PyMuiObjectIterator(self.head)
     
 class PyMuiObjectMinList(PyMuiObjectList):
-    def __init__(self, address):
-        List.__init__(self, address, True)
+    def __init__(self, x):
+        List.__init__(self, x, True)
+
+# Mixer for PyMuiObject that can contain some other PyMuiObject.
 
 class ContainerMixer:
     def __init__(self):
@@ -257,7 +349,7 @@ class ContainerMixer:
                         doc="Iterable on a list of children")
 
 ##############################################################################
-### Attributes and methods tools
+### Classes to handle MUI attributes and methods
 ##############################################################################
 
 class PyMuiID:
@@ -289,14 +381,14 @@ class PyMuiID:
 class PyMuiMethod(PyMuiID):
     _name = 'Method'
 
-    def __init__(self, id, t_args=(), t_ret=CT_LONG):
+    def __init__(self, id, c_args=(), c_ret=int):
         PyMuiID.__init__(self, id)
 
-        if not isinstance(t_args, tuple):
-            raise TypeError("t_args should be a tuple instance, not '%s'" % type(t_args).__name__)
+        if not isinstance(c_args, tuple):
+            raise TypeError("c_args should be a tuple instance, not '%s'" % type(c_args).__name__)
 
-        self.__t_ret = t_ret
-        self.__t_args = t_args
+        self.__c_ret = MetaConvertor.GetConvertor(c_ret)
+        self.__c_args = tuple(MetaConvertor.GetConvertor(x) for x in c_args)
 
     def bind(self, obj):
         o = weakref.ref(obj)
@@ -304,50 +396,48 @@ class PyMuiMethod(PyMuiID):
             o()._do(self.id, args)
         return func
 
-    t_ret = property(fget=lambda self: self.__t_ret,
-                     doc="Returns the C type of method returns value:")
-    t_args = property(fget=lambda self: self.__t_args,
-                      doc="Returns a tuple of the C types of method arguments.")
+    c_ret = property(fget=lambda self: self.__c_ret,
+                     doc="Returns the C convertor of the method returns value:")
+    c_args = property(fget=lambda self: self.__c_args,
+                      doc="Returns a tuple of the C convertors of method arguments.")
 
 class PyMuiAttribute(PyMuiID):
     _name = 'Attribute'
 
-    def __init__(self, id, isg, type):
+    def __init__(self, id, isg, conv):
         PyMuiID.__init__(self, id)
 
-        assert issubclass(type, (CStructure, CPointer, bool, CT_LONG, CT_ULONG, str))
+        conv = MetaConvertor.GetConvertor(conv)
 
         isg = isg.lower()
         if filter(lambda x: x not in 'isgk', isg):
             raise ValueError("isg argument should be a string formed with letters i, s, g or k.")
 
         self.__fl = tuple(x in isg for x in 'isgk')
-        self.__tp = type
+        self.__conv = conv
 
     def init(self, obj, value):
         if not self.__fl[0]:
             raise RuntimeError("attribute 0x%x cannot be set at init" % self.id)
-        if not issubclass(type(value), self.__tp):
+        if not isinstance(value, self.type):
             raise TypeError("Value for attribute 0x%x should be of type %s, not %s"
-                            % (self.id, self.__tp.__name__, type(value).__name__))
+                            % (self.id, self.type.__name__, type(value).__name__))
         obj._init(self.id, value, self.Keep)
 
     def set(self, obj, value):
         if not self.__fl[1]:
             raise RuntimeError("attribute 0x%x cannot be set" % self.id)
-        if not issubclass(type(value), self.__tp):
+        if not isinstance(value, self.type):
             raise TypeError("Value for attribute 0x%x should be of type %s, not %s"
-                            % (self.id, self.__tp.__name__, type(value).__name__))
+                            % (self.id, self.type.__name__, type(value).__name__))
         obj._set(self.id, value, self.Keep)
 
     def get(self, obj):
         if not self.__fl[2]:
             raise RuntimeError("attribute %s cannot be get" % self.id)
-        if issubclass(self.__tp, CStructure):
-            return self.__tp(obj._get(CPointer, self.id))
-        return obj._get(self.__tp, self.id)
+        return self.__conv(obj._get(self.id, self.__conv.format))
 
-    type = property(fget=lambda self: self.__tp,
+    type = property(fget=lambda self: self.__conv.type,
                     doc="Returns the type of attribute.")
     CanInit = property(fget=lambda self: self.__fl[0],
                        doc="Returns True if the attribute can be set at initialisation.")
@@ -481,7 +571,7 @@ class MetaPyMCC(type):
         return type.__new__(meta, name, bases, dct)
 
     def __init__(cl, name, bases, dct):
-        return type.__init__(cl, name, bases, dct)
+        type.__init__(cl, name, bases, dct)
         
         debug("\nMethods list for class", name)
         for n, m in dct['__mui_meths'].iteritems():
@@ -514,7 +604,7 @@ class Notify(PyMuiObject):
     HEADER = None
 
     METHODS = (
-        # (Name, ID [, (<args types>, ) [, <returns type>]])
+        # (Name, ID [, (<args types>, ) [, <return type>]])
 
         # Better implemented in Python:
         # CallHook, FindUData, GetUData, SetUData, SetUDataOnce,
@@ -526,25 +616,29 @@ class Notify(PyMuiObject):
 
         ('Export',      0x80420f1c, (PyMuiObject,)),
         ('Import',      0x8042d012, (PyMuiObject,)),
-        ('WriteLong',   0x80428d86, (CT_ULONG, CPointer)),
+        ('WriteLong',   0x80428d86, (long, CPointer)),
         ('WriteString', 0x80424bf4, (str, CPointer)),
         )
 
     ATTRIBUTES = (
-        # (Name, ID, <ISGK string>, type)
+        # (Name, ID, <ISGK string>, function)
 
         ('ApplicationObject', 0x8042d3ee, 'g',        PyMuiObject),
         ('AppMessage',        0x80421955, 'g',        CPointer),
-        ('HelpLine',          0x8042a825, 'isg',      CT_LONG),
+        ('HelpLine',          0x8042a825, 'isg',      int),
         ('HelpNode',          0x80420b85, 'isgk',     str),
         ('NoNotify',          0x804237f9, 's',        bool),
-        ('ObjectID',          0x8042d76e, 'isg',      CT_ULONG),
+        ('ObjectID',          0x8042d76e, 'isg',      long),
         ('Parent',            0x8042e35f, 'g',        PyMuiObject),
-        ('Revision',          0x80427eaa, 'g',        CT_LONG),
-        ('UserData',          0x80420313, 'isg',      CT_ULONG),
-        ('Version',           0x80422301, 'g',        CT_LONG),
+        ('Revision',          0x80427eaa, 'g',        int),
+        ('UserData',          0x80420313, 'isg',      long),
+        ('Version',           0x80422301, 'g',        int),
         )
-
+    
+    def __new__(cl, *args, **kwds):
+        # Creating an empty PyMuiObject
+        return PyMuiObject.__new__(cl)
+    
     def __init__(self, **kwds):
         self.PreCreate(**kwds)
         self.Create(**kwds)
@@ -712,7 +806,7 @@ class Notify(PyMuiObject):
 
     def _OnAttrChanged(self, id, value):
         if id not in self.__nd:
-            raise RuntimeError("Notification raised on attribute %x without Python notifications set." % id)
+            raise RuntimeError("Notification raised on attribute %x without Python notifications set!" % id)
 
         for callback, args in self.__nd[id]:
             _a = []
@@ -726,11 +820,8 @@ class Notify(PyMuiObject):
 
             callback(*_a)
 
-    def _GetAttrType(self, attr):
-        return self.GetAttribute(attr).type
-
     def _OnBoopsiMethod(self, id, msg):
-        n = hex(id)   
+        n = hex(id)
         try:
             m = self.GetMethod(id)
         except:
@@ -769,7 +860,7 @@ class Family(Notify):
         )
 
     ATTRIBUTES = (    
-        #('Child', 0x8042c696, 'ik', PyMuiObject),
+        # Use AddChild: ('Child', 0x8042c696, 'ik', PyMuiObject),
         ('List',   0x80424b9e, 'g',  PyMuiObjectMinList),
         )
 
@@ -813,11 +904,11 @@ class Menuitem(Family):
         ('Checkit',       0x80425ace, 'isg',  bool),
         ('CommandString', 0x8042b9cc, 'isg',  bool),
         ('Enabled',       0x8042ae0f, 'isg',  bool),
-        ('Exclude',       0x80420bc6, 'isg',  CT_LONG),
+        ('Exclude',       0x80420bc6, 'isg',  int),
         ('Shortcut',      0x80422030, 'isgk', str),
         ('Title',         0x804218be, 'isgk', str),
         ('Toggle',        0x80424d5c, 'isg',  bool),
-        ('Trigger',       0x80426f32, 'g',    MenuItemStruct),
+        ('Trigger',       0x80426f32, 'g',    CPointer), # XXX : real type?
         )
 
 #=============================================================================
@@ -840,13 +931,13 @@ class Application(Notify, ContainerMixer):
         #('InputBuffered',   0x80427e59),
         ('Load',             0x8042f90d, (str, )),
         #('NewInput',        0x80423ba6, (, )),
-        ('OpenConfigWindow', 0x804299ba, (CT_ULONG, )),
+        ('OpenConfigWindow', 0x804299ba, (long, )),
         #('PushMethod',      0x80429ef8, (, )),
-        ('RemInputHandler',  0x8042e7af, (PyMuiInputHandlerNodeStruct, )),
-        ('ReturnID',         0x804276ef, (CT_ULONG, )),
+        #('RemInputHandler',  0x8042e7af, (PyMuiInputHandlerNodeStruct, )),
+        ('ReturnID',         0x804276ef, (long, )),
         ('Save',             0x804227ef, (str, )),
-        ('SetConfigItem',    0x80424a80, (CT_ULONG, CPointer)),
-        ('ShowHelp',         0x80426479, (PyMuiObject, str, str, CT_LONG)),
+        ('SetConfigItem',    0x80424a80, (long, CPointer)),
+        ('ShowHelp',         0x80426479, (PyMuiObject, str, str, int)),
         )
     ATTRIBUTES = (    
         ('Active',         0x804260ab, 'isg',  bool),
@@ -855,7 +946,7 @@ class Application(Notify, ContainerMixer):
         ('Broker',         0x8042dbce, 'g',    CPointer),
         ('BrokerHook',     0x80428f4b, 'isgk', CPointer),
         ('BrokerPort',     0x8042e0ad, 'g',    CPointer),
-        ('BrokerPri',      0x8042c8d0, 'ig',   CT_LONG),
+        ('BrokerPri',      0x8042c8d0, 'ig',   int),
         ('Commands',       0x80428648, 'isgk', CPointer),
         ('Copyright',      0x8042ef4d, 'igk',  str),
         ('Description',    0x80421fc6, 'igk',  str),
@@ -865,15 +956,15 @@ class Application(Notify, ContainerMixer):
         ('ForceQuit',      0x804257df, 'g',    bool),
         ('HelpFile',       0x804293f4, 'isgk', str),
         ('Iconified',      0x8042a07f, 'sg',   bool),
-        ('MenuAction',     0x80428961, 'g',    CT_ULONG),
-        ('MenuHelp',       0x8042540b, 'g',    CT_ULONG),
+        ('MenuAction',     0x80428961, 'g',    long),
+        ('MenuHelp',       0x8042540b, 'g',    long),
         ('Menustrip',      0x804252d9, 'ik',   PyMuiObject),
         ('RexxHook',       0x80427c42, 'isgk', CPointer),
         ('RexxMsg',        0x8042fd88, 'g',    CPointer),
         ('RexxString',     0x8042d711, 's',    str),
         ('SingleTask',     0x8042a2c8, 'i',    bool),
         ('Sleep',          0x80425711, 's',    bool),
-        ('Title',          0x804281b8, 'igk',  LimitedStringFactory('AppTitleStr', 30)),
+        ('Title',          0x804281b8, 'igk',  LimitedStringConvertor(30)),
         ('UseCommodities', 0x80425ee5, 'i',    bool),
         ('UseRexx',        0x80422387, 'i',    bool),
         ('Version',        0x8042b33f, 'igk',  str),
@@ -978,15 +1069,15 @@ class Window(Notify, ContainerMixer):
         ('IsSubWindow',     0x8042b5aa, 'isg',  bool),
         ('RefWindow',       0x804201f4, 'isk',  PyMuiObject),
 
-        ('LeftEdge',        0x80426c65, 'ig',   CT_LONG),
-        ('TopEdge',         0x80427c66, 'ig',   CT_LONG),
-        ('Width',           0x8042dcae, 'ig',   CT_LONG),
-        ('Height',          0x80425846, 'ig',   CT_LONG),
+        ('LeftEdge',        0x80426c65, 'ig',   int),
+        ('TopEdge',         0x80427c66, 'ig',   int),
+        ('Width',           0x8042dcae, 'ig',   int),
+        ('Height',          0x80425846, 'ig',   int),
 
-        ('AltLeftEdge',     0x80422d65, 'ig',   CT_LONG),
-        ('AltTopEdge',      0x8042e99b, 'ig',   CT_LONG),
-        ('AltWidth',        0x804260f4, 'ig',   CT_LONG),
-        ('AltHeight',       0x8042cce3, 'ig',   CT_LONG),
+        ('AltLeftEdge',     0x80422d65, 'ig',   int),
+        ('AltTopEdge',      0x8042e99b, 'ig',   int),
+        ('AltWidth',        0x804260f4, 'ig',   int),
+        ('AltHeight',       0x8042cce3, 'ig',   int),
 
         ('AppWindow',       0x804280cf, 'i',    bool),
         ('Backdrop',        0x8042c0bb, 'i',    bool),
@@ -1002,7 +1093,7 @@ class Window(Notify, ContainerMixer):
         ('NoMenus',         0x80429df5, 'is',   bool),
 
         ('FancyDrawing',            0x8042bd0e, 'isg',  bool),
-        ('ID',                      0x804201bd, 'isg',  CT_ULONG),
+        ('ID',                      0x804201bd, 'isg',  long),
         ('Title',                   0x8042ad3d, 'isgk', str),
         ('UseBottomBorderScroller', 0x80424e79, 'isg',  bool),
         ('UseLeftBorderScroller',   0x8042433e, 'isg',  bool),
@@ -1016,7 +1107,7 @@ class Window(Notify, ContainerMixer):
         ('ActiveObject',    0x80427925, 'sg',   PyMuiObject),
         ('MouseObject',     0x8042bf9b, 'g',    CPointer),
 
-        ('MenuAction',      0x80427521, 'isg',  CT_ULONG),
+        ('MenuAction',      0x80427521, 'isg',  long),
         ('Menustrip',       0x8042855e, 'ig',   CPointer),
 
         ('PublicScreen',    0x804278e4, 'isgk', str),
@@ -1109,11 +1200,11 @@ class Area(Notify):
     CLASSID = _m.MUIC_Area
     HEADER = None
     ATTRIBUTES = (
-        ('Background',  0x8042545b, 'is',   CT_LONG),
-        ('BottomEdge',  0x8042e552, 'g',    CT_LONG),
-        ('Frame',       0x8042ac64, 'i',    CT_LONG),
+        ('Background',  0x8042545b, 'is',   int),
+        ('BottomEdge',  0x8042e552, 'g',    int),
+        ('Frame',       0x8042ac64, 'i',    int),
         ('FrameTitle',  0x8042d1c7, 'i',    str),
-        ('InputMode',   0x8042fb04, 'i',    CT_LONG),
+        ('InputMode',   0x8042fb04, 'i',    int),
         ('Draggable',   0x80420b6e, 'isg',  bool),
         ('WindowObject', 0x8042669e, 'g',   PyMuiObject),
         )
@@ -1162,7 +1253,7 @@ class Image(Area):
         ('FreeVert',        0x8042ea28, 'i', bool),
         #('OldImage',        0x80424f3d, 'i', CPointer),
         ('Spec',            0x804233d5, 'i', str),
-        ('State',           0x8042a3ad, 'is', CT_LONG),
+        ('State',           0x8042a3ad, 'is', int),
         )
 
 #=============================================================================
@@ -1188,7 +1279,7 @@ class Text(Area):
     ATTRIBUTES = (
         ('Contents', 0x8042f8dc, 'isgk', str),
         ('PreParse', 0x8042566d, 'isgk', str), # XXX: k ?
-        ('HiChar',   0x804218ff, 'i',    CT_LONG),
+        ('HiChar',   0x804218ff, 'i',    int),
         ('SetMax',   0x80424d0a, 'i',    bool),
         ('SetMin',   0x80424e10, 'i',    bool),
         ('SetVMax',  0x80420d8b, 'i',    bool),
@@ -1238,14 +1329,14 @@ class String(Gadget):
         ('Acknowledge',    0x8042026c, 'g',    str),
         ('AdvanceOnCR',    0x804226de, 'isg',  bool),
         ('AttachedList',   0x80420fd2, 'isgk', PyMuiObject),
-        ('BufferPos',      0x80428b6c, 'sg',   CT_LONG),
+        ('BufferPos',      0x80428b6c, 'sg',   int),
         ('Contents',       0x80428ffd, 'isgk', str),
-        ('DisplayPos',     0x8042ccbf, 'sg',   CT_LONG),
+        ('DisplayPos',     0x8042ccbf, 'sg',   int),
         #Not supported: ('EditHook',       0x80424c33, 'isg',  CPointer),
-        ('Format',         0x80427484, 'ig',   CT_LONG),
-        ('Integer',        0x80426e8a, 'isg',  CT_ULONG),
+        ('Format',         0x80427484, 'ig',   int),
+        ('Integer',        0x80426e8a, 'isg',  long),
         ('LonelyEditHook', 0x80421569, 'isg',  bool),
-        ('MaxLen',         0x80424984, 'ig',   CT_LONG),
+        ('MaxLen',         0x80424984, 'ig',   int),
         ('Reject',         0x8042179c, 'isgk', str),
         ('Secret',         0x80428769, 'ig',   bool),
         )
@@ -1270,17 +1361,17 @@ class Prop(Gadget):
     HEADER = None
 
     METHODS = (
-        ('Decrease', 0x80420dd1, (CT_LONG, )),
-        ('Increase', 0x8042cac0, (CT_LONG, )),
+        ('Decrease', 0x80420dd1, (int, )),
+        ('Increase', 0x8042cac0, (int, )),
         )
 
     ATTRIBUTES = (
-        ('Entries',      0x8042fbdb, 'isg', CT_LONG),
-        ('First',        0x8042d4b2, 'isg', CT_LONG),
+        ('Entries',      0x8042fbdb, 'isg', int),
+        ('First',        0x8042d4b2, 'isg', int),
         ('Horiz',        0x8042f4f3, 'ig',  bool),
         ('Slider',       0x80429c3a, 'isg', bool),
-        ('UseWinBorder', 0x8042deee, 'i',   CT_LONG),
-        ('Visible',      0x8042fea6, 'isg', CT_LONG),
+        ('UseWinBorder', 0x8042deee, 'i',   int),
+        ('Visible',      0x8042fea6, 'isg', int),
         )
 
 #=============================================================================
@@ -1292,11 +1383,11 @@ class Gauge(Area):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Current',  0x8042f0dd, 'isg',  CT_LONG),
+        ('Current',  0x8042f0dd, 'isg',  int),
         ('Divide',   0x8042d8df, 'isg',  bool),
         ('Horiz',    0x804232dd, 'i',    bool),
         ('InfoText', 0x8042bf15, 'isgk', str),
-        ('Max',      0x8042bcdb, 'isg',  CT_LONG),
+        ('Max',      0x8042bcdb, 'isg',  int),
         )
 
 #=============================================================================
@@ -1320,10 +1411,10 @@ class Colorfield(Area):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Blue',  0x8042d3b0, 'isg', CT_ULONG),
-        ('Green', 0x80424466, 'isg', CT_ULONG),
-        ('Pen',   0x8042713a, 'g',   CT_ULONG),
-        ('Red',   0x804279f6, 'isg', CT_ULONG),
+        ('Blue',  0x8042d3b0, 'isg', long),
+        ('Green', 0x80424466, 'isg', long),
+        ('Pen',   0x8042713a, 'g',   long),
+        ('Red',   0x804279f6, 'isg', long),
         #Not supported: ('RGB',   0x8042677a, 'isg', CPointer),
         )
 
@@ -1438,15 +1529,15 @@ class Group(Area, ContainerMixer):
     HEADER = None
 
     ATTRIBUTES = (
-        ('ActivePage',   0x80424199, 'isg', CT_LONG),
+        ('ActivePage',   0x80424199, 'isg', int),
         ('ChildList',    0x80424748, 'g',   PyMuiObjectList),
 
-        ('Spacing',      0x8042866d, 'is',  CT_LONG),
-        ('HorizSpacing', 0x8042c651, 'isg', CT_LONG),
-        ('VertSpacing',  0x8042e1bf, 'isg', CT_LONG),
+        ('Spacing',      0x8042866d, 'is',  int),
+        ('HorizSpacing', 0x8042c651, 'isg', int),
+        ('VertSpacing',  0x8042e1bf, 'isg', int),
 
-        ('Columns',      0x8042f416, 'is',  CT_LONG),
-        ('Rows',         0x8042b68f, 'is',  CT_LONG),
+        ('Columns',      0x8042f416, 'is',  int),
+        ('Rows',         0x8042b68f, 'is',  int),
 
         ('Horiz',        0x8042536b, 'i',   bool),
         ('SameHeight',   0x8042037e, 'i',   bool),
@@ -1533,11 +1624,11 @@ class Virtgroup(Group):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Height', 0x80423038, 'g',   CT_LONG),
+        ('Height', 0x80423038, 'g',   int),
         ('Input',  0x80427f7e, 'i',   bool),
-        ('Left',   0x80429371, 'isg', CT_LONG),
-        ('Top',    0x80425200, 'isg', CT_LONG),
-        ('Width',  0x80427c49, 'g',   CT_LONG),
+        ('Left',   0x80429371, 'isg', int),
+        ('Top',    0x80425200, 'isg', int),
+        ('Width',  0x80427c49, 'g',   int),
         )
 
 #=============================================================================
@@ -1571,7 +1662,7 @@ class Scrollbar(Group):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Type', 0x8042fb6b, 'i', CT_LONG),
+        ('Type', 0x8042fb6b, 'i', int),
         )
 
 #=============================================================================
@@ -1589,7 +1680,7 @@ class Radio(Group):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Active', 0x80429b41, 'isg', CT_LONG),
+        ('Active', 0x80429b41, 'isg', int),
         #Not supported: ('Entries', 0x8042b6a1, 'i', ),
         )
 
@@ -1602,7 +1693,7 @@ class Cycle(Group):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Active', 0x80421788, 'isg', CT_LONG),
+        ('Active', 0x80421788, 'isg', int),
         #Not supported: ('Entries', 0x80420629, 'i', ),
         )
 
@@ -1615,10 +1706,10 @@ class Coloradjust(Group):
     HEADER = None
 
     ATTRIBUTES = (
-        ('Blue',   0x8042b8a3, 'isg', CT_ULONG),
-        ('Green',  0x804285ab, 'isg', CT_ULONG),
-        ('ModeID', 0x8042ec59, 'isg', CT_ULONG),
-        ('Red',    0x80420eaa, 'isg', CT_ULONG),
+        ('Blue',   0x8042b8a3, 'isg', long),
+        ('Green',  0x804285ab, 'isg', long),
+        ('ModeID', 0x8042ec59, 'isg', long),
+        ('Red',    0x80420eaa, 'isg', long),
         #Not supported: ('RGB', 0x8042f899, 'isg', ),
         )
 
@@ -1697,13 +1788,13 @@ class Dataspace(Semaphore):
     HEADER = None
 
     METHODS = (
-        ('Add',      0x80423366, (str, CT_LONG, CT_ULONG)),
+        ('Add',      0x80423366, (str, int, long)),
         ('Clear',    0x8042b6c9),
-        ('Find',     0x8042832c, (CT_ULONG, )),
+        ('Find',     0x8042832c, (long, )),
         #Not supported: ('Merge',    0x80423e2b, (PyMuiObject)),
         #Not supported: ('ReadIFF',  0x80420dfb, (CPointer, )),
-        ('Remove',   0x8042dce1, (CT_ULONG, )),
-        #Not supported: ('WriteIFF', 0x80425e8e, (CPointer, CT_ULONG, CT_ULONG)),
+        ('Remove',   0x8042dce1, (long, )),
+        #Not supported: ('WriteIFF', 0x80425e8e, (CPointer, long, long)),
         )
 
     ATTRIBUTES = (
