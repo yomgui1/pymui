@@ -1074,8 +1074,7 @@ muiobject__do(MUIObject *self, PyObject *args) {
 
 //+ MUIObject_Type
 static PyMemberDef muiobject_members[] = {
-    {"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference counter."},
-    {"_pyrefcnt", T_ULONG, offsetof(PyObject, ob_refcnt), RO, "Python internal reference counter."},
+    {"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference cunter."},
     {NULL}  /* Sentinel */
 };
 
