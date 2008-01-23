@@ -137,7 +137,7 @@ class MetaConvertor(type):
         # Generate a key for recording and check if doesn't exist
         if t in metacl.__convs:
             raise RuntimeError("type %s has already a registered convertor: '%s'" % (t.__name__,
-                                                                                     metacl.__convs[k].__name__))
+                                                                                     metacl.__convs[t].__name__))
 
         # Create the ney Convertor class and record it
         conv = type.__new__(metacl, name+'_Convertor', bases, dct)
@@ -156,7 +156,9 @@ class MetaConvertor(type):
         else:
             for k in MetaConvertor.__convs:
                 if issubclass(x, k):
-                    return MetaConvertor.__convs[k]
+                    conv = ConvertorFactory(x.__name__, x, MetaConvertor.__convs[k].format)
+                    MetaConvertor.__convs[x] = conv
+                    return conv
         raise KeyError("Cannot find a suitable Convertor class for type %s" % x.__name__)
 
 class Convertor(object):
@@ -166,6 +168,7 @@ class Convertor(object):
         debug("Convertor.__new__ called:", obj)
         assert not isinstance(obj, Convertor)
         # Create a new object of cl.type type, without calling the __init__ method
+        debug("Convert %s into type:" % type(obj).__name__, cl.type)
         return cl.type.__new__(cl.type, obj)
 
 ConvertorFactory = lambda n, t, f: MetaConvertor(n, (Convertor, ), {'type': t, 'format': f})
@@ -173,7 +176,7 @@ ConvertorFactory = lambda n, t, f: MetaConvertor(n, (Convertor, ), {'type': t, '
 # Registring some Convertors
 BOOLConvertor = ConvertorFactory('BOOL', bool, 'b')
 LONGConvertor = ConvertorFactory('LONG', int, 'i')
-ULONGConvertor = ConvertorFactory('ULONG', int, 'I')
+ULONGConvertor = ConvertorFactory('ULONG', long, 'I')
 APTRConvertor = ConvertorFactory('APTR', CPointer, 'i')
 STRPTRConvertor = ConvertorFactory('STRPTR', str, 's')
 
@@ -185,7 +188,7 @@ STRPTRConvertor = ConvertorFactory('STRPTR', str, 's')
 #   it will return the same object, subtype of PyMuiObject and not PyMuiObjectConvertor.
 #   As the type argument (PyMuiObjectConvertor so) is not the type or subtype of the
 #   returned object, no __init__ method is called. Exactly what we want.
-PyMuiObjectConvertor = ConvertorFactory('PyMuiObject', PyMuiObject)
+PyMuiObjectConvertor = ConvertorFactory('PyMuiObject', PyMuiObject, 'i')
 
 # CArray factory
 
@@ -419,17 +422,19 @@ class PyMuiAttribute(PyMuiID):
     def init(self, obj, value):
         if not self.__fl[0]:
             raise RuntimeError("attribute 0x%x cannot be set at init" % self.id)
-        if not isinstance(value, self.type):
+        t = self.type
+        if not isinstance(value, t in (int, long) and (int, long) or t):
             raise TypeError("Value for attribute 0x%x should be of type %s, not %s"
-                            % (self.id, self.type.__name__, type(value).__name__))
+                            % (self.id, t.__name__, type(value).__name__))
         obj._init(self.id, value, self.Keep)
 
     def set(self, obj, value):
         if not self.__fl[1]:
             raise RuntimeError("attribute 0x%x cannot be set" % self.id)
-        if not isinstance(value, self.type):
+        t = self.type
+        if not isinstance(value, t in (int, long) and (int, long) or t):
             raise TypeError("Value for attribute 0x%x should be of type %s, not %s"
-                            % (self.id, self.type.__name__, type(value).__name__))
+                            % (self.id, t.__name__, type(value).__name__))
         obj._set(self.id, value, self.Keep)
 
     def get(self, obj):
@@ -439,6 +444,8 @@ class PyMuiAttribute(PyMuiID):
 
     type = property(fget=lambda self: self.__conv.type,
                     doc="Returns the type of attribute.")
+    format = property(fget=lambda self: self.__conv.format,
+                    doc="Returns the format string to convert the C value of an attribute into a Python object.")
     CanInit = property(fget=lambda self: self.__fl[0],
                        doc="Returns True if the attribute can be set at initialisation.")
     CanSet = property(fget=lambda self: self.__fl[1],
@@ -567,7 +574,7 @@ class MetaPyMCC(type):
         ad = dct['__mui_attrs'] = PyMuiAttributeDict(attrs, tagbase=tb, bases=adbases)
         del adbases
 
-        debug('dct   :', sorted(dct.keys()))
+        #debug('dct   :', sorted(dct.keys()))
         return type.__new__(meta, name, bases, dct)
 
     def __init__(cl, name, bases, dct):
@@ -786,17 +793,17 @@ class Notify(PyMuiObject):
     def AddNotification(self, attr, callback, args):
         if not hasattr(callback, '__call__'):
             raise ValueError("callback should be a callable.")
-        if attr.id not in self.__nd:
-            nl = self.__nd[attr.id] = []
+        if attr not in self.__nd:
+            nl = self.__nd[attr] = []
         else:
-            nl = self.__nd[attr.id]
+            nl = self.__nd[attr]
         nl.append((callback, args))
 
     def RemNotification(self, attr, callback, args):
-        if attr.id not in self.__nd:
+        if attr not in self.__nd:
             raise ValueError("Attribute %x hasn't got any notifications on instance %s." % self)
 
-        nl = self.__nd[attr.id]
+        nl = self.__nd[attr]
         for t in nl:
             if t[0] is callback:
                 nl.remove(t)
@@ -804,11 +811,12 @@ class Notify(PyMuiObject):
 
         raise ValueError("No notification recorded for attribute %x and callback %s" % (attr.id, callback))
 
-    def _OnAttrChanged(self, id, value):
-        if id not in self.__nd:
-            raise RuntimeError("Notification raised on attribute %x without Python notifications set!" % id)
+    def _OnAttrChanged(self, attr, value):
+        nl = self.__nd.get(attr, None)
+        if not nl:
+            raise RuntimeError("Notification raised on attribute %x without Python notifications set!" % attr.id)
 
-        for callback, args in self.__nd[id]:
+        for callback, args in nl:
             _a = []
             for x in args:
                 if x == TriggerValue:
@@ -821,17 +829,14 @@ class Notify(PyMuiObject):
             callback(*_a)
 
     def _OnBoopsiMethod(self, id, msg):
-        n = hex(id)
         try:
             m = self.GetMethod(id)
         except:
-            pass
+            return
         else:
             for k, v in self.__class__.mui_methods.iteritems():
-                if v.id == m.id:
-                    n = k
-                    break
-        print "MUI wants call method %s, data @ %s" % (n, hex(msg))
+                if v.id == id:
+                    print "MUI calling %s: msg=%s" % (k, hex(msg))
 
     def Set(self, attr, value):
         self.GetAttribute(attr).set(self, value)
@@ -915,6 +920,8 @@ class Menuitem(Family):
 # Application
 #-----------------------------------------------------------------------------
 
+MUIV_Application_ReturnID_Quit = -1
+
 class Application(Notify, ContainerMixer):
     """Application(...) -> instance
 
@@ -964,7 +971,7 @@ class Application(Notify, ContainerMixer):
         ('RexxString',     0x8042d711, 's',    str),
         ('SingleTask',     0x8042a2c8, 'i',    bool),
         ('Sleep',          0x80425711, 's',    bool),
-        ('Title',          0x804281b8, 'igk',  LimitedStringConvertor(30)),
+        ('Title',          0x804281b8, 'igk',  LimitedStringFactory('AppTitle', 30)),
         ('UseCommodities', 0x80425ee5, 'i',    bool),
         ('UseRexx',        0x80422387, 'i',    bool),
         ('Version',        0x8042b33f, 'igk',  str),
@@ -975,7 +982,7 @@ class Application(Notify, ContainerMixer):
         super(Application, self).__init__(**kwds)
         ContainerMixer.__init__(self)
         if window:
-            self.AddChild(window)
+            assert self.AddChild(window)
 
     def Init(self):
         pass
@@ -989,6 +996,9 @@ class Application(Notify, ContainerMixer):
             _m.mainloop(self)
         finally:
             self.Term()
+
+    def NewInput(self, args):
+        return _m.newinput(self, args)
 
     def CheckParent(self, parent):
         raise SyntaxError("Application instance cannot be a child of anything")
@@ -1113,6 +1123,7 @@ class Window(Notify, ContainerMixer):
         ('PublicScreen',    0x804278e4, 'isgk', str),
         ('Screen',          0x8042df4f, 'isgk', _intui.Screen),
         ('ScreenTitle',     0x804234b0, 'isgk', str),
+        ('Window',          0x80426a42, 'g',    _intui.Window),
         )
 
     def __init__(self, title='', **kwds):
@@ -1159,10 +1170,10 @@ class Aboutmui(Window):
     CLASSID = MUIC_Aboutmui
     HEADER = None
 
-    def __init__(self, app=None, *kwds):
-        super(Aboutmui, self).__init__(*kwds)
-        if app:
-           app.AddChild(self)
+    def __init__(self, app=None, **kwds):
+        self.PreCreate(**kwds)
+        self.Create(**kwds)
+        if app: assert app.AddChild(self)
 
     def CheckParent(self, parent):
         if not isinstance(parent, Application):

@@ -1,6 +1,9 @@
 from distutils.core import setup, Extension
 
-module1 = Extension('_muimaster', sources=['src/_muimastermodule.c'])
+opt = ['-Wall -Wuninitialized -Wstrict-prototypes']
+module1 = Extension('_muimaster',
+                    sources=['src/_muimastermodule.c'],
+                    extra_compile_args = opt)
 
 setup(name = 'PyMui',
     version = '1.0',

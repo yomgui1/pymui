@@ -156,10 +156,11 @@ autre méthodes de classe.).
 #include <proto/utility.h>
 #include <proto/muimaster.h>
 
+#define NDEBUG
+
 #define USE_PYAMIGA_HELP_MACROS
 #include <pyamiga/_coremod.h>
 
-//#define NDEBUG
 
 /*
 ** Private Macros and Definitions
@@ -443,8 +444,8 @@ OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg) {
         DPRINT("attr found: %p\n", pyo_attr);
 
         /* Convert the integer value into its Python representation */
-        DPRINT("Get attr.format)...\n");
-        res = PyObject_GetAttributeString(pyo_attr, "format");
+        DPRINT("Get attr.format...\n");
+        res = PyObject_GetAttrString(pyo_attr, "format");
         if (NULL != res) {
             char *format = PyString_AS_STRING(res);
             DPRINT("format: '%s'\n", format);
@@ -495,7 +496,8 @@ _set_base(MUIObject *obj, PyObject *args, ULONG *attr, LONG *value) {
     if (convertFromPython(v, value))
         return -1;
 
-    DPRINT("value (%s): %ld %ld %#lx\n", keep?"saved":"not saved", *value, *value, *value);
+    DPRINT("Attr \033[32m0x%lx\033[0m set to value (%s): %ld %ld %#lx on obj @ \033[32m0x%p\033[0m\n",
+           *attr, keep?"saved":"not saved", *value, *value, *value, CPointer_GET_ADDR(obj));
 
     if (keep)
         return _keep_ref(obj, *attr, v);
@@ -571,7 +573,7 @@ muiobject_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     char *keys[] = {"address", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O:PyMuiObject", keys, &obj))
-        return NULL
+        return NULL;
 
     if (NULL != obj) {
         if (MUIObject_Check(obj)) {
@@ -649,9 +651,9 @@ muiobject_repr(MUIObject *self) {
     
     obj = CPointer_GET_ADDR(self);
     if (NULL != obj)
-        return PyString_FromFormat("<MUIObject at %p, MUI object at %p>", self, obj);
+        return PyString_FromFormat("<%s at %p, MUI object at %p>", OBJ_TNAME(self), self, obj);
     else
-        return PyString_FromFormat("<MUIObject at %p, MUI object disposed>", self);
+        return PyString_FromFormat("<%s at %p, MUI object disposed>", OBJ_TNAME(self), self);
 }
 //- muiobject_repr
 //+ muiobject_traverse
@@ -810,7 +812,7 @@ muiobject__create(MUIObject *self, PyObject *args) {
      */
 
     mui_obj = myMUI_NewObject(self, cl, tags);
-    DPRINT("MUI_NewObject(\"%s\") = %p\n", cl, mui_obj);
+    DPRINT("MUI_NewObject(\"%s\") = \033[32m%p\033[0m\n", cl, mui_obj);
     
     PyMem_Free(tags);
     
@@ -886,8 +888,8 @@ The value returned by GetAttr() is converted by Py_BuildValue() using format.");
 /*! \endcond */
 
 static PyObject *
-muiobject__get(MUIObject *self, PyObject *args) {
-    PyTypeObject *type;
+muiobject__get(MUIObject *self, PyObject *args)
+{
     Object *obj;
     ULONG attr;
     ULONG value;
@@ -903,9 +905,9 @@ muiobject__get(MUIObject *self, PyObject *args) {
 
     if (get(obj, attr, &value) == 0)
         return PyErr_Format(PyExc_ValueError,
-            "attribute 0x%08x can't be get", attr);
+            "attribute 0x%08lx can't be get", attr);
 
-    DPRINT("value: %d %u 0x%08x\n", (LONG)value, value, (APTR) value);
+    DPRINT("value: %d %u 0x%08lx\n", (LONG)value, value, (APTR) value);
 
     /* Convert value into the right Python object */
     return Py_BuildValue(format, value);
@@ -1100,7 +1102,6 @@ static PyTypeObject MUIObject_Type = {
     tp_doc          : "MUI Objects",
     
     tp_new          : (newfunc)muiobject_new,
-    tp_init         : (initproc)muiobject_init,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
     tp_traverse     : (traverseproc)muiobject_traverse,
@@ -1171,10 +1172,30 @@ _muimaster_mainloop(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 //- _muimaster_mainloop
+//+ _muimaster_newinput
+static PyObject *
+_muimaster_newinput(PyObject *self, PyObject *args) {
+    ULONG sigs;
+    PyObject *pyapp;
+    Object *app;
+    LONG res;
+    
+    if (!PyArg_ParseTuple(args, "O!i", &MUIObject_Type, &pyapp, &sigs))
+        return NULL;
+
+    app = CPointer_GET_ADDR(pyapp);
+    CHECK_OBJ(app);
+
+    res = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
+    return Py_BuildValue("(ii)", sigs, res);
+}
+//- _muimaster_newinput
+  
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", (PyCFunction) _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"newinput", (PyCFunction) _muimaster_newinput, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 

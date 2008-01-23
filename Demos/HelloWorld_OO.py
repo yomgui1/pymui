@@ -35,6 +35,7 @@ class HelloWorld(Application):
 
         about = Aboutmui(self)
         about.Notify('CloseRequest', True, about.Set, 'Open', False)
+        about.Open = True
 
 # Go !
 

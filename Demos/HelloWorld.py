@@ -1,4 +1,10 @@
 from pymui import *
+from math import sin, cos, pi
+from time import sleep
+
+def rot(a, r):
+    a *= pi/180
+    return int(r*cos(a)), int(r*sin(a))
 
 app = Application()
 
@@ -8,16 +14,12 @@ mainwin = Window(
     TopEdge=-2,
     Width=320,
     Height=64)
-
-win = Aboutmui(app)
-win.Notify('CloseRequest', True, win.Set, 'Open', False)
-
 app.AddChild(mainwin)
 
 g = VGroup()
 
 # just a simple text gadget
-root = Text("\033cHello! I'm a very good program!\nClose me now...",
+root = Text(open(__file__).read(),
             Draggable=True,
             Frame=MUIV_Frame_String)
 
@@ -31,12 +33,25 @@ g.AddChild(root)
 g.AddChild(g2)
 
 mainwin.AddChild(g)
+mainwin.Notify('CloseRequest', True, app.ReturnID, MUIV_Application_ReturnID_Quit)
 mainwin.Open = True
-mainwin.Notify('CloseRequest', True, app.ReturnID, -1)
-
-win.Open = True    
 
 # Go!
+sigs = 0
+win_ptr = mainwin.Window   
+a = 0
+r = 128
+ox, oy = rot(a, r)
+while True:
+    sigs, res = app.NewInput(sigs)
+    if res == MUIV_Application_ReturnID_Quit:
+        break
 
-app.Run()
+    x, y = rot(a, r)
+    a += 1
+    if a == 360: a = 0
+    win_ptr.Move(x - ox, y - oy)
+    ox = x
+    oy = y
 
+    sleep(0.01)
