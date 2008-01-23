@@ -100,6 +100,20 @@ class _PyDisposedObject(object):
 ##############################################################################
 
 ## Convertors used to transfert value between Python and MUI
+    
+# Existance of this class is to convert the representation of a C value
+# into its corresponding PyMuiObject.
+# Mechanism should be implemented directly in C in the new method of the given type.
+# This class is mandatory because when Python will call a new method, if the returned
+# object has got the same type or is a subtype of the 'type' argument of method new,
+# the init method of the object type is called.
+# But for some type like PyMuiObject we don't want recreate a new instance for a given
+# 'Object *' address passed to the new method. We just want to retrieve the PyMuiObject
+# associated to this BOOSPI object and not call the init method, as it's an already
+# initialized Python object.
+# To do that, the __new__ method called should come from a type that it's not a base
+# type of the created/fetched Python object.
+# It's the purpose of the Convertor class with its __new__ method.
 
 class MetaConvertor(type):
     """MetaConvertor
@@ -174,21 +188,13 @@ class Convertor(object):
 ConvertorFactory = lambda n, t, f: MetaConvertor(n, (Convertor, ), {'type': t, 'format': f})
 
 # Registring some Convertors
+
+PyMuiObjectConvertor = ConvertorFactory('PyMuiObject', PyMuiObject, 'i')
 BOOLConvertor = ConvertorFactory('BOOL', bool, 'b')
 LONGConvertor = ConvertorFactory('LONG', int, 'i')
 ULONGConvertor = ConvertorFactory('ULONG', long, 'I')
 APTRConvertor = ConvertorFactory('APTR', CPointer, 'i')
 STRPTRConvertor = ConvertorFactory('STRPTR', str, 's')
-
-# PyMuiObjectConvertor()
-#   Existance of this class is to convert the representation of a C MUI Object pointer
-#   into its corresponding PyMuiObject.
-#   Mechanism is implemented directly in C in the new method of PyMuiObject type.
-#   But this class is mandatory because when Python will call this new method,
-#   it will return the same object, subtype of PyMuiObject and not PyMuiObjectConvertor.
-#   As the type argument (PyMuiObjectConvertor so) is not the type or subtype of the
-#   returned object, no __init__ method is called. Exactly what we want.
-PyMuiObjectConvertor = ConvertorFactory('PyMuiObject', PyMuiObject, 'i')
 
 # CArray factory
 
@@ -207,19 +213,19 @@ class MetaCArray(type):
 
 class CArrayIterator:
     def __init__(self, address, type):
-        self.array = CPointer(address)
+        assert isinstance(address, CStructure)
+        assert address and address.size > 0
+        self.addr = int(address)
+        self.size = address.size
         self.conv = Convertor.GetConvertor(type)
         
     def __iter__(self):
         return self
 
     def next(self):
-        if self.ptr:
-            self.ptr = self.ptr.advance()
-            if self.ptr:
-                return self.create(self.ptr)
+        if self.addr:
+            pass
         raise StopIteration
-
 
 CArrayFactory = lambda n, x: MetaCArray(n, (CPointer,), {'type': x})
 PyMuiObjectArray = CArrayFactory('PyMuiObjectArray', PyMuiObject)

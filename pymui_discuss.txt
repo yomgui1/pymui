@@ -2,17 +2,14 @@
 
 CPointer(0x1234) => CPointer instance
 
-
 => and for NULL address?
 
 CPointer(0) and CPointer(None) return None.
-
 
 => Is CPointer() valid ?
 
 -> Yes, give a None for CPointer.
 -> For subclass, no rules. For example: RastPort() give a new allocated rastport.
-
 
 => create a new PyMuiObject instance (CPointer subtype):
 
@@ -22,9 +19,54 @@ PyMuiObject()
 => create a PyMuiObject from a NULL address:
 -> Like CPointer
 
-
 => create a PyMuiObject instance from a existant C Object pointer.
 
 PyMuiObject(0x1234) => instance
 -> it's not a new instance. Just get the PyMuiObject from the given Object address, incref the py object and return it.
 
+---------------------
+
+Array and Python
+
+For MUI (and C), an array is just a bunch of memory addressed by a pointer.
+It's like a special structure, where we have n fields, all with the same type.
+
+This type can be anything... A number as well as a complex structure, or another array.
+
+The array can be created by the user, so handled by this one also (new/del).
+In this case a user of this array (like a MUI class) shouldn't move the bunch somewhere else.
+It can make a copy of it, but in this case the user know that. It's specified.
+As well, an array can be created by someone else the user: this last shouldn't del
+this array except if it stricly specified (rare case, because in general the user
+don't know how to do that).
+As an array is just a bunch of memory, this bunch could be WR or RO.
+WR arrays are used to pass some data between a program and the user.
+RO arrays are used to pass data in only one direction, data shouldn't be modified.
+
+About references, as an array can contains anything, it can contain some data related
+to some Python objects. So these data may only be valid during the life of this object,
+or only during the creation of the array. If a program takes an array of this type,
+this data should be valid until the program doesn't use it anymore.
+So reference counter of these python objects should be increased to keep them alive.
+
+But not all python types are in this case. A int or a bool are always valid, as it's
+a basic C type also. The convertion of these kind of type is trivial.
+
+Now, in the case of an array filled by and coming from the application, data inside
+are generaly not a Python object, so a convert function should be used to transform
+these data in Python objects first, then the Python array should implement the Sequence
+protocol to give access to these objects.
+And as an array of this type couldn't be destroyed without inform the user of that,
+the Python array type can convert and give at demand array data.
+
+Now, arrays should have a static size or data should be interpretable to know the end
+of the array, like the special character \0 in a string (...an array of char).
+
+So how to define a python array?
+
+- it's a pointer on a memory buffer.
+- contains items of a non-size-mutable type
+- can act like a sequence object: if the number of item defined
+at construction and not changeable.
+- implement the iterator protocol: specialy if the number of item is not
+know at construction, but the end of array is determinated by data.
