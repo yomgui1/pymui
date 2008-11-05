@@ -54,6 +54,7 @@
 #   I/H/C = unsigned int (ULONG/UWORD/UBYTE)
 #   v = void pointer object (APTR)
 #   s = string (STRPTR)
+#   z = string (STRPTR), None <=> NULL str pointer
 #   b = bool (for unsigned int with values 0 or -1/other)
 #   f = float (FLOAT, only usable with arrays)
 #   d = double (DOUBLE, only usable with arrays)
@@ -85,10 +86,29 @@
 # for one method argument at once.
 #
 
-class Notify(PyMuiObject):
-    pass
+t_WORD = int
+class _m:
+    MUIC_Area = "Area.mcc"
 
-class MinMaxStruct(StructObject):
+class MetaMCC(type):
+    def __new__(metacl, name, bases, dct):
+        cl = dct.pop('CLASSID', None)
+        if cl:
+            dct['__mui_class_id'] = cl
+            methods = dct.pop('METHODS', None)
+            if methods:
+                for k,v in methods.iteritems():
+                    code = """def %s(self, *a):
+                        print "%s",hex(%u),"%s",a""" % (v[0], cl, k, v[1])
+                    eval(compile(code, __file__, 'single'), dct)
+        return type.__new__(metacl, name, bases, dct)
+
+
+class Notify(object):
+    __metaclass__ = MetaMCC
+
+
+class MinMaxStruct(object):
     _fields_ = (('MinWidth',  t_WORD),
                 ('MinHeight', t_WORD),
                 ('MaxWidth',  t_WORD),
@@ -98,37 +118,32 @@ class MinMaxStruct(StructObject):
 
 class Area(Notify):
     CLASSID = _m.MUIC_Area
-    HEADER = None
 
     METHODS = {
-        0x80423874: ('AskMinMax',           "t,", MinMaxStruct),
+        0x80423874: ('AskMinMax',           ("t,", MinMaxStruct)),
         0x8042cac0: ('Cleanup',             None),
         # NODOC: 0x8042df9e: ('ContextMenuAdd',      "miii*i*,"),
         0x80429d2e: ('ContextMenuBuild',    "ii,m"),
         0x80420f0e: ('ContextMenuChoice',   "m,"),
-        0x80421c41: ('CreateBubble',        "iis.I,"),
-        0x80428e93: ('CreateShortHelp',     "ii,"),
-        0x804211af: ('DeleteBubble',        "v,"),
-        0x8042d35a: ('DeleteShortHelp',     "s,"),
-        0x804216bb: ('DoDrag',              "iiI,"),
-        0x8042c03a: ('DragBegin',           "m,"),
-        0x8042c555: ('DragDrop',            "miiI,"),
-        0x804251f0: ('DragFinish',          "mi,"),
+        0x80421c41: ('CreateBubble',        "iiz.I,v"),
+        0x80428e93: ('CreateShortHelp',     "ii,z"),
+        0x804211af: ('DeleteBubble',        "v"),
+        0x8042d35a: ('DeleteShortHelp',     "s"),
+        0x804216bb: ('DoDrag',              "iiI"),
+        0x8042c03a: ('DragBegin',           "m"),
+        0x8042c555: ('DragDrop',            "miiI"),
+        0x804251f0: ('DragFinish',          "mi"),
         0x80420261: ('DragQuery',           "m,"),
-        0x8042edad: ('DragReport',          "miiiI,"),
-        0x80426f3f: ('Draw',                "I,"),
-        0x804238ca: ('DrawBackground',      "iiiiiii,"),
+        0x8042edad: ('DragReport',          "miiiI"),
+        0x80426f3f: ('Draw',                "I"),
+        0x804238ca: ('DrawBackground',      "iiiiiii"),
         0x80426d66: ('HandleEvent',         "viv,"),
-        0x80422a1a: ('HandleInput',         "vi,"),
+        0x80422a1a: ('HandleInput',         "vi"),
         0x8042f20f: ('Hide',                None),
-        0x80428354: ('Setup',               "v,"),
-        0x8042cc84: ('Show',                "v,"),
+        0x80428354: ('Setup',               "v"),
+        0x8042cc84: ('Show',                "v"),
         # NODOC: 0x8042b0a9: ('UpdateConfig',        "Iiv64C64,")
         }
-
-    def __init__(self):
-        #self._menustrips = set()
-        pass
 
     def AskMinMax(self, *args):
         """Custom Class implementation.
