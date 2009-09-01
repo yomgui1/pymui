@@ -7,6 +7,7 @@
  ***
  *******************************************************************************/
 
+//+ Dev notes
 /* Dev notes:
 
 ***** Ma vie, mon oeuvre... *****
@@ -143,6 +144,7 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 => Notes pour la documentation utilisateur:
    Expliquer le pb de garder des références des valeurs données.
 */
+//-
 
 /*
 ** Project Includes
@@ -241,11 +243,15 @@ extern void dprintf(char*fmt, ...);
 ** Private Types and Structures
 */
 
+typedef struct DoMsg_STRUCT {
+    ULONG MethodID;
+    ULONG data[0];
+} DoMsg;
+
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
 
-    Object *   boopsi;
-    PyObject * refdict; /* Dictionnary to keep references on python objects linked with attributes */
+    Object * boopsi;
 } PyBOOPSIObject;
 
 
@@ -288,176 +294,110 @@ for more information on calls.");
 ** Private Functions
 */
 
-#if 0
-//+ convertFromPython
-static LONG
-convertFromPython(PyObject *obj, long *value) {
-    DPRINT("value @ %p\n", value);
-
-    if (PyString_Check(obj)) {
-        *value = (LONG) PyString_AS_STRING(obj);
-    } else if (CPointer_Check(obj)) {
-        *value = (LONG) CPointer_GET_ADDR(obj);
-    } else {
-        PyObject *o = PyNumber_Int(obj);
-
-        if (NULL == o) {
-            PyErr_Format(PyExc_TypeError, "can't convert a %s object into an integer", OBJ_TNAME(obj));
-            return -1;
-        }
-
-        if (PyLong_CheckExact(o)) {
-            *value = PyLong_AsUnsignedLong(o);
-        } else {
-            *value = PyInt_AS_LONG(o);
-        }
-
-        Py_DECREF(o);
-    }
-
-    DPRINT("%s object converted into integer: %ld %lu %lx\n", OBJ_TNAME(obj),
-           (LONG) *value, (ULONG) *value, (ULONG) *value);
-
-    return 0;
-}
-//-
 //+ OnAttrChanged
 static void
-OnAttrChanged(struct Hook *hook, Object *obj, OnAttrChangedMsg *msg) {
-    PyObject *res, *pyo_attr, *pyo_value;
-    LONG value = msg->value;
+OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
+    PyObject *pyo;
+    ULONG attr = args[0];
+    ULONG value = args[1];
 
-    DPRINT("Attribute %#lx Changed for PyMCC object @ %p (MUI=%p) to %ld %lu %p\n",
-           msg->attr, msg->py_obj, obj, value, (ULONG) value, (APTR) value);
-    
-    Py_INCREF(msg->py_obj); // to prevent that our object was deleted during methods calls.
+    pyo = (APTR) muiUserData(mo);
 
-    /* Get the attribute object */
-    DPRINT("Calling py_obj.GetAttribute(id=0x%08x)...\n", msg->attr);
-    pyo_attr = PyObject_CallMethod(msg->py_obj, "GetAttribute", "k", msg->attr);
-    if (NULL != pyo_attr) {
-        DPRINT("attr found: %p\n", pyo_attr);
+    /* In case of the Python object die before the MUI object */
+    if (NULL != pyo){
+        PyObject *res;
 
-        /* Convert the integer value into its Python representation */
-        DPRINT("Get attr.format...\n");
-        res = PyObject_GetAttrString(pyo_attr, "format");
-        if (NULL != res) {
-            char *format = PyString_AS_STRING(res);
-            DPRINT("format: '%s'\n", format);
+        Py_INCREF(pyo); /* to prevent that our object was deleted during methods calls */
 
-            /* Converting this attribute into right Python object */
-            pyo_value = Py_BuildValue(format, value);
-            Py_DECREF(res);
-            if (NULL != pyo_value) {
-                /* Call the high-level notify method */
-                DPRINT("Calling OnAttrChanged(pyo_attr: %p, pyo_value: %p)...\n", pyo_attr, pyo_value);
-                PyObject_CallMethod(msg->py_obj, "_OnAttrChanged", "OO", pyo_attr, pyo_value);
+        DPRINT("Attribute %#lx set: PyObject %p, MUI=%p, value: %ld, %lu, %p\n",
+               attr, pyo, mo, (LONG)value, value, (APTR)value);
 
-                Py_DECREF(pyo_value);
-            }
-        }
-        Py_DECREF(pyo_attr);
+
+        res = PyObject_CallMethod(pyo, "_notify_cb", "II", attr, value); /* NR */
+        Py_XDECREF(res);
+
+        Py_DECREF(pyo);
     }
-    Py_DECREF(msg->py_obj);
-    return;
+
+    /* in case of Python exception, the PyErr_Occurred() in the mainloop will catch it */
 }
 //-
-//+ _keep_ref
+//+ python2long
+/* This function doesn't incref the given python object */
 static int
-_keep_ref(MUIObject *obj, ULONG attr, PyObject *value)
+python2long(PyObject *obj, ULONG *value)
 {
-    PyObject *key;
+    Py_ssize_t buffer_len;
 
-    DPRINT("keep ref on object @ %p (type=%s)\n", value, value->ob_type->tp_name);
+    if (PyString_Check(obj) || PyUnicode_Check(obj))
+        *value = (ULONG) PyString_AsString(obj);
+    else if (PyObject_AsReadBuffer(obj, (const void **)value, &buffer_len) != 0) {
+        PyObject *tmp = PyNumber_Int(obj);
 
-    key = PyInt_FromLong(attr);
-    if (NULL == key) {
-        PyErr_SetString(PyExc_RuntimeError, "Can't create key for the internal reference");
-        return -1;
+        if (NULL == tmp) {
+            PyErr_Format(PyExc_TypeError, "can't convert a %s object into an integer", OBJ_TNAME(obj));
+            return 0;
+        }
+
+        if (PyLong_CheckExact(tmp))
+            *value = PyLong_AsUnsignedLong(tmp);
+        else
+            *value = PyInt_AS_LONG(tmp);
+
+        Py_DECREF(tmp);
     }
 
-    return PyDict_SetItem(obj->refdict, key, value);
+    DPRINT("%s object converted into integer: %ld, %lu, %lx\n", OBJ_TNAME(obj), (LONG)*value, *value, *value);
+    return 1;
 }
 //-
-//+ _set_base
-static LONG
-_set_base(MUIObject *obj, PyObject *args, ULONG *attr, LONG *value) {
-    PyObject *v;
-    char keep;
+//+ parse_attribute_entry
+static int
+parse_attribute_entry(PyObject *entry, ULONG *attr, ULONG *value)
+{
+    PyObject *value_obj;
 
-    if (!PyArg_ParseTuple(args, "IOb:_set_base", attr, &v, &keep))
-        return -1;
-    
-    if (convertFromPython(v, value))
-        return -1;
+    if (!PyArg_ParseTuple(entry, "IO:PyBOOPSIObject", attr, &value_obj)) /* BR */
+        return FALSE;
 
-    DPRINT("Attr \033[32m0x%lx\033[0m set to value (%s): %ld %ld %#lx on obj @ \033[32m0x%p\033[0m\n",
-           *attr, keep?"saved":"not saved", *value, *value, *value, CPointer_GET_ADDR(obj));
-
-    if (keep)
-        return _keep_ref(obj, *attr, v);
-    
-    return 0;
+    return python2long(value_obj, value);
 }
 //-
-//+ myMUI_NewObject
-static Object *
-myMUI_NewObject(MUIObject *pyo, ClassID id, struct TagItem *tags) {
-    MCCNode *node;
-    struct MUI_CustomClass *mcc = NULL;
-    
-    /* First check if this ClassID wasn't sub-classed before */
-    DPRINT("Searching for ClassID '%s'\n", id);
-    ForeachNode(&classes, node) {
-        if (!strcmp(id, node->mn_MCC->mcc_Super->cl_ID)) {
-            mcc = node->mn_MCC;
-            break;
-        }
-    }
-    
-    if (NULL == mcc) {
-        /* Create a new MCC for this ClassID */
-        DPRINT("No MCC found, sub-classing...\n");
-        
-        /* Creating a new MCC node */
-        node = (MCCNode *) malloc(sizeof(MCCNode));
-        if (NULL == node) return NULL;
-        
-        mcc = MUI_CreateCustomClass(NULL, id, NULL,
-                                    sizeof(PyModMCCData),
-                                    DISPATCHER_REF(PyModMCC));
-        DPRINT("New MCC @ %p\n", mcc);
-        if (NULL == mcc) {
-            free(node);
-            return NULL;
-        }
-        
-        node->mn_MCC = mcc;
-        ADDTAIL(&classes, node);
-        DPRINT("Node %p: MCC @ %p\n", node, node->mn_MCC);
-    } else {
-        /* Already sub-classed */
-        DPRINT("MCC already sub-classed\n");
-    }
-    
-    /* Create the MUI object now with the right MCC */
-    DPRINT("Creating object with mcc=%p (super id='%s')...\n", mcc, id);
-    if (NULL != tags) {
-        return (Object *) NewObject(mcc->mcc_Class, NULL,
-                                    MUIA_PyMod_PyObject, (ULONG) pyo,
-                                    TAG_MORE, tags);
-    } else {
-        return (Object *) NewObject(mcc->mcc_Class, NULL,
-                                    MUIA_PyMod_PyObject, (ULONG) pyo);
-    }
-}
-//- myMUI_NewObject
-#endif
-
-//+ attrdict2tags
+//+ attrs2tags
 static struct TagItem *
-attrdict2tags(self, attr_d)
+attrs2tags(PyObject *self, PyObject *attrs)
 {
+    struct TagItem *tags;
+    PyObject *fast;
+    Py_ssize_t size;
+
+    fast = PySequence_Fast(attrs, "Given object doesn't provide Sequence protocol.");
+    if (NULL != fast) {
+        size = PySequence_Fast_GET_SIZE(fast);
+        tags = PyMem_Malloc(sizeof(struct TagItem) * (size+1));
+        if (NULL != tags) {
+            Py_ssize_t i;
+            struct TagItem *tag;
+
+            for (i=0, tag=tags; i < size; i++, tag++) {
+                PyObject *entry = PySequence_Fast_GET_ITEM(fast, i);
+
+                if (!parse_attribute_entry(entry, &tag->ti_Tag, &tag->ti_Data))
+                    goto error;
+            }
+
+            tags[size].ti_Tag = TAG_DONE;
+            Py_DECREF(fast);
+            return tags;
+
+        error:
+            PyMem_Free(tags);
+        } else
+            PyErr_NoMemory();
+    
+        Py_DECREF(fast);
+    }
+
     return NULL;
 }
 //-
@@ -473,62 +413,208 @@ boopsi_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     static char *kwlist[] = {"classname", "attributes", NULL};
     PyBOOPSIObject *self;
     UBYTE *class;
-    PyObject *attr_d;
+    PyObject *attrs;
     Object *obj;
     struct TagItem *tags;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|O:PyBOOPSIObject", kwlist, &class, &attr_d))
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|O:PyBOOPSIObject", kwlist, &class, &attrs))
         return NULL;
 
     /* The Python object is needed before convertir the attributes dict into tagitem array */
     self = (APTR)type->tp_alloc(type, 0);
     if (NULL != self) {
-        self->refdict = PyDict_New();
-        if (NULL != self->refdict) {
-            tags = attrdict2tags(self, attr_d);
-            if (tags != NULL) {
-                obj = NewObjectA(NULL, class, tags);
-                if (NULL == obj) {
-                    PyBOOPSIObject_OBJECT(self) = obj;
-                    return (PyObject *)self;
-                } else
-                    PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
-
-                PyMem_Free(tags);
-            }
-
-            Py_CLEAR(self->refdict);
+        tags = attrs2tags((PyObject *)self, attrs);
+        if (tags != NULL) {
+            obj = NewObjectA(NULL, class, tags);
+            PyMem_Free(tags);
+            if (NULL == obj) {
+                PyBOOPSIObject_OBJECT(self) = obj;
+                return (PyObject *)self;
+            } else
+                PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
         }
-
+        
         Py_CLEAR(self);
     }
     
     return NULL;
 }
 //-
-//+ boopsi_traverse
-static int
-boopsi_traverse(PyBOOPSIObject *self, visitproc visit, void *arg)
-{
-    return visit(self->refdict, arg);
+//+ boopsi_repr
+static PyObject *
+boopsi_repr(PyBOOPSIObject *self) {
+    Object *obj;
+    
+    obj = PyBOOPSIObject_OBJECT(self);
+    if (NULL != obj)
+        return PyString_FromFormat("<%s at %p, object at %p>", OBJ_TNAME(self), self, obj);
+    else
+        return PyString_FromFormat("<%s at %p, no object>", OBJ_TNAME(self), self);
 }
-//- boopsi_traverse
-//+ boopsi_clear
-static int
-boopsi_clear(PyBOOPSIObject *self)
+//-
+//+ boopsi__get
+/*! \cond */
+PyDoc_STRVAR(boopsi__get_doc,
+"_get(attr, format) -> object\n\
+\n\
+Try to obtain value of an BOOPSI obejct attribute by calling the BOOPSI function GetAttr().\n\
+The value returned by GetAttr() is converted by Py_BuildValue() using given format.");
+/*! \endcond */
+
+static PyObject *
+boopsi__get(PyBOOPSIObject *self, PyObject *args)
 {
-    PyDict_Clear(self->refdict);
-    return 0;
+    Object *obj;
+    ULONG attr;
+    ULONG value;
+    char *format;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+ 
+    if (!PyArg_ParseTuple(args, "Is:_get", &attr, &format))
+        return NULL;
+
+    DPRINT("attr: 0x%08x, format='%s'\n", attr, format);
+
+    if (!GetAttr(attr, obj, &value))
+        return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08lx) failed", attr);
+
+    DPRINT("value: %d %u 0x%08lx\n", (LONG)value, value, value);
+
+    /* Convert value into the right Python object */
+    return Py_BuildValue(format, value);
 }
-//- boopsi_clear
-//+
+//-
+//+ boopsi__set
+/*! \cond */
+PyDoc_STRVAR(boopsi__set_doc,
+"_set(attr, value) -> int\n\
+\n\
+Try to set an attribute of the BOOPSI object by calling the BOOPSI function SetAttrs().\n\
+Value should be a string, a unicode or something convertible into a int or a long.\n\
+Note: No reference kept on the given value object!");
+/*! \endcond */
+
+static PyObject *
+boopsi__set(PyBOOPSIObject *self, PyObject *args) {
+    Object *obj;
+    PyObject *value_obj;
+    ULONG attr;
+    ULONG value;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "IO:_set", &attr, &value_obj)) /* BR */
+        return NULL;
+    
+    if (!python2long((PyObject *)value_obj, &value))
+        return NULL;
+
+    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    set(obj, attr, value);  
+    
+    /* We handle Python exception here because set an attribute can call a notification
+       that will raise an exception. In this case the set fails also. */
+    if (PyErr_Occurred())
+        return NULL;
+
+    Py_RETURN_NONE;
+}
+//-
+//+ boopsi__do
+/*! \cond */
+PyDoc_STRVAR(boopsi__do_doc,
+"_do(method, args)\n\
+\n\
+Sorry, Not documented yet :-(");
+/*! \endcond */
+
+static PyObject *
+boopsi__do(PyBOOPSIObject *self, PyObject *args) {
+    PyObject *ret, *meth_data;
+    Object *obj;
+    DoMsg *msg;
+    int meth, i, n;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "IO!:_do", &meth, &PyTuple_Type, &meth_data)) /* BR */
+        return NULL;
+
+    DPRINT("DoMethod(obj=%p, meth=0x%08x):\n", obj, meth);
+
+    n = PyTuple_GET_SIZE(meth_data);
+    DPRINT("  Data size = %d\n", n);
+    msg = (DoMsg *) PyMem_Malloc(sizeof(DoMsg) + sizeof(ULONG) * n);
+    if (NULL == msg)
+        return PyErr_NoMemory();
+
+    for (i = 0; i < n; i++) {
+        PyObject *o = PyTuple_GET_ITEM(meth_data, i);
+        ULONG *ptr = (ULONG *) &msg->data[i];
+
+        if (python2long(o, ptr)) {
+            PyMem_Free(msg);
+            return NULL;
+        }
+
+        DPRINT("  args[%u]: %d, %u, 0x%08x\n", i, (LONG)*ptr, *ptr, *ptr);
+    }
+
+    /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
+     * even if this call cause some Python code to be executed causing a DECREF of these objects.
+     * This is protected by the fact that objects have their ref counter increased until they remains
+     * inside the argument tuple of this function.
+     * So here there is no need to INCREF argument python objects.
+     */
+
+    msg->MethodID = meth;
+    ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
+    PyMem_Free(msg);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return ret;
+}
+//-
+
+static struct PyMethodDef boopsi_methods[] = {
+    {"_get", (PyCFunction) boopsi__get, METH_VARARGS, boopsi__get_doc},
+    {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
+    {"_do",  (PyCFunction) boopsi__do,  METH_VARARGS, boopsi__do_doc},
+    {NULL, NULL} /* sentinel */
+};
+
+static PyTypeObject PyBOOPSIObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.PyBOOPSIObject",
+    tp_basicsize    : sizeof(PyBOOPSIObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_doc          : "BOOPSI Objects",
+    
+    tp_new          : (newfunc)boopsi_new,
+    
+    tp_repr         : (reprfunc)boopsi_repr,
+    tp_methods      : boopsi_methods,
+};
+
+/*******************************************************************************************
+** MUIObject_Type
+*/
+
+//+ muiobject_dealloc
 static void
-boopsi_dealloc(PyBOOPSIObject *self)
+muiobject_dealloc(PyMUIObject *self)
 {
     Object *mo, *app, *parent;
     
     mo = PyBOOPSIObject_OBJECT(self);
-    DPRINT("%s(self=%p): obj=%p\n", __FUNCTION__, self, mo);
+    DPRINT("self=%p, obj=%p\n", self, mo);
 
     if (NULL != mo) {
         if (!get(mo, MUIA_ApplicationObject, &app) || !get(mo, MUIA_Parent, &parent)) {
@@ -545,439 +631,39 @@ boopsi_dealloc(PyBOOPSIObject *self)
             DPRINT("Object %p not disposed (used): app=%p, parent=%p\n", mo, app, parent);
     }
 
-    self->ob_type->tp_free((PyObject*)self);
+    ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
 //-
-
-
-static PyTypeObject PyBOOPSIObject_Type = {
-    PyObject_HEAD_INIT(NULL)
-
-    tp_name         : "_muimaster.PyBOOPSIObject",
-    tp_basicsize    : sizeof(PyBOOPSIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE /*| Py_TPFLAGS_HAVE_GC*/,
-    tp_doc          : "MUI Objects",
-    
-    tp_new          : (newfunc)boopsi_new,
-    tp_dealloc      : (destructor)boopsi_dealloc,
-    
-    //tp_repr         : (reprfunc)muiobject_repr,
-    //tp_methods      : muiobject_methods,
-    //tp_members      : muiobject_members,
-};
-
-/*******************************************************************************************
-** MUIObject_Type
-*/
-
-#if 0
-//+ muiobject_new
-static PyObject *
-muiobject_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
-{
-    MUIObject *self;
-    PyObject *obj = NULL;
-    APTR address = NULL;
-    char *keys[] = {"address", NULL};
-
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|O:PyMuiObject", keys, &obj))
-        return NULL;
-
-    if (NULL != obj) {
-        if (MUIObject_Check(obj)) {
-            DPRINT("direct MUIObject @ %p (type='%s')\n", obj, OBJ_TNAME(obj));
-            Py_INCREF((PyObject *) self);
-            return (PyObject *) self; /* WARNING: the init method of the 'self' type may be called after
-                                       * return if 'type' is a subclass of MUIObject_Type.
-                                       */
-        }
-
-        /* Now try to obtain an address from the given object */
-        if (!CPointer_Convert((PyObject *) obj, &address))
-            return NULL;
-
-        if (NULL == address) Py_RETURN_NONE;
-
-        /* obtain from the Object the associated PyMuiObject and returns it */
-        if (!get(address, MUIA_PyMod_PyObject, &self) || (NULL == self))
-            return PyErr_Format(PyExc_RuntimeError, "Object @ %p doesn't seem to be associated with a PyMuiObject.", address);
-
-        DPRINT("Associated object to %p: %p\n", address, self);
-
-        Py_INCREF((PyObject *) self);
-        return (PyObject *) self; /* WARNING: the init method of the 'self' type may be called after
-                                   * return if 'type' is a subclass of MUIObject_Type.
-                                   */
-    }
-
-    self = (MUIObject *) type->tp_alloc(type, 0);
-    if ((NULL == self) || CPointer_Init((PyObject *) self, (APTR)-1, NULL, NULL))
-        Py_CLEAR(self);
-    else {
-        CPointer_SET_ADDR(self, NULL);
-
-        self->refdict = PyDict_New();
-        if (NULL != self->refdict)
-            self->refcnt = 0;
-        else
-            Py_CLEAR(self);
-    }
-
-    DPRINT("MUIObject.init(self=%p)\n", self);
-
-    return (PyObject *) self;
-}
-//- muiobject_new
-//+ muiobject_dealloc
-static void
-muiobject_dealloc(MUIObject *self) {
-    Object *obj;
-    
-    obj = CPointer_GET_ADDR(self);
-    DPRINT("MUIObject.dealloc(self=%p, refcnt=%lu, MUI=%p)\n", self, self->refcnt, obj);
-
-    if (NULL != obj) {        
-        /* Note: using get() on MUIA_Parent doesn't work for Window objets for example.
-         * => The parent of a window isn't the application object!
-         */
-    
-        assert(0 == self->refcnt);
-
-        DPRINT("before MUI_DisposeObject(%p)\n", obj);
-        MUI_DisposeObject(obj);
-        DPRINT("after MUI_DisposeObject(%p)\n", obj);
-    }
-
-    Py_XDECREF(self->refdict);
-    CPointer_Type.tp_dealloc((PyObject *) self);
-}
-//- muiobject_dealloc
-//+ muiobject_repr
-static PyObject *
-muiobject_repr(MUIObject *self) {
-    Object *obj;
-    
-    obj = CPointer_GET_ADDR(self);
-    if (NULL != obj)
-        return PyString_FromFormat("<%s at %p, MUI object at %p>", OBJ_TNAME(self), self, obj);
-    else
-        return PyString_FromFormat("<%s at %p, MUI object disposed>", OBJ_TNAME(self), self);
-}
-//- muiobject_repr
-//+ muiobject_traverse
-static int
-muiobject_traverse(MUIObject *self, visitproc visit, void *arg) {
-    return visit(self->refdict, arg);
-}
-//- muiobject_traverse
-//+ muiobject_clear
-static int
-muiobject_clear(MUIObject *self) {
-    PyDict_Clear(self->refdict);
-    return 0;
-}
-//- muiobject_clear
-//+ muiobject__incref
-/*! \cond */
-PyDoc_STRVAR(muiobject__incref_doc,
-"_incref() -> None\n\
-\n\
-Use this function to increment the internal MUI reference counter.\n\
-When this counter reach 0, the object can be deallocated by the garbage collector of Python.\n\
-See also method _decref().");
-/*! \endcond */
-
-static PyObject *
-muiobject__incref(MUIObject *self)
-{
-    Object *obj;
-    
-    // Increment the MUI reference counter only if a MUI object exists.
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    assert(self->refcnt < ULONG_MAX);
-
-    // We keep alive the Python objet if some MUI refs exists.
-    if (0 == self->refcnt) {
-        Py_INCREF((PyObject *)self);
-    }
-
-    self->refcnt++;
-
-    Py_RETURN_NONE;
-}
-//- muiobject__incref
-//+ muiobject__decref
-/*! \cond */
-PyDoc_STRVAR(muiobject__decref_doc,
-"_decref() -> None\n\
-\n\
-Use this function to decrement the internal MUI reference counter.\n\
-When this counter reach 0, the object can be deallocated by the garbage collector of Python.\n\
-See also method _incref().");
-/*! \endcond */
-
-static PyObject *
-muiobject__decref(MUIObject *self)
-{
-    Object *obj;
-    
-    // Decrement the MUI reference counter only if a MUI object exists.
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    if (self->refcnt) {
-        self->refcnt--;
-        
-        // Permit the Python object to die
-        if (0 == self->refcnt) {
-            Py_DECREF((PyObject *)self);
-        }
-    }
-
-    Py_RETURN_NONE;
-}
-//- muiobject__decref
-//+ muiobject__create
-/*! \cond */
-PyDoc_STRVAR(muiobject__create_doc,
-"_create(ClassID [, data]) -> bool\n\
-\n\
-Calling this function create the MUI object using the giben class ID\n\
-and an optional tags dictionary. This object is linked to the Python object.\n\
-When a MUI object is created with this function you can create a new one\n\
-with the same Python object. Call _dispose() on it before, to do that.");
-/*! \endcond */
-
-static PyObject *
-muiobject__create(MUIObject *self, PyObject *args) {
-    Object *mui_obj;
-    char *cl;
-    PyObject *data;
-    struct TagItem *tags;
-
-    /* Checking that no MUI object is already linked */
-    mui_obj = CPointer_GET_ADDR(self);
-    if (NULL != mui_obj) {
-        PyErr_SetString(PyExc_RuntimeError, "the MUI object is already created");
-        return NULL;
-    }
-
-    data = NULL;
-    tags = NULL;
-    if (!PyArg_ParseTuple(args, "s|O!", &cl, &PyDict_Type, &data))
-        return NULL;
-
-    if (NULL != data) {
-        PyObject *k, *v;
-        int n, p, i;
-
-        n = PyDict_Size(data);
-        DPRINT("Data size = %d\n", n);
-        tags = (struct TagItem *) PyMem_New(struct TagItem, n+1);
-        if (NULL == tags) return PyErr_NoMemory();
-
-        for (p=i=0; i < n; i++) {
-            struct TagItem *tag = &tags[i];
-        
-            if (!PyDict_Next(data, &p, &k, &v)) break;
-
-            k = PyNumber_Int(k);
-            if (NULL == k) {
-                PyMem_Free(tags);  
-                PyErr_SetString(PyExc_TypeError, "data's key should be coercable into an integer object");
-                return NULL;
-            }
-        
-            if (PyLong_CheckExact(k))
-                tag->ti_Tag = PyLong_AsUnsignedLong(k);
-            else
-                tag->ti_Tag = PyInt_AS_LONG(k);    
-
-            if (0 == tag->ti_Tag) {
-                PyMem_Free(tags);        
-                PyErr_SetString(PyExc_ValueError, "attribute can't be zero");
-                return NULL;
-            }
-
-            if (convertFromPython(v, &tag->ti_Data)) {
-                PyMem_Free(tags);
-                return NULL;
-            }
-
-            Py_DECREF(k); 
-
-            DPRINT("tag: 0x%08lx, data: %ld %lu %p\n", tag->ti_Tag, (LONG) tag->ti_Data, tag->ti_Data, (APTR) tag->ti_Data);
-        }
-
-        tags[i].ti_Tag = TAG_DONE;
-    }
-
-    /* Notes: Here, Python objects passed througth function argument have their references increased
-     * case by case depending on flags of each attributes defined in mui_attribute dict of the class.
-     * But a call to the _init method should be done to handle that before calling _create.
-     */
-
-    mui_obj = myMUI_NewObject(self, cl, tags);
-    DPRINT("MUI_NewObject(\"%s\") = \033[32m%p\033[0m\n", cl, mui_obj);
-    
-    PyMem_Free(tags);
-    
-    if (NULL == mui_obj) {
-        PyErr_SetString(PyExc_RuntimeError, "can't create a new MUI object");
-        return NULL;
-    }
-
-    CPointer_SET_ADDR(self, mui_obj);
-    Py_RETURN_TRUE;
-}
-//- muiobject__create
-//+ muiobject__dispose
-/*! \cond */
-PyDoc_STRVAR(muiobject__dispose_doc,
-"_dispose() -> bool\n\
-\n\
-Dispose the underlaying MUI object if MUI internal reference counter is 0.\n\
-If not, nothing is done.\n\
-Note: Disposing a MUI object can dispose some other linked MUI objects too.");
-/*! \endcond */
-
-static PyObject *
-muiobject__dispose(MUIObject *self) {
-    Object *obj;
-
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    DPRINT("PyObj: %p, MUI obj: %p, refcnt=%lu\n", self, obj, self->refcnt);
-
-    if (self->refcnt) {
-        DPRINT("not disposed: refcnt > 0\n");
-        Py_RETURN_FALSE;
-    }
-    
-    MUI_DisposeObject(obj); // should not call any Python code (done by PyModMCC).
-    CPointer_SET_ADDR(self, NULL);
-
-    Py_RETURN_TRUE;
-}
-//- muiobject__dispose
-//+ muiobject__init
-/*! \cond */
-PyDoc_STRVAR(muiobject__init_doc,
-"_init(attr, value, keep) -> int\n\
-\n\
-");
-/*! \endcond */
-static PyObject *
-muiobject__init(MUIObject *self, PyObject *args) {
-    PyObject *obj;
-    ULONG attr;
-    char keep;
-
-    if (!PyArg_ParseTuple(args, "IOb", &attr, &obj, &keep))
-        return NULL;
-
-    if (keep && _keep_ref(self, attr, obj))
-        return NULL;
-
-    Py_RETURN_NONE;
-}
-//- muiobject__init
-//+ muiobject__get
-/*! \cond */
-PyDoc_STRVAR(muiobject__get_doc,
-"_get(attr, format) -> object\n\
-\n\
-Try to obtain the attribute value of the MUI object by calling \n\
-the BOOPSI function GetAttr().
-The value returned by GetAttr() is converted by Py_BuildValue() using format.");
-/*! \endcond */
-
-static PyObject *
-muiobject__get(MUIObject *self, PyObject *args)
-{
-    Object *obj;
-    ULONG attr;
-    ULONG value;
-    char *format;
-
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
- 
-    if (!PyArg_ParseTuple(args, "Is", &attr, &format))
-        return NULL;
-
-    DPRINT("attr: 0x%08x, format='%s'\n", attr, format);
-
-    if (get(obj, attr, &value) == 0)
-        return PyErr_Format(PyExc_ValueError,
-            "attribute 0x%08lx can't be get", attr);
-
-    DPRINT("value: %d %u 0x%08lx\n", (LONG)value, value, (APTR) value);
-
-    /* Convert value into the right Python object */
-    return Py_BuildValue(format, value);
-}
-//- muiobject__get
-//+ muiobject__set
-/*! \cond */
-PyDoc_STRVAR(muiobject__set_doc,
-"_set(attr, value, keep) -> int\n\
-\n\
-Try to set an attribute of the MUI object by calling the BOOPSI OM_SET.\n\
-Value should be an instance of CPointer or a int or a long.\n\
-Note: object reference is keep only if keep = True!");
-/*! \endcond */
-
-static PyObject *
-muiobject__set(MUIObject *self, PyObject *args) {
-    Object *obj;
-    ULONG attr;
-    LONG value;
-
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
- 
-    if (_set_base(self, args, &attr, &value))
-        return NULL;
-
-    value = set(obj, attr, value);  
-    
-    /* We handle Python exception here because set an attribute can call a notification
-       that will raise an exception. In this case the set fails also. */
-    if (PyErr_Occurred())
-        return NULL;
-
-    Py_RETURN_NONE;
-}
-//- muiobject__set
 //+ muiobject__nnset
 /*! \cond */
 PyDoc_STRVAR(muiobject__nnset_doc,
 "_nnset(attr, value, keep) -> int\n\
 \n\
-Like _set() but without triggering notification.");
+Like BOOPSIObject._set() but without triggering notification on MUI object.");
 /*! \endcond */
 
 static PyObject *
-muiobject__nnset(MUIObject *self, PyObject *args) {
+muiobject__nnset(PyMUIObject *self, PyObject *args) {
     Object *obj;
+    PyObject *value_obj;
     ULONG attr;
     LONG value;
 
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
 
-    if (_set_base(self, args, &attr, &value))
+    if (!PyArg_ParseTuple(args, "IO:_nnset", &attr, &value_obj)) /* BR */
+        return NULL;
+    
+    if (!python2long((PyObject *)value_obj, &value))
         return NULL;
 
+    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
     nnset(obj, attr, value);
 
     Py_RETURN_NONE;
 }
-//- muiobject__nnset
+//-
 //+ muiobject__notify
 /*! \cond */
 PyDoc_STRVAR(muiobject__notify_doc,
@@ -987,141 +673,58 @@ Sorry, Not documented yet :-(");
 /*! \endcond */
 
 static PyObject *
-muiobject__notify(MUIObject *self, PyObject *args) {
-    PyObject *v;
-    LONG trigattr, trigvalue, value;
-    Object *obj;
+muiobject__notify(PyMUIObject *self, PyObject *args) {
+    PyObject *value_obj;
+    ULONG trigattr, trigvalue, value;
+    Object *mo;
 
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
 
-    if (!PyArg_ParseTuple(args, "IO", &trigattr, &v))
+    if (!PyArg_ParseTuple(args, "IO:_notify", &trigattr, &value_obj)) /* BR */
         return NULL;
 
-    if (convertFromPython(v, &trigvalue))
+    if (!python2long(value_obj, &trigvalue))
         return NULL;
 
-    DPRINT("obj: %p, trigattr: %#lx, trigvalue('%s'): %ld %lu %#lx\n",
-           obj, trigattr, v->ob_type->tp_name, trigvalue, trigvalue, trigvalue);
-    
+    DPRINT("MO: %p, trigattr: %#lx, trigvalue('%s'): %ld, %lu, %#lx\n",
+           mo, trigattr, OBJ_TNAME(value_obj), (LONG)trigvalue, trigvalue, trigvalue);
+
     if (MUIV_EveryTime == trigvalue)
         value = MUIV_TriggerValue;
     else
         value = trigvalue;
 
-    /* Notes: Like in _do, the hook OnAttrChangedHook cannot be called
-     * if the Python object self is deallocated (except by a bad design inside a MUI class, that does
-     * some DoMethod on died MUI obejcts... but I can't do anything for that here :-p).
-     * Because if self is deallocated, muiobject_dealloc() will call MUI_DisposeObject on self!
-     * And as calls are synchrones, calling _notify will raise an exception during the CHECK_OBJ().
-     */
- 
-    DoMethod(obj, MUIM_Notify, trigattr, trigvalue,
-        MUIV_Notify_Self, 5,
-        MUIM_CallHook, (ULONG) &OnAttrChangedHook, (ULONG) self, trigattr, value);
+    muiUserData(mo) = (ULONG)self; /* Link to the Pyhon side */
+
+    DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
+             MUIV_Notify_Self, 5,
+             MUIM_CallHook, &OnAttrChangedHook, self, trigattr, value);
 
     Py_RETURN_NONE;
 }
 //- muiobject__notify
-//+ muiobject__do
-/*! \cond */
-PyDoc_STRVAR(muiobject__do_doc,
-"_do(method, args)\n\
-\n\
-Sorry, Not documented yet :-(");
-/*! \endcond */
-
-static PyObject *
-muiobject__do(MUIObject *self, PyObject *args) {
-    PyObject *ret, *meth_data;
-    Object *obj;
-    DoMsg *msg;
-    int meth, i, n;
-
-    obj = CPointer_GET_ADDR(self);
-    CHECK_OBJ(obj);
-
-    if (!PyArg_ParseTuple(args, "IO!", &meth, &PyTuple_Type, &meth_data))
-        return NULL;
-
-    DPRINT("DoMethod(obj=%p, meth=0x%08x):\n", obj, meth);
-
-    n = PyTuple_GET_SIZE(meth_data);
-    DPRINT("Data size = %d\n", n);
-    msg = (DoMsg *) malloc(sizeof(DoMsg) + sizeof(long) * n);
-    if (NULL == msg) return PyErr_NoMemory();
-
-    for (i = 0; i < n; i++) {
-        PyObject *o = PyTuple_GET_ITEM(meth_data, i);
-        LONG *ptr = (LONG *) &msg->data[i];
-
-        if (convertFromPython(o, ptr)) {
-            free(msg);
-            return NULL;
-        }
-
-        DPRINT("  args[%u]: %d %u 0x%08x\n", i, *ptr, (ULONG) *ptr, *ptr);
-    }
-
-    /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
-     * even if this call cause some Python code to be executed causing a DECREF of these objects.
-     * This is protected by the fact that objects have their ref counter increased until they remains
-     * inside the argument tuple of this function.
-     * So here there is no need to INCREF argument python objects.
-     */
-
-    msg->MethodID = meth;
-    ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
-    free(msg);
-
-    if (PyErr_Occurred())
-        return NULL;
-
-    return ret;
-}//- muiobject__do
-
-//+ MUIObject_Type
-static PyMemberDef muiobject_members[] = {
-    {"_refcnt", T_ULONG, offsetof(MUIObject, refcnt), RO, "MUI internal reference cunter."},
-    {NULL}  /* Sentinel */
-};
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_incref",     (PyCFunction) muiobject__incref,    METH_NOARGS,  muiobject__incref_doc},
-    {"_decref",     (PyCFunction) muiobject__decref,    METH_NOARGS,  muiobject__decref_doc},
-    {"_create",     (PyCFunction) muiobject__create,    METH_VARARGS, muiobject__create_doc},
-    {"_dispose",    (PyCFunction) muiobject__dispose,   METH_NOARGS,  muiobject__dispose_doc},
-    {"_init",       (PyCFunction) muiobject__init,      METH_VARARGS, muiobject__init_doc},
-    {"_get",        (PyCFunction) muiobject__get,       METH_VARARGS, muiobject__get_doc},
-    {"_set",        (PyCFunction) muiobject__set,       METH_VARARGS, muiobject__set_doc},
-    {"_nnset",      (PyCFunction) muiobject__nnset,     METH_VARARGS, muiobject__nnset_doc},
-    {"_notify",     (PyCFunction) muiobject__notify,    METH_VARARGS, muiobject__notify_doc},
-    {"_do",         (PyCFunction) muiobject__do,        METH_VARARGS, muiobject__do_doc},
-    {NULL, NULL}    /* sentinel */
+    {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
+    {"_notify", (PyCFunction) muiobject__notify, METH_VARARGS, muiobject__notify_doc},
+    {NULL, NULL} /* sentinel */
 };
 
-static PyTypeObject MUIObject_Type = {
+static PyTypeObject PyMUIObject_Type = {
     PyObject_HEAD_INIT(NULL)
 
-    tp_name         : "_muimaster.MUIObject",
-    tp_basicsize    : sizeof(MUIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    tp_base         : &PyBOOPSIObject_Type,
+    tp_name         : "_muimaster.PyMUIObject",
+    tp_basicsize    : sizeof(PyMUIObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT,
     tp_doc          : "MUI Objects",
-    
-    tp_new          : (newfunc)muiobject_new,
+
     tp_dealloc      : (destructor)muiobject_dealloc,
-    
-    tp_traverse     : (traverseproc)muiobject_traverse,
-    tp_clear        : (inquiry)muiobject_clear,
-
-    tp_repr         : (reprfunc)muiobject_repr,
     tp_methods      : muiobject_methods,
-    tp_members      : muiobject_members,
 };
-//- MUIObject_Type
-#endif  
 
- 
+
 /*
 ** Module Functions
 **
@@ -1290,22 +893,21 @@ PyMODINIT_FUNC
 INITFUNC(void) {
     PyObject *m;
 
+    INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
+
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL == MUIMasterBase) return;
 
-    /* Notification hook initialization */
-    
     /* New Python types initialization */
     if (PyType_Ready(&PyBOOPSIObject_Type) < 0) return;
-
-    //MUIObject_Type.tp_base = &CPointer_Type;
-    //if (PyType_Ready(&MUIObject_Type) < 0) return;
+    if (PyType_Ready(&PyMUIObject_Type) < 0) return;
 
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
     if (all_ins(m)) return;
 
     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
+    ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
 }
 //-
 
