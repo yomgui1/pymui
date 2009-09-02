@@ -551,8 +551,6 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
         case 'k':
         case 'n':
         case 'c':
-        case 'O':
-        case 'N':
             format[1] = '\0';
             return Py_BuildValue(format, value);
 
