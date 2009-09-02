@@ -183,8 +183,8 @@ extern void dprintf(char*fmt, ...);
 #endif
 
 #ifndef NDEBUG
-#define DPRINT(f, x...) ({ KPrintF("\033[32m[%4u] %-25s: \033[0m", __LINE__, __FUNCTION__); KPrintF(f ,##x); })
-#define DRAWPRINT(f, x...) ({ KPrintF(f ,##x); })
+#define DPRINT(f, x...) ({ dprintf("\033[32m[%4u] %-25s: \033[0m", __LINE__, __FUNCTION__); dprintf(f ,##x); })
+#define DRAWPRINT(f, x...) ({ dprintf(f ,##x); })
 #else
 #define DPRINT(f, x...)
 #define DRAWPRINT(f, x...)
@@ -330,8 +330,13 @@ python2long(PyObject *obj, ULONG *value)
     Py_ssize_t buffer_len;
 
     if (PyString_Check(obj) || PyUnicode_Check(obj))
-        *value = (ULONG) PyString_AsString(obj);
-    else if (PyObject_AsReadBuffer(obj, (const void **)value, &buffer_len) != 0) {
+        *value = (ULONG)PyString_AsString(obj);
+    else if (PyBOOPSIObject_Check(obj))
+        *value = (ULONG)PyBOOPSIObject_OBJECT(obj);
+    else if (PyObject_CheckReadBuffer(obj)) {
+        if (PyObject_AsReadBuffer(obj, (const void **)value, &buffer_len) != 0)
+            return 0;
+    } else {
         PyObject *tmp = PyNumber_Int(obj);
 
         if (NULL == tmp) {
@@ -371,6 +376,7 @@ attrs2tags(PyObject *self, PyObject *attrs)
     PyObject *fast;
     Py_ssize_t size;
 
+    DPRINT("attrs: %p (%s)\n", attrs, OBJ_TNAME_SAFE(attrs));
     fast = PySequence_Fast(attrs, "Given object doesn't provide Sequence protocol.");
     if (NULL != fast) {
         size = PySequence_Fast_GET_SIZE(fast);
@@ -382,8 +388,10 @@ attrs2tags(PyObject *self, PyObject *attrs)
             for (i=0, tag=tags; i < size; i++, tag++) {
                 PyObject *entry = PySequence_Fast_GET_ITEM(fast, i);
 
-                if (!parse_attribute_entry(entry, &tag->ti_Tag, &tag->ti_Data))
+                if ((NULL == entry) || !parse_attribute_entry(entry, &tag->ti_Tag, &tag->ti_Data))
                     goto error;
+
+                DPRINT("  #%u: 0x%08x = 0x%08x\n", i, tag->ti_Tag, tag->ti_Data);
             }
 
             tags[size].ti_Tag = TAG_DONE;
@@ -413,7 +421,7 @@ boopsi_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     static char *kwlist[] = {"classname", "attributes", NULL};
     PyBOOPSIObject *self;
     UBYTE *class;
-    PyObject *attrs;
+    PyObject *attrs=NULL;
     Object *obj;
     struct TagItem *tags;
 
@@ -423,16 +431,27 @@ boopsi_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     /* The Python object is needed before convertir the attributes dict into tagitem array */
     self = (APTR)type->tp_alloc(type, 0);
     if (NULL != self) {
-        tags = attrs2tags((PyObject *)self, attrs);
-        if (tags != NULL) {
-            obj = NewObjectA(NULL, class, tags);
-            PyMem_Free(tags);
-            if (NULL == obj) {
-                PyBOOPSIObject_OBJECT(self) = obj;
-                return (PyObject *)self;
+        if (NULL != attrs) {
+            tags = attrs2tags((PyObject *)self, attrs);
+            if (NULL != tags) {
+                if (PyMUIObject_Check(self))
+                    obj = MUI_NewObjectA(class, tags);
+                else
+                    obj = NewObjectA(NULL, class, tags);
+                PyMem_Free(tags);
             } else
-                PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
-        }
+                obj = NULL;
+        } else if (PyMUIObject_Check(self))
+            obj = MUI_NewObject(class, TAG_DONE);
+        else
+            obj = NewObject(NULL, class, TAG_DONE);
+        
+        if (NULL != obj) {
+            DPRINT("New %s object @ %p (self=%p)\n", class, obj, self);
+            PyBOOPSIObject_OBJECT(self) = obj;
+            return (PyObject *)self;
+        } else
+            PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
         
         Py_CLEAR(self);
     }
@@ -699,7 +718,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args) {
 
     DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
              MUIV_Notify_Self, 5,
-             MUIM_CallHook, &OnAttrChangedHook, self, trigattr, value);
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG)self, trigattr, value);
 
     Py_RETURN_NONE;
 }
