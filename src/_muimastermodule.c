@@ -294,6 +294,30 @@ for more information on calls.");
 ** Private Functions
 */
 
+//+ PyMUIObjectFromObject
+static PyMUIObject *
+PyMUIObjectFromObject(Object *mo)
+{
+    PyMUIObject *pyo;
+
+    /* MUI object linked to a PyMUIObject? just incref and return it */
+    pyo = (PyMUIObject *)muiUserData(mo);
+    if (NULL != pyo) {
+        Py_INCREF((PyObject *)pyo);
+        return pyo;
+    }
+
+    /* Allocate a new PyMUIObject */
+    pyo = PyObject_New(PyMUIObject, &PyMUIObject_Type); /* NR */
+    if (NULL == pyo)
+        return NULL;
+
+    PyBOOPSIObject_OBJECT(pyo) = mo;
+    muiUserData(mo) = (ULONG)pyo;
+
+    return pyo;
+}
+//-
 //+ OnAttrChanged
 static void
 OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
@@ -452,6 +476,8 @@ boopsi_new(PyTypeObject *type, PyObject *args)
         if (NULL != obj) {
             DPRINT("New %s object @ %p (self=%p)\n", class, obj, self);
             PyBOOPSIObject_OBJECT(self) = obj;
+            if (PyMUIObject_Check(self))
+                muiUserData(obj) = (ULONG)self;
             return (PyObject *)self;
         } else
             PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
@@ -489,15 +515,15 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     Object *obj;
     ULONG attr;
     ULONG value;
-    char *format;
+    char format[2];
 
     obj = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(obj);
  
-    if (!PyArg_ParseTuple(args, "Is:_get", &attr, &format))
+    if (!PyArg_ParseTuple(args, "Ic:_get", &attr, &format[0]))
         return NULL;
 
-    DPRINT("attr: 0x%08x, format='%s'\n", attr, format);
+    DPRINT("attr: 0x%08x, format='%c'\n", attr, format[0]);
 
     if (!GetAttr(attr, obj, &value))
         return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08lx) failed", attr);
@@ -505,7 +531,36 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     DPRINT("value: %d %u 0x%08lx\n", (LONG)value, value, value);
 
     /* Convert value into the right Python object */
-    return Py_BuildValue(format, value);
+    switch (format[0]) {
+        case 'M':
+            return (PyObject *)PyMUIObjectFromObject((Object *)value);
+
+        case 'b':
+            if (value) {
+                Py_RETURN_TRUE;
+            } else {
+                Py_RETURN_FALSE;
+            }
+            break;
+
+        case 's':
+        case 'z':
+        case 'u':
+        case 'i':
+        case 'I':
+        case 'k':
+        case 'n':
+        case 'c':
+        case 'O':
+        case 'N':
+            format[1] = '\0';
+            return Py_BuildValue(format, value);
+
+        default:
+            PyErr_Format(PyExc_ValueError, "Unsupported format: '%c'.", format[0]);
+    }
+
+    return NULL;
 }
 //-
 //+ boopsi__set
@@ -649,8 +704,12 @@ muiobject_dealloc(PyMUIObject *self)
             DPRINT("before MUI_DisposeObject(%p)\n", mo);
             MUI_DisposeObject(mo);
             DPRINT("after MUI_DisposeObject(%p)\n", mo);
-        } else
+        } else {
             DPRINT("Object %p not disposed (used): app=%p, parent=%p\n", mo, app, parent);
+
+            /* Just unlink it */
+            muiUserData(mo) = NULL;
+        }
     }
 
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
@@ -717,11 +776,15 @@ muiobject__notify(PyMUIObject *self, PyObject *args) {
     else
         value = trigvalue;
 
-    muiUserData(mo) = (ULONG)self; /* Link to the Pyhon side */
+    /* If the object is already linked, take this link as the self object */
+    if (0 != muiUserData(mo))
+        self = (PyMUIObject *)muiUserData(mo);
+    else
+        muiUserData(mo) = (ULONG)self;
 
     DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
              MUIV_Notify_Self, 5,
-             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG)self, trigattr, value);
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, trigattr, value);
 
     Py_RETURN_NONE;
 }
