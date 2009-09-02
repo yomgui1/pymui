@@ -323,7 +323,11 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
 }
 //-
 //+ python2long
-/* This function doesn't incref the given python object */
+/*
+ * /!\ This function doesn't incref the given python object.
+ * This one shall be kept valid if a reference is stored by the MUI object,
+ * until the object is disposed or if the reference is released.
+ */
 static int
 python2long(PyObject *obj, ULONG *value)
 {
@@ -416,16 +420,15 @@ attrs2tags(PyObject *self, PyObject *attrs)
 
 //+ boopsi_new
 static PyObject *
-boopsi_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+boopsi_new(PyTypeObject *type, PyObject *args)
 {
-    static char *kwlist[] = {"classname", "attributes", NULL};
     PyBOOPSIObject *self;
     UBYTE *class;
     PyObject *attrs=NULL;
     Object *obj;
     struct TagItem *tags;
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|O:PyBOOPSIObject", kwlist, &class, &attrs))
+    if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &class, &attrs))
         return NULL;
 
     /* The Python object is needed before convertir the attributes dict into tagitem array */
@@ -804,7 +807,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
-    {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"_mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {NULL, NULL} /* Sentinel */
 };
 
