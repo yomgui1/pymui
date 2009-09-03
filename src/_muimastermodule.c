@@ -238,6 +238,7 @@ extern void dprintf(char*fmt, ...);
         PyErr_SetString(PyExc_RuntimeError, "no BOOPSI object associated"); \
         return NULL; }
 
+
 /*
 ** Private Types and Structures
 */
@@ -247,15 +248,22 @@ typedef struct DoMsg_STRUCT {
     ULONG data[0];
 } DoMsg;
 
+typedef struct CreatedObjectNode_STRUCT {
+    struct MinNode n_Node;
+    Object *       n_Object;
+    BOOL           n_IsMUI;
+} CreatedObjectNode;
+
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
 
-    Object * boopsi;
+    Object *            boopsi;
+    CreatedObjectNode * node;
 } PyBOOPSIObject;
 
 
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject base;
+    PyBOOPSIObject      base;
 } PyMUIObject;
 
 
@@ -266,7 +274,7 @@ typedef struct PyMUIObject_STRUCT {
 static struct Hook OnAttrChangedHook;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
-
+static struct MinList gCreatedObjectList;
 
 /*
 ** Public Variables
@@ -450,13 +458,20 @@ boopsi_new(PyTypeObject *type, PyObject *args)
     PyObject *attrs=NULL;
     Object *obj;
     struct TagItem *tags;
+    CreatedObjectNode *node;
 
     if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &class, &attrs))
         return NULL;
 
+    node = malloc(sizeof(*node));
+    if (NULL== node)
+        return PyErr_NoMemory();
+
     /* The Python object is needed before convertir the attributes dict into tagitem array */
     self = (APTR)type->tp_alloc(type, 0);
     if (NULL != self) {
+        self->node = node;
+        node->n_IsMUI = PyMUIObject_Check(self);     
         if (NULL != attrs) {
             tags = attrs2tags((PyObject *)self, attrs);
             if (NULL != tags) {
@@ -467,13 +482,15 @@ boopsi_new(PyTypeObject *type, PyObject *args)
                 PyMem_Free(tags);
             } else
                 obj = NULL;
-        } else if (PyMUIObject_Check(self))
+        } else if (node->n_IsMUI)
             obj = MUI_NewObject(class, TAG_DONE);
         else
             obj = NewObject(NULL, class, TAG_DONE);
         
         if (NULL != obj) {
-            DPRINT("New %s object @ %p (self=%p)\n", class, obj, self);
+            DPRINT("New %s object @ %p (self=%p, node=%p)\n", class, obj, self, self->node);   
+            self->node->n_Object = obj;
+            ADDTAIL(&gCreatedObjectList, self->node);
             PyBOOPSIObject_OBJECT(self) = obj;
             if (PyMUIObject_Check(self))
                 muiUserData(obj) = (ULONG)self;
@@ -483,8 +500,30 @@ boopsi_new(PyTypeObject *type, PyObject *args)
         
         Py_CLEAR(self);
     }
+
+    free(node);
     
     return NULL;
+}
+//-
+//+ boopsi_dealloc
+static void
+boopsi_dealloc(PyBOOPSIObject *self)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    DPRINT("self=%p, obj=%p, node=%p\n", self, obj, self->node);
+
+    if (NULL != obj) {
+        free(REMOVE(self->node));
+
+        DPRINT("before DisposeObject(%p)\n", obj);
+        DisposeObject(obj);
+        DPRINT("after DisposeObject(%p)\n", obj);
+    }
+
+    ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
 //-
 //+ boopsi_repr
@@ -672,6 +711,7 @@ static PyTypeObject PyBOOPSIObject_Type = {
     tp_doc          : "BOOPSI Objects",
     
     tp_new          : (newfunc)boopsi_new,
+    tp_dealloc      : (destructor)boopsi_dealloc,
     
     tp_repr         : (reprfunc)boopsi_repr,
     tp_methods      : boopsi_methods,
@@ -686,15 +726,21 @@ static void
 muiobject_dealloc(PyMUIObject *self)
 {
     Object *mo, *app, *parent;
+    CreatedObjectNode *node;
     
     mo = PyBOOPSIObject_OBJECT(self);
-    DPRINT("self=%p, obj=%p\n", self, mo);
+    node = ((PyBOOPSIObject *)self)->node;
+    DPRINT("self=%p, obj=%p, node=%p\n", self, mo, node);
 
     if (NULL != mo) {
+        free(REMOVE(node));
+        
         if (!get(mo, MUIA_ApplicationObject, &app) || !get(mo, MUIA_Parent, &parent)) {
             DPRINT("unable to free object %p!\n", mo);
             return;
         }
+
+        DPRINT("Object %p: app=%p, parent=%p\n", mo, app, parent);
         
         /* Destroy only the Application object or not used objects */
         if ((mo == app) || ((NULL == app) && (NULL == parent))) {
@@ -702,7 +748,7 @@ muiobject_dealloc(PyMUIObject *self)
             MUI_DisposeObject(mo);
             DPRINT("after MUI_DisposeObject(%p)\n", mo);
         } else {
-            DPRINT("Object %p not disposed (used): app=%p, parent=%p\n", mo, app, parent);
+            DPRINT("  => not disposed (used)\n");
 
             /* Just unlink it */
             muiUserData(mo) = NULL;
@@ -879,7 +925,35 @@ static PyMethodDef _muimaster_methods[] = {
 //+ PyMorphOS_CloseModule
 void
 PyMorphOS_CloseModule(void) {
+    CreatedObjectNode *node, *next;
+
     DPRINT("Closing module...\n");
+
+    ForeachNodeSafe(&gCreatedObjectList, node, next) {
+        Object *obj = node->n_Object;
+        
+        DPRINT("Lost object: %p, (node=%p)\n", obj, node);
+        if (NULL != obj) {
+            if (node->n_IsMUI) {
+                Object *app, *parent;
+
+                if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
+                    DPRINT("  app=%p, parent=%p\n", app, parent);
+                    if ((obj == app) || ((NULL == app) && (NULL == parent))) {
+                        DPRINT("  Disposing...\n");
+                        MUI_DisposeObject(obj);
+                    } else
+                        DPRINT("  Used!\n");
+                } else
+                    DPRINT("  dad object!\n");
+            } else {
+                DPRINT("  Disposing...\n");
+                DisposeObject(obj);
+            }
+        }
+
+        free(node);
+    }
 
     if (NULL != MUIMasterBase) {
         CloseLibrary(MUIMasterBase);
@@ -976,6 +1050,7 @@ INITFUNC(void) {
     PyObject *m;
 
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
+    NEWLIST(&gCreatedObjectList);
 
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL == MUIMasterBase) return;

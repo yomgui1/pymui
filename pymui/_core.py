@@ -5,7 +5,7 @@
 
 from _muimaster import *
 from defines import *
-from weakref import ref
+import weakref
 
 class MetaMCC(type):
     def __new__(metacl, name, bases, dct):
@@ -58,27 +58,41 @@ class Notify(PyMUIObject, BoopsiWrapping):
             return a
         attrs = list((convert(a), v) for a, v in kwds.pop('attributes', []))
         attrs += list((cl._id_attrs[a]['id'], v) for a, v in kwds.iteritems())
-        return PyMUIObject.__new__(cl, cl.CLASSID, attrs)
+        self = PyMUIObject.__new__(cl, cl.CLASSID, attrs)
+        self._keep = {}
+        for i, v in attrs:
+            # to be more efficient
+            if type(v) not in (int, long, basestring, bool):
+                self._keep[i] = v
+        return self
 
     def __init__(self, *args, **kwds):
         super(Notify, self).__init__(*args, **kwds)
         self._notify_cbdict = {}
 
     def _notify_cb(self, id, value):
-        cb, args = self._notify_cbdict[id]
-        def convertArgs(a, v):
-            if a == MUIV_TriggerValue:
-                return v
-            elif a == MUIV_NotTriggerValue:
-                return not v
-            return a
-        cb(*tuple(convertArgs(a, value) for a in args))
+        for cb, args in self._notify_cbdict[id]:
+            def convertArgs(a, v):
+                if a == MUIV_TriggerValue:
+                    return v
+                elif a == MUIV_NotTriggerValue:
+                    return not v
+                return a
+     
+            newargs = tuple(convertArgs(a(), value) for a in args if a() != None)
+            if len(newargs) != len(args):
+                raise RuntimeError("Notify(%x): some arguments have been destroyed" % id)
+
+            if cb(*newargs):
+                return
 
     def Notify(self, id, trigvalue, callback, *args):
         t = self._id_attrs.get(id, None)
         if not t:
             raise ValueError("This attribute is forbidden")
-        self._notify_cbdict[t['id']] = (ref(callback), map(ref, args))
+        l = self._notify_cbdict.get(t['id'], [])
+        l.append((callback, map(weakref.ref, args)))
+        self._notify_cbdict.setdefault(t['id'], l)
         self._notify(t['id'], trigvalue)
 
     def NNSet(self, id, value):
@@ -89,8 +103,8 @@ class Application(Notify):
 
     def __init__(self, *args, **kwds):
         super(Application, self).__init__(*args, **kwds)
-        self._windows = []
-        
+        self._win = []
+
     def Run(self):
         mainloop(self)
 
@@ -98,14 +112,10 @@ class Application(Notify):
         self._do(MUIM_Application_ReturnID, (MUIV_Application_ReturnID_Quit, ))
 
     def AddWindow(self, win):
-        if win in self._windows:
-            return
-        self._do(OM_ADDMEMBER, (win,))
-        self._windows.append(win)
-        
-    def RemWindow(self, win):
-        self._windows.remove(win)
-        self._do(OM_REMMEMBER, (win,))
+        if win in self._win:
+            raise RuntimeError("Window already attached.")
+        self._do(OM_ADDMEMBER, (win, ))
+        self._win.append(win)
 
 class Window(Notify):
     CLASSID = MUIC_Window
