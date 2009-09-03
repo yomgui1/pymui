@@ -166,7 +166,6 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 #include <proto/utility.h>
 #include <proto/muimaster.h>
 
-extern struct Library *PythonBase;
 extern void dprintf(char*fmt, ...);
 
 
@@ -631,7 +630,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
         PyObject *o = PyTuple_GET_ITEM(meth_data, i);
         ULONG *ptr = (ULONG *) &msg->data[i];
 
-        if (python2long(o, ptr)) {
+        if (!python2long(o, ptr)) {
             PyMem_Free(msg);
             return NULL;
         }
@@ -753,21 +752,21 @@ Sorry, Not documented yet :-(");
 
 static PyObject *
 muiobject__notify(PyMUIObject *self, PyObject *args) {
-    PyObject *value_obj;
+    PyObject *trigvalue_obj;
     ULONG trigattr, trigvalue, value;
     Object *mo;
 
     mo = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(mo);
 
-    if (!PyArg_ParseTuple(args, "IO:_notify", &trigattr, &value_obj)) /* BR */
+    if (!PyArg_ParseTuple(args, "IO:_notify", &trigattr, &trigvalue_obj)) /* BR */
         return NULL;
 
-    if (!python2long(value_obj, &trigvalue))
+    if (!python2long(trigvalue_obj, &trigvalue))
         return NULL;
 
     DPRINT("MO: %p, trigattr: %#lx, trigvalue('%s'): %ld, %lu, %#lx\n",
-           mo, trigattr, OBJ_TNAME(value_obj), (LONG)trigvalue, trigvalue, trigvalue);
+           mo, trigattr, OBJ_TNAME(trigvalue_obj), (LONG)trigvalue, trigvalue, trigvalue);
 
     if (MUIV_EveryTime == trigvalue)
         value = MUIV_TriggerValue;
@@ -781,7 +780,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args) {
         muiUserData(mo) = (ULONG)self;
 
     DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
-             MUIV_Notify_Self, 5,
+             MUIV_Notify_Self, 4,
              MUIM_CallHook, (ULONG)&OnAttrChangedHook, trigattr, value);
 
     Py_RETURN_NONE;
@@ -800,7 +799,7 @@ static PyTypeObject PyMUIObject_Type = {
     tp_base         : &PyBOOPSIObject_Type,
     tp_name         : "_muimaster.PyMUIObject",
     tp_basicsize    : sizeof(PyMUIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     tp_doc          : "MUI Objects",
 
     tp_dealloc      : (destructor)muiobject_dealloc,
@@ -868,7 +867,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
-    {"_mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {NULL, NULL} /* Sentinel */
 };
 

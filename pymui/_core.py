@@ -1,16 +1,16 @@
 ###
-## \file _core2.py
+## \file _core.py
 ## \author ROGUEZ "Yomgui" Guillaume
 ##
 
 from _muimaster import *
 from defines import *
+from weakref import ref
 
 class MetaMCC(type):
     def __new__(metacl, name, bases, dct):
-        cl = dct.pop('CLASSID', None)
+        cl = dct.get('CLASSID', None)
         if cl:
-            dct['__mui_class_id'] = cl
             methods = dct.pop('METHODS', None)
         dct['_keep_dict'] = {}
         dct['_id_meths'] = {}
@@ -27,21 +27,24 @@ class BoopsiWrapping:
         self._keep_dict[id] = [arg for i, arg in enumerate(args) if type(arg) not in (int, long) and i not in self._args_dontkeep[id]]
     
     def DoMethod(self, id, *args):
-        if id not in self._id_meths:
+        t = self._id_meths.get(id, None)
+        if not t:
             raise ValueError("This method is forbidden")
-        self._keep_do(id, args)
-        return self._do(id, args)
+        self._keep_do(t['id'], args)
+        return self._do(t['id'], args)
 
     def Get(self, id):
-        if id not in self._id_attrs:
+        t = self._id_attrs.get(id, None)
+        if not t:
             raise ValueError("This attribute is forbidden")
-        return self._get(id, self._id_attrs[id]['fmt'])
+        return self._get(t['id'], t['fmt'])
 
     def Set(self, id, value):
-        if id not in self._id_attrs:
+        t = self._id_attrs.get(id, None)
+        if not t:
             raise ValueError("This attribute is forbidden")
-        self._keep_set(id, value)
-        self._set(id, value)
+        self._keep_set(t['id'], value)
+        self._set(t['id'], value)
 
 class Notify(PyMUIObject, BoopsiWrapping):
     __metaclass__ = MetaMCC
@@ -49,12 +52,34 @@ class Notify(PyMUIObject, BoopsiWrapping):
     CLASSID = MUIC_Notify
 
     def __new__(cl, **kwds):
-        attrs = list(kwds.pop('attributes', []))
-        attrs += list((a, v) for a, v in kwds.iteritems())
+        def convert(a):
+            if cl._id_attrs.has_key(a):
+                return cl._id_attrs[a]['id']
+            return a
+        attrs = list((convert(a), v) for a, v in kwds.pop('attributes', []))
+        attrs += list((cl._id_attrs[a]['id'], v) for a, v in kwds.iteritems())
         return PyMUIObject.__new__(cl, cl.CLASSID, attrs)
 
-    def Notify(self, id, trigvalue, callback):
-        self._notify()
+    def __init__(self, *args, **kwds):
+        super(Notify, self).__init__(*args, **kwds)
+        self._notify_cbdict = {}
+
+    def _notify_cb(self, id, value):
+        cb, args = self._notify_cbdict[id]
+        def convertArgs(a, v):
+            if a == MUIV_TriggerValue:
+                return v
+            elif a == MUIV_NotTriggerValue:
+                return not v
+            return a
+        cb(*tuple(convertArgs(a, value) for a in args))
+
+    def Notify(self, id, trigvalue, callback, *args):
+        t = self._id_attrs.get(id, None)
+        if not t:
+            raise ValueError("This attribute is forbidden")
+        self._notify_cbdict[t['id']] = (ref(callback), map(ref, args))
+        self._notify(t['id'], trigvalue)
 
     def NNSet(self, id, value):
         self._nnset()
@@ -63,14 +88,17 @@ class Application(Notify):
     CLASSID = MUIC_Application
 
     def __init__(self, *args, **kwds):
-        super(Application).__init__(self, *args, **kwds)
+        super(Application, self).__init__(*args, **kwds)
         self._windows = []
         
     def Run(self):
-        _mainloop(self)
+        mainloop(self)
+
+    def Quit(self):
+        self._do(MUIM_Application_ReturnID, (MUIV_Application_ReturnID_Quit, ))
 
     def AddWindow(self, win):
-        if win in self:
+        if win in self._windows:
             return
         self._do(OM_ADDMEMBER, (win,))
         self._windows.append(win)
@@ -82,7 +110,9 @@ class Application(Notify):
 class Window(Notify):
     CLASSID = MUIC_Window
     ATTRIBUTES = {
-        MUIA_Window_Open: {'prop': 'open', 'fmt': 'i'},
+        'Open': {'id': MUIA_Window_Open, 'prop': 'open', 'fmt': 'b'},
+        'Id': {'id': MUIA_Window_ID, 'fmt': 'I'},
+        'CloseRequest': {'id': MUIA_Window_CloseRequest, 'fmt': 'b'},
         }
 
     __current_id = 0
@@ -92,13 +122,13 @@ class Window(Notify):
             cl.__current_id += 1
             Id = cl.__current_id
         kwds['Id'] = Id
-        return super(Window, cl).__new__(**kwds)
+        return Notify.__new__(cl, **kwds)
 
     def Open(self):
-        self._set(MUIA_Window_Open, TRUE)
+        self._set(MUIA_Window_Open, True)
 
     def Close(self):
-        self._set(MUIA_Window_Open, FALSE)
+        self._set(MUIA_Window_Open, False)
 
 class Area(Notify):
     CLASSID = MUIC_Area

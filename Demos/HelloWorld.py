@@ -6,7 +6,7 @@ from pymui import *
 #
 
 
-button = Text(attributes=((MUIA_Text_Contents, "Ok"),
+button = Text(attributes=((MUIA_Text_Contents, MUIX_C + "Ok"),
                           (MUIA_Background,    MUII_ButtonBack),
                           (MUIA_InputMode,     MUIV_InputMode_RelVerify),
                           (MUIA_Frame,         MUIV_Frame_Button),
@@ -21,6 +21,8 @@ mainwin = Window(attributes=((MUIA_Window_Title,      "HelloWorld window"),
 
 app = Application()
 app.AddWindow(mainwin)
+
+mainwin.Notify('CloseRequest', MUIV_EveryTime, app.Quit)
 
 mainwin.Open()
 app.Run()
