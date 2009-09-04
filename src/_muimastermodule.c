@@ -302,20 +302,23 @@ for more information on calls.");
 */
 
 //+ PyMUIObjectFromObject
-static PyMUIObject *
+static PyObject *
 PyMUIObjectFromObject(Object *mo)
 {
-    PyMUIObject *pyo;
+    PyObject *pyo;
+
+    if (NULL == mo)
+        Py_RETURN_NONE;
 
     /* MUI object linked to a PyMUIObject? just incref and return it */
-    pyo = (PyMUIObject *)muiUserData(mo);
+    pyo = (PyObject *)muiUserData(mo);
     if (NULL != pyo) {
-        Py_INCREF((PyObject *)pyo);
+        Py_INCREF(pyo);
         return pyo;
     }
 
     /* Allocate a new PyMUIObject */
-    pyo = PyObject_New(PyMUIObject, &PyMUIObject_Type); /* NR */
+    pyo = (PyObject *)PyObject_New(PyMUIObject, &PyMUIObject_Type); /* NR */
     if (NULL == pyo)
         return NULL;
 
@@ -368,6 +371,8 @@ python2long(PyObject *obj, ULONG *value)
         *value = (ULONG)PyString_AsString(obj);
     else if (PyBOOPSIObject_Check(obj))
         *value = (ULONG)PyBOOPSIObject_OBJECT(obj);
+    else if (PyCObject_Check(obj))
+        *value = (ULONG)PyCObject_AsVoidPtr(obj);
     else if (PyObject_CheckReadBuffer(obj)) {
         if (PyObject_AsReadBuffer(obj, (const void **)value, &buffer_len) != 0)
             return 0;
@@ -571,7 +576,10 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     /* Convert value into the right Python object */
     switch (format[0]) {
         case 'M':
-            return (PyObject *)PyMUIObjectFromObject((Object *)value);
+            return PyMUIObjectFromObject((Object *)value);
+
+        case 'p':
+            return (PyObject *)PyCObject_FromVoidPtr((APTR)value, NULL);
 
         case 'b':
             if (value) {
@@ -602,7 +610,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
 //+ boopsi__set
 /*! \cond */
 PyDoc_STRVAR(boopsi__set_doc,
-"_set(attr, value) -> int\n\
+"_set(attr, value) -> None\n\
 \n\
 Try to set an attribute of the BOOPSI object by calling the BOOPSI function SetAttrs().\n\
 Value should be a string, a unicode or something convertible into a int or a long.\n\
@@ -639,7 +647,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
 //+ boopsi__do
 /*! \cond */
 PyDoc_STRVAR(boopsi__do_doc,
-"_do(method, args)\n\
+"_do(method, args) -> int\n\
 \n\
 Sorry, Not documented yet :-(");
 /*! \endcond */
@@ -684,12 +692,130 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
      * So here there is no need to INCREF argument python objects.
      */
 
-    msg->MethodID = meth;
     ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
-    PyMem_Free(msg);
 
     if (PyErr_Occurred())
+        Py_CLEAR(ret);
+
+    return ret;
+}
+//-
+//+ boopsi__do1
+/*! \cond */
+PyDoc_STRVAR(boopsi__do1_doc,
+"_do1(method, arg) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+/*! \endcond */
+
+static PyObject *
+boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
+    PyObject *ret;
+    Object *obj;
+    LONG meth, data;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "IO&:_do", &meth, python2long, &data)) /* BR */
         return NULL;
+
+    DPRINT("DoMethod(obj=%p, meth=0x%08x, data=0x%08x):\n", obj, meth, data);
+
+    ret = PyInt_FromLong(DoMethod(obj, meth, data));
+
+    if (PyErr_Occurred())
+        Py_CLEAR(ret);
+
+    return ret;
+}
+//-
+//+ boopsi__add
+/*! \cond */
+PyDoc_STRVAR(boopsi__add_doc,
+"_add(object) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+/*! \endcond */
+
+static PyObject *
+boopsi__add(PyBOOPSIObject *self, PyObject *args) {
+    PyObject *ret, *pychild;
+    Object *obj, *child;
+    int lock = FALSE;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "O!|i:_add", &PyBOOPSIObject_Type, &pychild, &lock)) /* BR */
+        return NULL;
+
+    child = PyBOOPSIObject_OBJECT(pychild);
+    PyBOOPSIObject_CHECK_OBJ(child);
+
+    DPRINT("OM_ADDMEMBER: parent=%p, obj=%p\n", obj, child);
+
+    /* Warning: no reference kept on arg object after return ! */
+
+    if (lock)
+        DoMethod(obj, MUIM_Group_InitChange);
+
+    Py_INCREF(pychild);
+    ret = PyInt_FromLong(DoMethod(obj, OM_ADDMEMBER, (ULONG)child));
+    Py_DECREF(pychild);
+
+    if (lock)
+        DoMethod(obj, MUIM_Group_ExitChange);
+
+    if (PyErr_Occurred()) {
+        Py_XDECREF(ret);
+        return NULL;
+    }
+
+    return ret;
+}
+//-
+//+ boopsi__rem
+/*! \cond */
+PyDoc_STRVAR(boopsi__rem_doc,
+"_rem(object, lock=False) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+/*! \endcond */
+
+static PyObject *
+boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
+    PyObject *ret, *pychild;
+    Object *obj, *child;
+    int lock = FALSE;
+
+    obj = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(obj);
+
+    if (!PyArg_ParseTuple(args, "O!|i:_rem", &PyBOOPSIObject_Type, &pychild, &lock)) /* BR */
+        return NULL;
+
+    child = PyBOOPSIObject_OBJECT(pychild);
+    PyBOOPSIObject_CHECK_OBJ(child);
+
+    DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);
+
+    /* Warning: no reference kept on arg object after return ! */
+
+    if (lock)
+        DoMethod(obj, MUIM_Group_InitChange);
+
+    Py_INCREF(pychild);
+    ret = PyInt_FromLong(DoMethod(obj, OM_REMMEMBER, (ULONG)child));
+    Py_DECREF(pychild);
+
+    if (lock)
+        DoMethod(obj, MUIM_Group_ExitChange);
+
+    if (PyErr_Occurred()) {
+        Py_XDECREF(ret);
+        return NULL;
+    }
 
     return ret;
 }
@@ -699,6 +825,10 @@ static struct PyMethodDef boopsi_methods[] = {
     {"_get", (PyCFunction) boopsi__get, METH_VARARGS, boopsi__get_doc},
     {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
     {"_do",  (PyCFunction) boopsi__do,  METH_VARARGS, boopsi__do_doc},
+    {"_do1", (PyCFunction) boopsi__do1, METH_O,       boopsi__do1_doc},
+    {"_add", (PyCFunction) boopsi__add, METH_VARARGS, boopsi__add_doc},
+    {"_rem", (PyCFunction) boopsi__rem, METH_VARARGS, boopsi__rem_doc},
+
     {NULL, NULL} /* sentinel */
 };
 
@@ -761,7 +891,7 @@ muiobject_dealloc(PyMUIObject *self)
 //+ muiobject__nnset
 /*! \cond */
 PyDoc_STRVAR(muiobject__nnset_doc,
-"_nnset(attr, value, keep) -> int\n\
+"_nnset(attr, value) -> None\n\
 \n\
 Like BOOPSIObject._set() but without triggering notification on MUI object.");
 /*! \endcond */
@@ -791,7 +921,7 @@ muiobject__nnset(PyMUIObject *self, PyObject *args) {
 //+ muiobject__notify
 /*! \cond */
 PyDoc_STRVAR(muiobject__notify_doc,
-"_notify(trigattr, trigvalue)\n\
+"_notify(trigattr, trigvalue) -> None\n\
 \n\
 Sorry, Not documented yet :-(");
 /*! \endcond */
@@ -969,76 +1099,6 @@ all_ins(PyObject *m) {
     INSI(m, "VLatest", (long)MUIMASTER_VLATEST);
     INSS(m, "BUILD_TIME", __TIME__);
     INSS(m, "BUILD_DATE", __DATE__);
-
-    /* BOOPSI general methods */
-    INSI(m, "OM_ADDMEMBER", OM_ADDMEMBER);
-    INSI(m, "OM_REMMEMBER", OM_REMMEMBER);
-
-    /* ClassID */
-    INSS(m, "MUIC_Aboutmui", MUIC_Aboutmui);
-    INSS(m, "MUIC_Application", MUIC_Application);
-    INSS(m, "MUIC_Applist", MUIC_Applist);
-    INSS(m, "MUIC_Area", MUIC_Area);
-    INSS(m, "MUIC_Balance", MUIC_Balance);
-    INSS(m, "MUIC_Bitmap", MUIC_Bitmap);
-    INSS(m, "MUIC_Bodychunk", MUIC_Bodychunk);
-    INSS(m, "MUIC_Boopsi", MUIC_Boopsi);
-    INSS(m, "MUIC_Coloradjust", MUIC_Coloradjust);
-    INSS(m, "MUIC_Colorfield", MUIC_Colorfield);
-    INSS(m, "MUIC_Configdata", MUIC_Configdata);
-    INSS(m, "MUIC_Cycle", MUIC_Cycle);
-    INSS(m, "MUIC_Dataspace", MUIC_Dataspace);
-    INSS(m, "MUIC_Dirlist", MUIC_Dirlist);
-    INSS(m, "MUIC_Dtpic", MUIC_Dtpic);
-    INSS(m, "MUIC_Family", MUIC_Family);
-    INSS(m, "MUIC_Floattext", MUIC_Floattext);
-    INSS(m, "MUIC_Frameadjust", MUIC_Frameadjust);
-    INSS(m, "MUIC_Framedisplay", MUIC_Framedisplay);
-    INSS(m, "MUIC_Gadget", MUIC_Gadget);
-    INSS(m, "MUIC_Gauge", MUIC_Gauge);
-    INSS(m, "MUIC_Group", MUIC_Group);
-    INSS(m, "MUIC_Image", MUIC_Image);
-    INSS(m, "MUIC_Imageadjust", MUIC_Imageadjust);
-    INSS(m, "MUIC_Imagedisplay", MUIC_Imagedisplay);
-    INSS(m, "MUIC_Knob", MUIC_Knob);
-    INSS(m, "MUIC_Levelmeter", MUIC_Levelmeter);
-    INSS(m, "MUIC_List", MUIC_List);
-    INSS(m, "MUIC_Listview", MUIC_Listview);
-    INSS(m, "MUIC_Mccprefs", MUIC_Mccprefs);
-    INSS(m, "MUIC_Menu", MUIC_Menu);
-    INSS(m, "MUIC_Menuitem", MUIC_Menuitem);
-    INSS(m, "MUIC_Menustrip", MUIC_Menustrip);
-    INSS(m, "MUIC_Notify", MUIC_Notify);
-    INSS(m, "MUIC_Numeric", MUIC_Numeric);
-    INSS(m, "MUIC_Numericbutton", MUIC_Numericbutton);
-    INSS(m, "MUIC_Palette", MUIC_Palette);
-    INSS(m, "MUIC_Penadjust", MUIC_Penadjust);
-    INSS(m, "MUIC_Pendisplay", MUIC_Pendisplay);
-    INSS(m, "MUIC_Popasl", MUIC_Popasl);
-    INSS(m, "MUIC_Popframe", MUIC_Popframe);
-    INSS(m, "MUIC_Popimage", MUIC_Popimage);
-    INSS(m, "MUIC_Poplist", MUIC_Poplist);
-    INSS(m, "MUIC_Popobject", MUIC_Popobject);
-    INSS(m, "MUIC_Poppen", MUIC_Poppen);
-    INSS(m, "MUIC_Popscreen", MUIC_Popscreen);
-    INSS(m, "MUIC_Popstring", MUIC_Popstring);
-    INSS(m, "MUIC_Prop", MUIC_Prop);
-    INSS(m, "MUIC_Radio", MUIC_Radio);
-    INSS(m, "MUIC_Rectangle", MUIC_Rectangle);
-    INSS(m, "MUIC_Register", MUIC_Register);
-    INSS(m, "MUIC_Scale", MUIC_Scale);
-    INSS(m, "MUIC_Scrmodelist", MUIC_Scrmodelist);
-    INSS(m, "MUIC_Scrollbar", MUIC_Scrollbar);
-    INSS(m, "MUIC_Scrollgroup", MUIC_Scrollgroup);
-    INSS(m, "MUIC_Semaphore", MUIC_Semaphore);
-    INSS(m, "MUIC_Settings", MUIC_Settings);
-    INSS(m, "MUIC_Settingsgroup", MUIC_Settingsgroup);
-    INSS(m, "MUIC_Slider", MUIC_Slider);
-    INSS(m, "MUIC_String", MUIC_String);
-    INSS(m, "MUIC_Text", MUIC_Text);
-    INSS(m, "MUIC_Virtgroup", MUIC_Virtgroup);
-    INSS(m, "MUIC_Volumelist", MUIC_Volumelist);
-    INSS(m, "MUIC_Window", MUIC_Window);
 
     return 0;
 }

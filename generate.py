@@ -1,9 +1,11 @@
+#!/usr/bin/env python
+
 import os, sys, re
 from pprint import pprint
 
 muia_match = re.compile('.*(MUIA_\w+).*(0x[0-9a-fA-F]+).*').match
 muim_match = re.compile('.*(MUIM_\w+).*(0x[0-9a-fA-F]+).*').match
-muix_match = re.compile('.*(MUI[VXI]_\w+)[ \t]+(.*)').match
+muix_match = re.compile('.*(MUI[VXIC]_\w+)[ \t]+(.*)').match
 
 vars_to_change = { 'MUIV_Application_Save_ENV':      0,
                    'MUIV_Application_Save_ENVARC':   -1,
