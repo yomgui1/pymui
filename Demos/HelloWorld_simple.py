@@ -1,4 +1,9 @@
 # Minimal way :-)
 
 from pymui import *
-Application(Window(Title="HelloWorld window", Open=True, RootObject=Text.Button("Ok"), killapp=True)).Run()
+
+w = Window(Title="HelloWorld window", RootObject=Text.Button("Ok"))
+w.Notify('CloseRequest', MUIV_EveryTime, w.KillApp)
+app = Application(Window=w)
+w.Open()   
+app.Run()

@@ -232,7 +232,7 @@ extern void dprintf(char*fmt, ...);
 #define PyMUIObject_Check(op) PyObject_TypeCheck(op, &PyMUIObject_Type)
 #define PyMUIObject_CheckExact(op) ((op)->ob_type == &PyMUIObject_Type)
 
-#define PyBOOPSIObject_OBJECT(o) (((PyBOOPSIObject *)(o))->boopsi)
+#define PyBOOPSIObject_OBJECT(o) (((PyBOOPSIObject *)(o))->node->n_Object)
 
 #define PyBOOPSIObject_CHECK_OBJ(o) if (NULL == (o)) {                  \
         PyErr_SetString(PyExc_RuntimeError, "no BOOPSI object associated"); \
@@ -257,7 +257,6 @@ typedef struct CreatedObjectNode_STRUCT {
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
 
-    Object *            boopsi;
     CreatedObjectNode * node;
 } PyBOOPSIObject;
 
@@ -459,55 +458,20 @@ static PyObject *
 boopsi_new(PyTypeObject *type, PyObject *args)
 {
     PyBOOPSIObject *self;
-    UBYTE *class;
-    PyObject *attrs=NULL;
-    Object *obj;
-    struct TagItem *tags;
     CreatedObjectNode *node;
-
-    if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &class, &attrs))
-        return NULL;
 
     node = malloc(sizeof(*node));
     if (NULL== node)
         return PyErr_NoMemory();
 
-    /* The Python object is needed before convertir the attributes dict into tagitem array */
-    self = (APTR)type->tp_alloc(type, 0);
+    self = (APTR)type->tp_alloc(type, 0); /* NR */
     if (NULL != self) {
         self->node = node;
-        node->n_IsMUI = PyMUIObject_Check(self);     
-        if (NULL != attrs) {
-            tags = attrs2tags((PyObject *)self, attrs);
-            if (NULL != tags) {
-                if (PyMUIObject_Check(self))
-                    obj = MUI_NewObjectA(class, tags);
-                else
-                    obj = NewObjectA(NULL, class, tags);
-                PyMem_Free(tags);
-            } else
-                obj = NULL;
-        } else if (node->n_IsMUI)
-            obj = MUI_NewObject(class, TAG_DONE);
-        else
-            obj = NewObject(NULL, class, TAG_DONE);
-        
-        if (NULL != obj) {
-            DPRINT("New %s object @ %p (self=%p, node=%p)\n", class, obj, self, self->node);   
-            self->node->n_Object = obj;
-            ADDTAIL(&gCreatedObjectList, self->node);
-            PyBOOPSIObject_OBJECT(self) = obj;
-            if (PyMUIObject_Check(self))
-                muiUserData(obj) = (ULONG)self;
-            return (PyObject *)self;
-        } else
-            PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", class);
-        
-        Py_CLEAR(self);
+        PyBOOPSIObject_OBJECT(self) = NULL;
+        return (PyObject *)self;
     }
 
     free(node);
-    
     return NULL;
 }
 //-
@@ -543,6 +507,48 @@ boopsi_repr(PyBOOPSIObject *self) {
         return PyString_FromFormat("<%s at %p, no object>", OBJ_TNAME(self), self);
 }
 //-
+//+ boopsi__create
+static PyObject *
+boopsi__create(PyBOOPSIObject *self, PyObject *args)
+{
+    UBYTE *classid;
+    PyObject *attrs=NULL;
+    Object *obj;
+    struct TagItem *tags;
+
+    if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &classid, &attrs)) /* BR */
+        return NULL;
+
+    /* The Python object is needed before convertir the attributes dict into tagitem array */
+    self->node->n_IsMUI = PyMUIObject_Check(self);
+    if (NULL != attrs) {
+        tags = attrs2tags((PyObject *)self, attrs);
+        if (NULL != tags) {
+            if (self->node->n_IsMUI)
+                obj = MUI_NewObjectA(classid, tags);
+            else
+                obj = NewObjectA(NULL, classid, tags);
+            PyMem_Free(tags);
+        } else
+            obj = NULL;
+    } else if (self->node->n_IsMUI)
+        obj = MUI_NewObject(classid, TAG_DONE);
+    else
+        obj = NewObject(NULL, classid, TAG_DONE);
+
+    if (NULL != obj) {
+        DPRINT("New %s object @ %p (self=%p, node=%p)\n", classid, obj, self, self->node);
+        PyBOOPSIObject_OBJECT(self) = obj;
+        ADDTAIL(&gCreatedObjectList, self->node);
+        if (self->node->n_IsMUI)
+            muiUserData(obj) = (ULONG)self;
+        Py_RETURN_NONE;
+    } else
+        PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", classid);
+
+    return NULL;
+}
+//-
 //+ boopsi__get
 /*! \cond */
 PyDoc_STRVAR(boopsi__get_doc,
@@ -563,7 +569,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     obj = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(obj);
  
-    if (!PyArg_ParseTuple(args, "Ic:_get", &attr, &format[0]))
+    if (!PyArg_ParseTuple(args, "Ic:_get", &attr, &format[0])) /* BR */
         return NULL;
 
     DPRINT("attr: 0x%08x, format='%c'\n", attr, format[0]);
@@ -822,12 +828,13 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
 //-
 
 static struct PyMethodDef boopsi_methods[] = {
-    {"_get", (PyCFunction) boopsi__get, METH_VARARGS, boopsi__get_doc},
-    {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
-    {"_do",  (PyCFunction) boopsi__do,  METH_VARARGS, boopsi__do_doc},
-    {"_do1", (PyCFunction) boopsi__do1, METH_O,       boopsi__do1_doc},
-    {"_add", (PyCFunction) boopsi__add, METH_VARARGS, boopsi__add_doc},
-    {"_rem", (PyCFunction) boopsi__rem, METH_VARARGS, boopsi__rem_doc},
+    {"_create", (PyCFunction) boopsi__create, METH_VARARGS, NULL},
+    {"_get",    (PyCFunction) boopsi__get,    METH_VARARGS, boopsi__get_doc},
+    {"_set",    (PyCFunction) boopsi__set,    METH_VARARGS, boopsi__set_doc},
+    {"_do",     (PyCFunction) boopsi__do,     METH_VARARGS, boopsi__do_doc},
+    {"_do1",    (PyCFunction) boopsi__do1,    METH_VARARGS, boopsi__do1_doc},
+    {"_add",    (PyCFunction) boopsi__add,    METH_VARARGS, boopsi__add_doc},
+    {"_rem",    (PyCFunction) boopsi__rem,    METH_VARARGS, boopsi__rem_doc},
 
     {NULL, NULL} /* sentinel */
 };

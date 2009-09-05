@@ -3,13 +3,12 @@
 from pymui import *
 
 class MainWindow(Window):
-    def __new__(self, **kwds):
-        super(MainWindow, self).__new__(Title='HelloWorld - OrientObject version - PyMUI demo test',
-                                        LeftEdge=MUIV_Window_LeftEdge_Moused,
-                                        TopEdge=MUIV_Window_LeftEdge_Mouse,
-                                        Width=320,
-                                        Height=64, **kwds)
-
+    def __init__(self):
+        super(MainWindow, self).__init__('HelloWorld - OrientObject version - PyMUI demo test',
+                                         LeftEdge=MUIV_Window_LeftEdge_Moused,
+                                         TopEdge=MUIV_Window_TopEdge_Moused,
+                                         Width=320, Height=64)
+ 
         buttons = [ Text.Button("Close"),
                     Text.Button("Me"),
                     Text.Button("Now!") ]
@@ -17,22 +16,25 @@ class MainWindow(Window):
         butGroup = Group.HGroup()
         butGroup.AddChild(buttons)
 
-        text = Text(Content=MUIX_C + "Hello! I'm a very good program!\nClose me now...",
+        text = Text(Contents=MUIX_C + "Hello! I'm a very good program!\nClose me now...",
                     Draggable=True,
                     Frame=MUIV_Frame_String)
 
-        mainGroup = VGroup()
+        mainGroup = Group.VGroup()
         mainGroup.AddChild( (text, butGroup) )
-        
         self.RootObject = mainGroup
+        
 
 class HelloWorld(Application):
     def __init__(self):
-        win = MainWindow(killapp=True)
+        super(HelloWorld, self).__init__()
+        win = MainWindow()
+        win.Notify('CloseRequest', True, self.Quit)
         self.AddWindow(win)
-        win.Open = True
+        win.Open()
 
 # Go !
 
 app = HelloWorld()
 app.Run()
+
