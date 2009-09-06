@@ -100,7 +100,9 @@ class MetaMCC(type):
                 if x.isget:
                     d['fget'] = eval("lambda self: self.Get('%s')" % x.name)
                 if x.isset:
-                    d['fset'] = eval("lambda self, value: self.Set('%s', value)" % x.name)
+                    d['fset'] = dct.get('Set'+x.name, None)
+                    if d['fset'] is None:
+                        d['fset'] = eval("lambda self, value: self.Set('%s', value)" % x.name)
                 if d:
                     dct[x.name] = property(**d)
             
@@ -136,7 +138,7 @@ class BoopsiWrapping:
         except AttributeError:
             raise ValueError("Attribute %s is not supported" % repr(attr))
 
-    def _keep(self, k, v, f):
+    def _keep(self, k, v, f='i'):
         # Udpate the keep dict content
         if k in self._keep_dict and v is None:
             ov = self._keep_dict.pop(k)
@@ -171,13 +173,13 @@ class Notify(PyMUIObject, BoopsiWrapping):
     __metaclass__ = MetaMCC
 
     CLASSID = MUIC_Notify
-
     ATTRIBUTES = {
         MUIA_ApplicationObject: ('ApplicationObject' , 'M', '..g'),
         # not supported: MUIA_AppMessage
         MUIA_HelpLine:          ('HelpLine'          , 'i', 'isg'),
         MUIA_HelpNode:          ('HelpNode'          , 's', 'isg'),
         MUIA_NoNotify:          ('NoNotify'          , 'b', '.s.'),
+        MUIA_NoNotifyMethod:    ('NoNotifyMethod'    , 'I', '.s.'),
         MUIA_ObjectID:          ('ObjectID'          , 'I', 'isg'),
         MUIA_Parent:            ('Parent'            , 'M', '..g'),
         MUIA_Revision:          ('Revision'          , 'i', '..g'),
@@ -233,7 +235,6 @@ class Notify(PyMUIObject, BoopsiWrapping):
 
 class Application(Notify):
     CLASSID = MUIC_Application
-
     ATTRIBUTES = {
         MUIA_Application_Active:         ('Active',         'b', 'isg'),
         MUIA_Application_Author:         ('Author',         's', 'i.g'),
@@ -260,6 +261,7 @@ class Application(Notify):
         MUIA_Application_Sleep:          ('Sleep',          'b', '.s.'),
         MUIA_Application_Title:          ('Title',          's', 'i.g'),
         MUIA_Application_UseCommodities: ('UseCommodities', 'b', 'i..'),
+        MUIA_Application_UsedClasses:    ('UsedClasses',    'p', 'isg'),
         MUIA_Application_UseRexx:        ('UseRexx',        'b', 'i..'),
         MUIA_Application_Version:        ('Version',        's', 'i.g'),
         MUIA_Application_Window:         ('Window',         'M', 'i..'),
@@ -267,17 +269,12 @@ class Application(Notify):
         }
 
     def __init__(self, *args, **kwds):
-        self._win = []
-
+        win = kwds.pop('Window', None)
         super(Application, self).__init__(*args, **kwds) 
 
         # Add Window PyMUIObject passed as argument
-        x = kwds.get('Window')
-        if x:
-            self._win.append(x)
-            # unneeded to let a ref in self._keep as it's already in self._win
-            inf = self._id_kw['Window']
-            self._keep(inf.value, None, inf.format[0])
+        if win:
+            self.AddWindow(win)
 
     def Run(self):
         mainloop(self)
@@ -286,209 +283,15 @@ class Application(Notify):
         self._do1(MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit)
 
     def AddWindow(self, win):
-        if win in self._win:
+        if win in self._children:
             raise RuntimeError("Window already attached.")
         self._add(win)
-        self._win.append(win)
-
-
-class Area(Notify):
-    CLASSID = MUIC_Area
-
-    ATTRIBUTES = {
-        MUIA_Background:         ('Background',         'i', 'is.'),
-        MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
-        MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
-        MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
-        MUIA_ControlChar:        ('ControlChar',        'c', 'isg'),
-        MUIA_CycleChain:         ('CycleChain',         'i', 'isg'),
-        MUIA_Disabled:           ('Disabled',           'b', 'isg'),
-        MUIA_Draggable:          ('Draggable',          'b', 'isg'),
-        MUIA_Dropable:           ('Dropable',           'b', 'isg'),
-        MUIA_FillArea:           ('FillArea',           'b', 'is.'),
-        MUIA_FixHeight:          ('FixHeight',          'i', 'i..'),
-        MUIA_FixHeightTxt:       ('FixHeightTxt',       's', 'i..'),
-        MUIA_FixWidth:           ('FixWidth',           'i', 'i..'),
-        MUIA_FixWidthTxt:        ('FixWidthTxt',        's', 'i..'),
-        MUIA_Font:               ('Font',               'p', 'i.g'),
-        MUIA_Frame:              ('Frame',              'i', 'i..'),
-        MUIA_FramePhantomHoriz:  ('FramePhantomHoriz',  'b', 'i..'),
-        MUIA_FrameTitle:         ('FrameTitle',         's', 'i..'),
-        MUIA_Height:             ('Height',             'i', '..g'),
-        MUIA_HorizDisappear:     ('HorizDisappear',     'i', 'isg'),
-        MUIA_HorizWeight:        ('HorizWeight',        'i', 'isg'),
-        MUIA_InnerBottom:        ('InnerBottom',        'i', 'i.g'),
-        MUIA_InnerLeft:          ('InnerLeft',          'i', 'i.g'),
-        MUIA_InnerRight:         ('InnerRight',         'i', 'i.g'),
-        MUIA_InnerTop:           ('InnerTop',           'i', 'i.g'),
-        MUIA_InputMode:          ('InputMode',          'i', 'i..'),
-        MUIA_LeftEdge:           ('LeftEdge',           'i', '..g'),
-        MUIA_MaxHeight:          ('MaxHeight',          'i', 'i..'),
-        MUIA_MaxWidth:           ('MaxWidth',           'i', 'i..'),
-        MUIA_Pressed:            ('Pressed',            'b', '..g'),
-        MUIA_RightEdge:          ('RightEdge',          'i', '..g'),
-        MUIA_Selected:           ('Selected',           'b', 'isg'),
-        MUIA_ShortHelp:          ('ShortHelp',          's', 'isg'),
-        MUIA_ShowMe:             ('ShowMe',             'b', 'isg'),
-        MUIA_ShowSelState:       ('ShowSelState',       'b', 'i..'),
-        MUIA_Timer:              ('Timer',              'i', '..g'),
-        MUIA_TopEdge:            ('TopEdge',            'i', '..g'),
-        MUIA_VertDisappear:      ('VertDisappear',      'i', 'isg'),
-        MUIA_VertWeight:         ('VertWeight',         'i', 'isg'),
-        MUIA_Weight:             ('Weight',             'i', 'i..'),
-        MUIA_Width:              ('Width',              'i', '..g'),
-        MUIA_Window:             ('Window',             'p', '..g'),
-        MUIA_WindowObject:       ('WindowObject',       'M', '..g'),
-        }
-
-
-class Rectangle(Area):
-    CLASSID = MUIC_Rectangle
-
-    ATTRIBUTES = {
-        MUIA_Rectangle_BarTitle: ('BarTitle', 's', 'i.g'),
-        MUIA_Rectangle_HBar:     ('HBar',     'b', 'i.g'),
-        MUIA_Rectangle_VBar:     ('VBar',     'b', 'i.g'),
-        }
-
-    # Factory class methods
-
-    @classmethod
-    def HVSpace(cl):
-        return cl()
-
-    @classmethod
-    def HSpace(cl, x):
-        return cl(Weight=x)
-
-    @classmethod
-    def VSpace(cl, x):
-        return cl(Weight=x)
-
-    @classmethod
-    def HCenter(cl, o):
-        g = Group.HGroup(Spacing=0)
-        g.AddChild((cl.HSpace(0), o, cl.HSpace(0)))
-        return g
-
-    @ classmethod
-    def VCenter(cl, o):
-        g = Group.VGroup(Spacing=0)
-        return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
-    
-
-class Group(Area):
-    CLASSID = MUIC_Group
-
-    ATTRIBUTES = {
-        MUIA_Group_ActivePage:   ('ActivePage',   'i', 'isg'),
-        MUIA_Group_Child:        ('Child',        'M', 'i..'),
-        MUIA_Group_ChildList:    ('ChildList',    'p', '..g'),
-        MUIA_Group_Columns:      ('Columns',      'i', 'is.'),
-        MUIA_Group_Horiz:        ('Horiz',        'b', 'i..'),
-        MUIA_Group_HorizSpacing: ('HorizSpacing', 'i', 'isg'),
-        MUIA_Group_LayoutHook:   ('LayoutHook',   'p', 'i..'),
-        MUIA_Group_PageMode:     ('PageMode',     'b', 'i..'),
-        MUIA_Group_Rows:         ('Rows',         'i', 'is.'),
-        MUIA_Group_SameHeight:   ('SameHeight',   'b', 'i..'),
-        MUIA_Group_SameSize:     ('SameSize',     'b', 'i..'),
-        MUIA_Group_SameWidth:    ('SameWidth',    'b', 'i..'),
-        MUIA_Group_Spacing:      ('Spacing',      'i', 'is.'),
-        MUIA_Group_VertSpacing:  ('VertSpacing',  'i', 'isg'),
-        }
-
-    def __init__(self, *args, **kwds):
-        self._children = []
-        super(Group, self).__init__(*args, **kwds)
-
-        # Add RootObject PyMUIObject passed as argument
-        x = kwds.get('Child')
-        if x:
-            self._children.append(x)
-            # unneeded to let a ref in self._keep as it's already in self._children
-            inf = self._id_kw['Child']
-            self._keep(inf.value, None, inf.format[0])
-
-    def _group_add(self, child, lock):
-        if child not in self._children:
-            self._add(child, lock)
-            self._children.append(child)
-
-    def _group_rem(self, child, lock):
-        if child in self._children:
-            self._rem(child, lock)
-            self._children.remove(child)
-            
-    def AddChild(self, child, lock=False):
-        if hasattr(child, '__iter__'):
-            for c in child:
-                self._group_add(c, lock)
-        else:
-            self._group_add(child, lock)
-
-    def RemChild(self, child, lock=False):
-        if hasattr(child, '__iter__'):
-            for c in child:
-                self._group_rem(c, lock)
-        else:
-            self._group_rem(child, lock)
-
-    # Factory class methods
-
-    @classmethod
-    def HGroup(cl, **kwds):
-        kwds['Horiz'] = True
-        return cl(**kwds)
-
-    @classmethod
-    def VGroup(cl, **kwds):
-        kwds['Horiz'] = False
-        return cl(**kwds)
-
-    @classmethod
-    def ColGroup(cl, n, **kwds):
-        kwds['Columns'] = n
-        return cl(**kwds)
-
-    @classmethod
-    def RowGroup(cl, n, **kwds):
-        kwds['Rows'] = n
-        return cl(**kwds)
-    
-
-class Text(Area):
-    CLASSID = MUIC_Text
-
-    ATTRIBUTES = {
-        MUIA_Text_Contents:    ('Contents',     's', 'isg'),
-        MUIA_Text_HiChar:      ('HiChar',       'c', 'isg'),
-        MUIA_Text_PreParse:    ('PreParse',     's', 'i..'),
-        MUIA_Text_SetMin:      ('SetMin',       'b', 'i..'),
-        MUIA_Text_SetVMax:     ('SetVMax',      'b', 'is.'),
-        }
-
-    def __init__(self, Contents, **kwds):
-        super(Text, self).__init__(Contents=Contents, **kwds)
-
-    # Factory class methods
-
-    @classmethod
-    def Button(cl, x, key=None):
-        kwds = dict(Contents=x,
-                    Font=MUIV_Font_Button,
-                    Frame=MUIV_Frame_Button,
-                    PreParse=MUIX_C,
-                    InputMode=MUIV_InputMode_RelVerify,
-                    Background=MUII_ButtonBack)
-        if key:
-            kwds['HiChar'] = key
-            kwds['ControlChar'] = key
-        return cl(**kwds)
+        self._children.append(win)
+        win._app = self
 
 
 class Window(Notify):
     CLASSID = MUIC_Window
-
     ATTRIBUTES = {
         MUIA_Window_Activate:                ('Activate',                'b', 'isg'),
         MUIA_Window_ActiveObject:            ('ActiveObject',            'M', '.sg'),
@@ -503,6 +306,7 @@ class Window(Notify):
         MUIA_Window_CloseRequest:            ('CloseRequest',            'b', '..g'),
         MUIA_Window_DefaultObject:           ('DefaultObject',           'M', 'isg'),
         MUIA_Window_DepthGadget:             ('DepthGadget',             'b', 'i..'),
+        MUIA_Window_DisableKeys:             ('DisableKeys',             'I', 'isg'),
         MUIA_Window_DragBar:                 ('DragBar',                 'b', 'i..'),
         MUIA_Window_FancyDrawing:            ('FancyDrawing',            'b', 'isg'),
         MUIA_Window_Height:                  ('Height',                  'i', 'i.g'),
@@ -533,13 +337,42 @@ class Window(Notify):
         MUIA_Window_Window:                  ('Window',                  'p', '..g'),
         }
 
-    __current_id = 0
+    __window_ids = []
 
-    def __init__(self, Title, RootObject=Rectangle.HVSpace(), ID=-1, **kwds):
+    def __init__(self, Title=None, ID=-1, **kwds):
         if ID == -1:
-            self.__current_id += 1
-            ID = self.__current_id
-        super(Window, self).__init__(Title=Title, RootObject=RootObject, ID=ID, **kwds)
+            for x in xrange(1<<8):
+                if x not in self.__window_ids:
+                    ID = x
+                    break
+            if ID == -1:
+                raise RuntimeError("No more available ID")
+        else:
+            if isinstance(ID, str):
+                ID = sum(ord(x) << (24-i*8) for i, x in enumerate(ID[:4]))
+            elif not isinstance(ID, (int, long)):
+                raise ValueError("ID shall be a int or long, not", type(ID).__name__)
+
+        self.__window_ids.append(ID)
+
+        if 'RootObject' not in kwds:
+            kwds['RootObject'] = Rectangle.HVSpace()
+
+        if not Title is None:
+            kwds['Title'] = Title
+
+        if 'RightEdge' in kwds:
+            kwds['LeftEdge'] = -1000 - kwds.pop('RightEdge')
+
+        if 'BottomEdge' in kwds:
+            kwds['TopEdge'] = -1000 - kwds.pop('BottomEdge')
+
+        super(Window, self).__init__(ID=ID, **kwds)
+        self._children.append(kwds['RootObject'])
+
+    def SetRootObject(self, o):
+        self.Set(MUIA_Window_RootObject, o)
+        self._children[0] = o
 
     def KillApp(self):
         app = self.Get(MUIA_ApplicationObject)
@@ -548,10 +381,273 @@ class Window(Notify):
         app.Quit()
 
     def Open(self):
-        self._set(MUIA_Window_Open, True)
+        if self._app: # _app set during the AddWindow
+            self._set(MUIA_Window_Open, True)
 
     def Close(self):
-        self._set(MUIA_Window_Open, False)
+        if self._app: # _app set during the AddWindow
+            self._set(MUIA_Window_Open, False)
+
+
+class AboutMUI(Window):
+    CLASSID = MUIC_Aboutmui
+    ATTRIBUTES = { MUIA_Aboutmui_Application: ('Application', 'M', 'i..') }
+
+    def __init__(self, Application, RefWindow=None, **kwds):
+        Window.__init__(self, Application=Application, RefWindow=RefWindow, **kwds)
+        self._app = Application
+        Application._children.append(self)
+
+
+class Area(Notify):
+    CLASSID = MUIC_Area
+    ATTRIBUTES = {
+        MUIA_Background:         ('Background',         'i', 'is.'),
+        MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
+        MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
+        MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
+        MUIA_ControlChar:        ('ControlChar',        'c', 'isg'),
+        MUIA_CycleChain:         ('CycleChain',         'i', 'isg'),
+        MUIA_Disabled:           ('Disabled',           'b', 'isg'),
+        MUIA_DoubleBuffer:       ('DoubleBuffer',           'b', 'isg'),
+        MUIA_Draggable:          ('Draggable',          'b', 'isg'),
+        MUIA_Dropable:           ('Dropable',           'b', 'isg'),
+        MUIA_FillArea:           ('FillArea',           'b', 'is.'),
+        MUIA_FixHeight:          ('FixHeight',          'i', 'i..'),
+        MUIA_FixHeightTxt:       ('FixHeightTxt',       's', 'i..'),
+        MUIA_FixWidth:           ('FixWidth',           'i', 'i..'),
+        MUIA_FixWidthTxt:        ('FixWidthTxt',        's', 'i..'),
+        MUIA_Font:               ('Font',               'p', 'i.g'),
+        MUIA_Frame:              ('Frame',              'i', 'i..'),
+        MUIA_FrameDynamic:       ('FrameDynamic',       'b', 'isg'),
+        MUIA_FramePhantomHoriz:  ('FramePhantomHoriz',  'b', 'i..'),
+        MUIA_FrameTitle:         ('FrameTitle',         's', 'i..'),
+        MUIA_FrameVisible:       ('FrameVisible',       'b', 'isg'),
+        MUIA_Height:             ('Height',             'i', '..g'),
+        MUIA_HorizDisappear:     ('HorizDisappear',     'i', 'isg'),
+        MUIA_HorizWeight:        ('HorizWeight',        'i', 'isg'),
+        MUIA_InnerBottom:        ('InnerBottom',        'i', 'i.g'),
+        MUIA_InnerLeft:          ('InnerLeft',          'i', 'i.g'),
+        MUIA_InnerRight:         ('InnerRight',         'i', 'i.g'),
+        MUIA_InnerTop:           ('InnerTop',           'i', 'i.g'),
+        MUIA_InputMode:          ('InputMode',          'i', 'i..'),
+        MUIA_LeftEdge:           ('LeftEdge',           'i', '..g'),
+        MUIA_MaxHeight:          ('MaxHeight',          'i', 'i..'),
+        MUIA_MaxWidth:           ('MaxWidth',           'i', 'i..'),
+        MUIA_Pressed:            ('Pressed',            'b', '..g'),
+        MUIA_RightEdge:          ('RightEdge',          'i', '..g'),
+        MUIA_Selected:           ('Selected',           'b', 'isg'),
+        MUIA_ShortHelp:          ('ShortHelp',          's', 'isg'),
+        MUIA_ShowMe:             ('ShowMe',             'b', 'isg'),
+        MUIA_ShowSelState:       ('ShowSelState',       'b', 'i..'),
+        MUIA_Timer:              ('Timer',              'i', '..g'),
+        MUIA_TopEdge:            ('TopEdge',            'i', '..g'),
+        MUIA_VertDisappear:      ('VertDisappear',      'i', 'isg'),
+        MUIA_VertWeight:         ('VertWeight',         'i', 'isg'),
+        MUIA_Weight:             ('Weight',             'i', 'i..'),
+        MUIA_Width:              ('Width',              'i', '..g'),
+        MUIA_Window:             ('Window',             'p', '..g'),
+        MUIA_WindowObject:       ('WindowObject',       'M', '..g'),
+        }
+
+
+class Dtpic(Area):
+    CLASSID = MUIC_Dtpic
+    ATTRIBUTES = { MUIA_Dtpic_Name: ('Name', 's', 'isg') }
+
+    def __init__(self, Name, **kwds):
+        super(Dtpic, self).__init__(Name=Name, **kwds)
+
+
+class Rectangle(Area):
+    CLASSID = MUIC_Rectangle
+    ATTRIBUTES = {
+        MUIA_Rectangle_BarTitle: ('BarTitle', 's', 'i.g'),
+        MUIA_Rectangle_HBar:     ('HBar',     'b', 'i.g'),
+        MUIA_Rectangle_VBar:     ('VBar',     'b', 'i.g'),
+        }
+
+    # Factory class methods
+
+    @classmethod
+    def HVSpace(cl):
+        return cl()
+
+    @classmethod
+    def HSpace(cl, x):
+        return cl()
+
+    @classmethod
+    def VSpace(cl, x):
+        return cl()
+
+    @classmethod
+    def HCenter(cl, o):
+        g = Group.HGroup(Spacing=0)
+        g.AddChild((cl.HSpace(0), o, cl.HSpace(0)))
+        return g
+
+    @ classmethod
+    def VCenter(cl, o):
+        g = Group.VGroup(Spacing=0)
+        return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
+
+
+class Text(Area):
+    CLASSID = MUIC_Text
+    ATTRIBUTES = {
+        MUIA_Text_Contents:    ('Contents',       's', 'isg'),
+        MUIA_Text_ControlChar: ('ControlChar',    'c', 'isg'),
+        MUIA_Text_Copy:        ('MUIA_Text_Copy', 'b', 'isg'),
+        MUIA_Text_HiChar:      ('HiChar',         'c', 'isg'),
+        MUIA_Text_PreParse:    ('PreParse',       's', 'i..'),
+        MUIA_Text_SetMin:      ('SetMin',         'b', 'i..'),
+        MUIA_Text_SetVMax:     ('SetVMax',        'b', 'is.'),
+        MUIA_Text_Shorten:     ('Shorten',        'I', 'isg'),
+        MUIA_Text_Shortened:   ('Shortened',      'b', '..g'),
+        }
+
+    def __init__(self, Contents='', **kwds):
+        super(Text, self).__init__(Contents=Contents, **kwds)
+
+    # Factory class methods
+
+    @classmethod
+    def Button(cl, x, key=None):
+        kwds = dict(Contents=x,
+                    Font=MUIV_Font_Button,
+                    Frame=MUIV_Frame_Button,
+                    PreParse=MUIX_C,
+                    InputMode=MUIV_InputMode_RelVerify,
+                    Background=MUII_ButtonBack)
+        if key:
+            kwds['HiChar'] = key
+            kwds['ControlChar'] = key
+        return cl(**kwds)
+
+
+class Gadget(Area):
+    CLASSID = MUIC_Gadget
+
+    ATTRIBUTES = {
+        MUIA_Gadget_Gadget: ('Gadget',   'p', '..g'),
+    }
+
+
+class String(Gadget):
+    CLASSID = MUIC_String
+
+    ATTRIBUTES = {
+        MUIA_String_Accept:         ('Accept',   's', 'isg'),
+        MUIA_String_Acknowledge:    ('Acknowledge',   's', '..g'),
+        MUIA_String_AdvanceOnCR:    ('AdvanceOnCR',   'p', 'isg'),
+        MUIA_String_AttachedList:   ('AttachedList',   'M', 'isg'),
+        MUIA_String_BufferPos:      ('BufferPos',   'i', '.sg'),
+        MUIA_String_Contents:       ('Contents',   's', 'isg'),
+        MUIA_String_DisplayPos:     ('DisplayPos',   'i', '.sg'),
+        MUIA_String_EditHook:       ('EditHook',   'p', 'isg'),
+        MUIA_String_Format:         ('Format',   'i', 'i.g'),
+        MUIA_String_Integer:        ('Integer',   'I', 'isg'),
+        MUIA_String_LonelyEditHook: ('LonelyEditHook',   'p', 'isg'),
+        MUIA_String_MaxLen:         ('MaxLen',   'i', 'i.g'),
+        MUIA_String_Reject:         ('Reject',   's', 'isg'),
+        MUIA_String_Secret:         ('Secret',   'b', 'i.g'),
+    }
+
+
+class Group(Area):
+    CLASSID = MUIC_Group
+    ATTRIBUTES = {
+        MUIA_Group_ActivePage:   ('ActivePage',   'i', 'isg'),
+        MUIA_Group_Child:        ('Child',        'M', 'i..'),
+        MUIA_Group_ChildList:    ('ChildList',    'p', '..g'),
+        MUIA_Group_Columns:      ('Columns',      'i', 'is.'),
+        MUIA_Group_Horiz:        ('Horiz',        'b', 'i..'),
+        MUIA_Group_HorizSpacing: ('HorizSpacing', 'i', 'isg'),
+        MUIA_Group_LayoutHook:   ('LayoutHook',   'p', 'i..'),
+        MUIA_Group_PageMode:     ('PageMode',     'b', 'i..'),
+        MUIA_Group_Rows:         ('Rows',         'i', 'is.'),
+        MUIA_Group_SameHeight:   ('SameHeight',   'b', 'i..'),
+        MUIA_Group_SameSize:     ('SameSize',     'b', 'i..'),
+        MUIA_Group_SameWidth:    ('SameWidth',    'b', 'i..'),
+        MUIA_Group_Spacing:      ('Spacing',      'i', 'is.'),
+        MUIA_Group_VertSpacing:  ('VertSpacing',  'i', 'isg'),
+        }
+
+    def __init__(self, **kwds):
+        child = kwds.pop('Child', None)
+        
+        x = kwds.pop('Title', None)
+        if x:
+            kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
+
+        x = kwds.pop('InnerSpacing', None)
+        if x:
+            kwds.update(InnerLeft=x[0], InnerRight=x[0], InnerTop=x[1], InnerBottom=x[1])
+
+        super(Group, self).__init__(**kwds)
+
+        # Add RootObject PyMUIObject passed as argument
+        if child:
+            self.AddChild(*tuple(child))
+
+    def __add_child(self, child, lock):
+        if child not in self._children:
+            self._add(child, lock)
+            self._children.append(child)
+
+    def __rem_child(self, child, lock):
+        if child in self._children:
+            self._rem(child, lock)
+            self._children.remove(child)
+            
+    def AddChild(self, child, *children, **kwds):
+        lock = kwds.get('lock', False)
+        self.__add_child(child, lock)
+        for o in children:
+            self.__add_child(o, lock)
+
+    def RemChild(self, child, *children, **kwds):
+        lock = kwds.get('lock', False)
+        self.__rem_child(child, lock)
+        for o in children:
+            self.__rem_child(o, lock)
+
+    # Factory class methods
+
+    @classmethod
+    def HGroup(cl, **kwds):
+        kwds['Horiz'] = True
+        return cl(**kwds)
+
+    @classmethod
+    def VGroup(cl, **kwds):
+        kwds['Horiz'] = False
+        return cl(**kwds)
+
+    @classmethod
+    def ColGroup(cl, n, **kwds):
+        kwds['Columns'] = n
+        return cl(**kwds)
+
+    @classmethod
+    def RowGroup(cl, n, **kwds):
+        kwds['Rows'] = n
+        return cl(**kwds)
+
+
+class Coloradjust(Group):
+    CLASSID = MUIC_Coloradjust
+    ATTRIBUTES = {
+        MUIA_Coloradjust_Blue:   ('Blue',   'I', 'isg'),
+        MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
+        MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
+        MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
+        MUIA_Coloradjust_RGB:    ('RGB',    'p', 'isg'),
+    }
+
+
+#################################################################################
 
 
 if __name__ == "__main__":

@@ -151,6 +151,7 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 */
 
 #include <Python.h>
+#include <structmember.h>
 
 
 /*
@@ -182,7 +183,7 @@ extern void dprintf(char*fmt, ...);
 #endif
 
 #ifndef NDEBUG
-#define DPRINT(f, x...) ({ dprintf("\033[32m[%4u] %-25s: \033[0m", __LINE__, __FUNCTION__); dprintf(f ,##x); })
+#define DPRINT(f, x...) ({ dprintf("\033[32m[%4u:%-23s] \033[0m", __LINE__, __FUNCTION__); dprintf(f ,##x); })
 #define DRAWPRINT(f, x...) ({ dprintf(f ,##x); })
 #else
 #define DPRINT(f, x...)
@@ -262,7 +263,8 @@ typedef struct PyBOOPSIObject_STRUCT {
 
 
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject      base;
+    PyBOOPSIObject base;
+    PyObject *     children;
 } PyMUIObject;
 
 
@@ -342,8 +344,8 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
 
         Py_INCREF(pyo); /* to prevent that our object was deleted during methods calls */
 
-        DPRINT("Attribute %#lx set: PyObject %p, MUI=%p, value: %ld, %lu, %p\n",
-               attr, pyo, mo, (LONG)value, value, (APTR)value);
+        DPRINT("{%#lx} Py=%p-%s, MUI=%p, value=(%ld, %lu, %p)\n",
+               attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
 
 
         res = PyObject_CallMethod(pyo, "_notify_cb", "II", attr, value); /* NR */
@@ -449,6 +451,7 @@ attrs2tags(PyObject *self, PyObject *attrs)
 }
 //-
 
+
 /*******************************************************************************************
 ** PyBOOPSIObject_Type
 */
@@ -518,6 +521,8 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &classid, &attrs)) /* BR */
         return NULL;
+
+    DPRINT("ClassID: '%s'\n", classid);
 
     /* The Python object is needed before convertir the attributes dict into tagitem array */
     self->node->n_IsMUI = PyMUIObject_Check(self);
@@ -641,6 +646,8 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
 
     DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
     set(obj, attr, value);  
+
+    DPRINT("done\n");
     
     /* We handle Python exception here because set an attribute can call a notification
        that will raise an exception. In this case the set fails also. */
@@ -699,6 +706,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
      */
 
     ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
+    DPRINT("done\n");
 
     if (PyErr_Occurred())
         Py_CLEAR(ret);
@@ -730,6 +738,8 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
 
     ret = PyInt_FromLong(DoMethod(obj, meth, data));
 
+    DPRINT("done\n");
+
     if (PyErr_Occurred())
         Py_CLEAR(ret);
 
@@ -759,19 +769,24 @@ boopsi__add(PyBOOPSIObject *self, PyObject *args) {
     child = PyBOOPSIObject_OBJECT(pychild);
     PyBOOPSIObject_CHECK_OBJ(child);
 
-    DPRINT("OM_ADDMEMBER: parent=%p, obj=%p\n", obj, child);
-
     /* Warning: no reference kept on arg object after return ! */
 
-    if (lock)
+    if (lock) {
+        DPRINT("Lock\n");    
         DoMethod(obj, MUIM_Group_InitChange);
+    }
 
+    DPRINT("OM_ADDMEMBER: parent=%p, obj=%p\n", obj, child);         
     Py_INCREF(pychild);
     ret = PyInt_FromLong(DoMethod(obj, OM_ADDMEMBER, (ULONG)child));
     Py_DECREF(pychild);
-
-    if (lock)
+    
+    if (lock) {
+        DPRINT("Unlock\n");        
         DoMethod(obj, MUIM_Group_ExitChange);
+    }
+
+    DPRINT("done\n");
 
     if (PyErr_Occurred()) {
         Py_XDECREF(ret);
@@ -808,16 +823,22 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
 
     /* Warning: no reference kept on arg object after return ! */
 
-    if (lock)
+    if (lock) {
+        DPRINT("lock\n");
         DoMethod(obj, MUIM_Group_InitChange);
+    }
 
     Py_INCREF(pychild);
     ret = PyInt_FromLong(DoMethod(obj, OM_REMMEMBER, (ULONG)child));
     Py_DECREF(pychild);
 
-    if (lock)
+    if (lock) {
+        DPRINT("Unlock\n");
         DoMethod(obj, MUIM_Group_ExitChange);
+    }
 
+    DPRINT("done\n");
+    
     if (PyErr_Occurred()) {
         Py_XDECREF(ret);
         return NULL;
@@ -858,6 +879,40 @@ static PyTypeObject PyBOOPSIObject_Type = {
 ** MUIObject_Type
 */
 
+//+ muiobject_new
+static PyObject *
+muiobject_new(PyTypeObject *type, PyObject *args)
+{
+    PyMUIObject *self;
+
+    self = (PyMUIObject *)boopsi_new(type, args); /* NR */
+    if (NULL != self) {
+        self->children = PyList_New(0); /* NR */
+        if (NULL != self->children)
+            return (PyObject *)self;
+
+        Py_DECREF((PyObject *)self);
+    }
+
+    return NULL;
+}
+//-
+//+ muiobject_traverse
+static int
+muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->children);
+    return 0;
+}
+//-
+//+ muiobject_clear
+static int
+muiobject_clear(PyMUIObject *self)
+{
+    Py_CLEAR(self->children);
+    return 0;
+}
+//-
 //+ muiobject_dealloc
 static void
 muiobject_dealloc(PyMUIObject *self)
@@ -867,14 +922,17 @@ muiobject_dealloc(PyMUIObject *self)
     
     mo = PyBOOPSIObject_OBJECT(self);
     node = ((PyBOOPSIObject *)self)->node;
-    DPRINT("self=%p, obj=%p, node=%p\n", self, mo, node);
+    DPRINT("self=%p (%s): clear()\n", self, OBJ_TNAME(self));
 
+    muiobject_clear(self); 
+
+    DPRINT("self=%p (%s), obj=%p, node=%p: MUI dealloc\n", self, OBJ_TNAME(self), mo, node);
     if (NULL != mo) {
         free(REMOVE(node));
         
         if (!get(mo, MUIA_ApplicationObject, &app) || !get(mo, MUIA_Parent, &parent)) {
             DPRINT("unable to free object %p!\n", mo);
-            return;
+            goto end;
         }
 
         DPRINT("Object %p: app=%p, parent=%p\n", mo, app, parent);
@@ -892,6 +950,7 @@ muiobject_dealloc(PyMUIObject *self)
         }
     }
 
+end:
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
 //-
@@ -904,7 +963,8 @@ Like BOOPSIObject._set() but without triggering notification on MUI object.");
 /*! \endcond */
 
 static PyObject *
-muiobject__nnset(PyMUIObject *self, PyObject *args) {
+muiobject__nnset(PyMUIObject *self, PyObject *args)
+{
     Object *obj;
     PyObject *value_obj;
     ULONG attr;
@@ -921,6 +981,7 @@ muiobject__nnset(PyMUIObject *self, PyObject *args) {
 
     DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
     nnset(obj, attr, value);
+    DPRINT("done\n");
 
     Py_RETURN_NONE;
 }
@@ -934,7 +995,8 @@ Sorry, Not documented yet :-(");
 /*! \endcond */
 
 static PyObject *
-muiobject__notify(PyMUIObject *self, PyObject *args) {
+muiobject__notify(PyMUIObject *self, PyObject *args)
+{
     PyObject *trigvalue_obj;
     ULONG trigattr, trigvalue, value;
     Object *mo;
@@ -966,9 +1028,16 @@ muiobject__notify(PyMUIObject *self, PyObject *args) {
              MUIV_Notify_Self, 4,
              MUIM_CallHook, (ULONG)&OnAttrChangedHook, trigattr, value);
 
+    DPRINT("done\n");
+
     Py_RETURN_NONE;
 }
 //- muiobject__notify
+
+static PyMemberDef muiobject_members[] = {
+    {"_children", T_OBJECT, offsetof(PyMUIObject, children), RO, NULL},
+    {NULL, NULL} /* sentinel */
+};
 
 static struct PyMethodDef muiobject_methods[] = {
     {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
@@ -982,11 +1051,16 @@ static PyTypeObject PyMUIObject_Type = {
     tp_base         : &PyBOOPSIObject_Type,
     tp_name         : "_muimaster.PyMUIObject",
     tp_basicsize    : sizeof(PyMUIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
+
+    tp_new          : (newfunc)muiobject_new,
+    tp_traverse     : (traverseproc)muiobject_traverse,
+    tp_clear        : (inquiry)muiobject_clear,
 
     tp_dealloc      : (destructor)muiobject_dealloc,
     tp_methods      : muiobject_methods,
+    tp_members      : muiobject_members,
 };
 
 
@@ -1063,6 +1137,7 @@ static PyMethodDef _muimaster_methods[] = {
 void
 PyMorphOS_CloseModule(void) {
     CreatedObjectNode *node, *next;
+    Object* keep_app = NULL;
 
     DPRINT("Closing module...\n");
 
@@ -1076,11 +1151,15 @@ PyMorphOS_CloseModule(void) {
 
                 if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
                     DPRINT("  app=%p, parent=%p\n", app, parent);
-                    if ((obj == app) || ((NULL == app) && (NULL == parent))) {
-                        DPRINT("  Disposing...\n");
-                        MUI_DisposeObject(obj);
-                    } else
-                        DPRINT("  Used!\n");
+                    if (obj == app)
+                        keep_app = app;
+                    else {
+                        if ((NULL == app) && (NULL == parent)) {
+                            DPRINT("  Disposing...\n");
+                            MUI_DisposeObject(obj);
+                        } else
+                            DPRINT("  Used!\n");
+                    }
                 } else
                     DPRINT("  dad object!\n");
             } else {
@@ -1092,7 +1171,13 @@ PyMorphOS_CloseModule(void) {
         free(node);
     }
 
+    if (NULL != keep_app) {
+        DPRINT("Disposing application...\n");
+        MUI_DisposeObject(keep_app);
+    }
+
     if (NULL != MUIMasterBase) {
+        DPRINT("Closing muimaster library...\n");
         CloseLibrary(MUIMasterBase);
         MUIMasterBase = NULL;
     }
