@@ -2,18 +2,21 @@
 
 from pymui import *
 
-button = Text(attributes=((MUIA_Text_Contents, MUIX_C + "Ok"),
-                          (MUIA_Background,    MUII_ButtonBack),
-                          (MUIA_InputMode,     MUIV_InputMode_RelVerify),
-                          (MUIA_Frame,         MUIV_Frame_Button),
-                          (MUIA_Font,          MUIV_Font_Button),
-                          ))
+button = Text(MUIX_C + "Ok",
+              Background = MUII_ButtonBack,
+              InputMode  = MUIV_InputMode_RelVerify,
+              Frame      = MUIV_Frame_Button,
+              Font       = MUIV_Font_Button)
 
-win = Window(attributes=((MUIA_Window_Title,      "HelloWorld window"),
-                         (MUIA_Window_LeftEdge,   MUIV_Window_LeftEdge_Moused),
-                         (MUIA_Window_TopEdge,    MUIV_Window_TopEdge_Moused),
-                         (MUIA_Window_RootObject, button),
-                         ))
+color = Coloradjust(Red=0x45454545, Green=0xffffffff)
+g = Group.VGroup(Child=(button, color))
+
+win = Window("HelloWorld window",
+             LeftEdge   = MUIV_Window_LeftEdge_Moused,
+             TopEdge    = MUIV_Window_TopEdge_Moused,
+             RootObject = g,
+             Width      = 320,
+             Height     = 240)
 
 app = Application()
 app.AddWindow(win)
@@ -21,5 +24,9 @@ app.AddWindow(win)
 win.Notify(MUIA_Window_CloseRequest, MUIV_EveryTime, app.Quit)
 win.Open()
 
-app.Run()
+print color.RGB
+color.RGB = (0x31323334, 0x31323334, 0x31323334)
+print tuple(hex(x) for x in color.RGB)
 
+app.Run()
+del app

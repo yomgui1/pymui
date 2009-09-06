@@ -566,6 +566,7 @@ The value returned by GetAttr() is converted by Py_BuildValue() using given form
 static PyObject *
 boopsi__get(PyBOOPSIObject *self, PyObject *args)
 {
+    PyObject *format_obj;
     Object *obj;
     ULONG attr;
     ULONG value;
@@ -574,47 +575,126 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     obj = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(obj);
  
-    if (!PyArg_ParseTuple(args, "Ic:_get", &attr, &format[0])) /* BR */
+    if (!PyArg_ParseTuple(args, "IO:_get", &attr, &format_obj)) /* BR */
         return NULL;
 
-    DPRINT("attr: 0x%08x, format='%c'\n", attr, format[0]);
-
+    DPRINT("MUI=%p (%s), attr=0x%08x\n", obj, OBJ_TNAME(self), attr);
     if (!GetAttr(attr, obj, &value))
         return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08lx) failed", attr);
+    DPRINT("value=(%d, %u, 0x%08lx)\n", (LONG)value, value, value);
 
-    DPRINT("value: %d %u 0x%08lx\n", (LONG)value, value, value);
+    /* Format: Convertor class instance or char */
+    if (PyString_CheckExact(format_obj) && (PyString_GET_SIZE(format_obj) == 1)) {
+        format[0] = PyString_AS_STRING(format_obj)[0];
+        
+        DPRINT("Converting to format='%c'...\n", format[0]);
+        /* Convert value into the right Python object */
+        switch (format[0]) {
+            case 'M':
+                return PyMUIObjectFromObject((Object *)value);
 
-    /* Convert value into the right Python object */
-    switch (format[0]) {
-        case 'M':
-            return PyMUIObjectFromObject((Object *)value);
+            case 'p':
+                return (PyObject *)PyCObject_FromVoidPtr((APTR)value, NULL);
 
-        case 'p':
-            return (PyObject *)PyCObject_FromVoidPtr((APTR)value, NULL);
+            case 'b':
+                if (value) {
+                    Py_RETURN_TRUE;
+                } else {
+                    Py_RETURN_FALSE;
+                }
+                break;
 
-        case 'b':
-            if (value) {
-                Py_RETURN_TRUE;
-            } else {
-                Py_RETURN_FALSE;
+            case 's':
+            case 'z':
+            case 'u':
+            case 'i':
+            case 'I':
+            case 'k':
+            case 'n':
+            case 'c':
+                format[1] = '\0';
+                return Py_BuildValue(format, value);
+
+            default:
+                PyErr_Format(PyExc_ValueError, "Unsupported format: '%c'.", format[0]);
+        }
+
+        return NULL;
+    } else {
+        PyObject *res;      
+
+        /* Array of pointers of fixed size */
+        if (PyObject_HasAttrString(format_obj, "pointer_base")) {
+            int i, n;
+            char *ptr = (APTR)value;
+            char format;
+
+            res = PyObject_GetAttrString(format_obj, "pointer_base"); /* NR */
+            if (NULL == res)
+                return NULL;
+
+            if (!PyString_CheckExact(res) || (PyString_GET_SIZE(res) != 1)) {
+                PyErr_SetString(PyExc_TypeError, "convertor.pointer_base shall be a string of one character.");
+                return NULL;
             }
-            break;
 
-        case 's':
-        case 'z':
-        case 'u':
-        case 'i':
-        case 'I':
-        case 'k':
-        case 'n':
-        case 'c':
-            format[1] = '\0';
-            return Py_BuildValue(format, value);
+            format = PyString_AS_STRING(res)[0];
+            Py_DECREF(res);
 
-        default:
-            PyErr_Format(PyExc_ValueError, "Unsupported format: '%c'.", format[0]);
+            if (!PyObject_HasAttrString(format_obj, "size")) {
+                PyErr_SetString(PyExc_TypeError, "ArrayOf instance without size attribute!");
+                return NULL;
+            }
+
+            res = PyObject_GetAttrString(format_obj, "size"); /* NR */
+            if (NULL == res)
+                return NULL;
+
+            if (!PyInt_CheckExact(res))
+                return PyErr_Format(PyExc_TypeError, "convertor.size shall be a int not %s.", OBJ_TNAME(res));
+
+            i = PyInt_AS_LONG(res);
+            Py_DECREF(res);
+
+            DPRINT("Converting %u pointer(s) into tuple of %c...\n", i, format);
+
+            res = PyTuple_New(i); /* NR */
+            if (NULL == res)
+                return NULL;
+
+            for (n=0; n < i; n++) {
+                PyObject *o;
+                
+                switch (format) {
+                    case 'I':
+                        DPRINT("  %-04u: 0x%08x\n", n, *(ULONG *)ptr);
+                        o = PyLong_FromUnsignedLong(*(ULONG *)ptr); /* NR */
+                        ptr += sizeof(ULONG);
+                        break;
+                
+                    default:
+                        o = NULL;
+                }
+
+                if (NULL == o) {
+                    Py_DECREF(res);
+                    return NULL;
+                }
+
+                PyTuple_SET_ITEM(res, n, o); /* Steals a reference */
+            }
+            
+            return res;
+        }
+
+        DPRINT("Converting using get method on object at %p\n", format_obj);
+        Py_INCREF(format_obj);
+        res = PyObject_CallMethod(format_obj, "get", "s", value); /* NR */
+        Py_DECREF(format_obj);
+        return res;
     }
 
+    PyErr_SetString(PyExc_TypeError, "Format shall be an instance of convertor class or a single character string.");
     return NULL;
 }
 //-
@@ -631,21 +711,45 @@ Note: No reference kept on the given value object!");
 static PyObject *
 boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     Object *obj;
-    PyObject *value_obj;
+    PyObject *value_obj, *convertor = NULL;
     ULONG attr;
     ULONG value;
 
     obj = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(obj);
 
-    if (!PyArg_ParseTuple(args, "IO:_set", &attr, &value_obj)) /* BR */
+    if (!PyArg_ParseTuple(args, "IO|O:_set", &attr, &value_obj, &convertor)) /* BR */
         return NULL;
     
-    if (!python2long((PyObject *)value_obj, &value))
-        return NULL;
+    if (NULL == convertor) {
+        if (!python2long((PyObject *)value_obj, &value))
+            return NULL;
 
-    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
-    set(obj, attr, value);  
+        DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+        set(obj, attr, value);
+    } else  {
+        PyObject *res;
+        
+        Py_INCREF(value_obj);
+        res = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
+        Py_DECREF(value_obj);
+
+        if (NULL == res)
+            return res;
+
+        if (!PyString_CheckExact(res)) {
+            PyErr_Format(PyExc_TypeError, "convertor.set() shall return a str not %s.", OBJ_TNAME(res));
+            Py_DECREF(res);
+            return NULL;
+        }
+
+        value = (ULONG)PyString_AS_STRING(res);
+
+        DPRINT("Attr 0x%lx set to pointer %p on BOOPSI obj @ %p\n", attr, value, obj);
+        set(obj, attr, value);
+  
+        Py_DECREF(res);
+    }
 
     DPRINT("done\n");
     

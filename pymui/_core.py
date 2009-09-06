@@ -62,6 +62,16 @@ class AttributeInfo:
     isset = property(fget=lambda self: 's' in self._isg)
     isget = property(fget=lambda self: 'g' in self._isg)
 
+import array
+
+class ArrayOf(object):
+    def __init__(self, itemtype, size=0):
+        self.pointer_base = str(itemtype)[0]
+        self.size = size
+
+    def set(self, obj):
+        return array.array(self.pointer_base, obj).tostring()
+
 
 ##
 ## MetaMCC takes some predefined class attributes and use it to fill the class dict
@@ -127,7 +137,7 @@ class BoopsiWrapping:
             inf = cl._id_attrs.get(attr)
             
         if inf != None:
-            if mode in inf.mode:
+            if [True for c in mode if c in inf.mode]:
                 return inf
             raise SyntaxError("Attribute %s can't be used for this action" % inf.name)
 
@@ -156,8 +166,12 @@ class BoopsiWrapping:
 
     def Set(self, attr, value):
         inf = self._check_attr(attr, 's')
-        self._set(inf.value, value)
-        return self._keep(inf.value, value, inf.format[0])
+        if isinstance(inf.format, str):
+            self._set(inf.value, value)
+            return self._keep(inf.value, value, inf.format[0]) 
+        else:
+            self._set(inf.value, value, inf.format)
+            return self._keep(inf.value, value, 'p')
 
     def DoMethod(self, attr, *args):
         """DoMethod(attr, *args) -> int
@@ -221,7 +235,7 @@ class Notify(PyMUIObject, BoopsiWrapping):
                 return
 
     def Notify(self, attr, trigvalue, callback, *args):
-        attr = self._check_attr(attr, 'g').value
+        attr = self._check_attr(attr, 'sg').value
         l = self._notify_cbdict.get(attr, [])
         l.append((callback, map(weakref.ref, args)))
         self._notify_cbdict.setdefault(attr, l)
@@ -501,6 +515,7 @@ class Text(Area):
         MUIA_Text_Copy:        ('MUIA_Text_Copy', 'b', 'isg'),
         MUIA_Text_HiChar:      ('HiChar',         'c', 'isg'),
         MUIA_Text_PreParse:    ('PreParse',       's', 'i..'),
+        MUIA_Text_SetMax:      ('SetMax',         'b', 'i..'),
         MUIA_Text_SetMin:      ('SetMin',         'b', 'i..'),
         MUIA_Text_SetVMax:     ('SetVMax',        'b', 'is.'),
         MUIA_Text_Shorten:     ('Shorten',        'I', 'isg'),
@@ -538,20 +553,20 @@ class String(Gadget):
     CLASSID = MUIC_String
 
     ATTRIBUTES = {
-        MUIA_String_Accept:         ('Accept',   's', 'isg'),
-        MUIA_String_Acknowledge:    ('Acknowledge',   's', '..g'),
-        MUIA_String_AdvanceOnCR:    ('AdvanceOnCR',   'p', 'isg'),
-        MUIA_String_AttachedList:   ('AttachedList',   'M', 'isg'),
-        MUIA_String_BufferPos:      ('BufferPos',   'i', '.sg'),
-        MUIA_String_Contents:       ('Contents',   's', 'isg'),
-        MUIA_String_DisplayPos:     ('DisplayPos',   'i', '.sg'),
-        MUIA_String_EditHook:       ('EditHook',   'p', 'isg'),
-        MUIA_String_Format:         ('Format',   'i', 'i.g'),
-        MUIA_String_Integer:        ('Integer',   'I', 'isg'),
-        MUIA_String_LonelyEditHook: ('LonelyEditHook',   'p', 'isg'),
-        MUIA_String_MaxLen:         ('MaxLen',   'i', 'i.g'),
-        MUIA_String_Reject:         ('Reject',   's', 'isg'),
-        MUIA_String_Secret:         ('Secret',   'b', 'i.g'),
+        MUIA_String_Accept:         ('Accept',          's', 'isg'),
+        MUIA_String_Acknowledge:    ('Acknowledge',     's', '..g'),
+        MUIA_String_AdvanceOnCR:    ('AdvanceOnCR',     'p', 'isg'),
+        MUIA_String_AttachedList:   ('AttachedList',    'M', 'isg'),
+        MUIA_String_BufferPos:      ('BufferPos',       'i', '.sg'),
+        MUIA_String_Contents:       ('Contents',        's', 'isg'),
+        MUIA_String_DisplayPos:     ('DisplayPos',      'i', '.sg'),
+        MUIA_String_EditHook:       ('EditHook',        'p', 'isg'),
+        MUIA_String_Format:         ('Format',          'i', 'i.g'),
+        MUIA_String_Integer:        ('Integer',         'I', 'isg'),
+        MUIA_String_LonelyEditHook: ('LonelyEditHook',  'p', 'isg'),
+        MUIA_String_MaxLen:         ('MaxLen',          'i', 'i.g'),
+        MUIA_String_Reject:         ('Reject',          's', 'isg'),
+        MUIA_String_Secret:         ('Secret',          'b', 'i.g'),
     }
 
 
@@ -589,7 +604,10 @@ class Group(Area):
 
         # Add RootObject PyMUIObject passed as argument
         if child:
-            self.AddChild(*tuple(child))
+            if hasattr(child, '__iter__'):
+                self.AddChild(*child)
+            else:
+                self.AddChild(child)
 
     def __add_child(self, child, lock):
         if child not in self._children:
@@ -641,7 +659,7 @@ class Coloradjust(Group):
         MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
         MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
-        MUIA_Coloradjust_RGB:    ('RGB',    'p', 'isg'),
+        MUIA_Coloradjust_RGB:    ('RGB',    ArrayOf('I', 3), 'isg'),
     }
 
 
