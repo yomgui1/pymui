@@ -165,8 +165,8 @@ class BoopsiWrapping:
         WARNING: this method doesn't keep reference on object given in args!
         User shall take care of this or the system may crash...
         """
-        inf = self._check_attr(attr, 's')
-        return self._do(inf.value, args)
+        #inf = self._check_attr(attr, 's')
+        return self._do(attr, args)
 
 
 class Notify(PyMUIObject, BoopsiWrapping):
@@ -455,7 +455,7 @@ class Dtpic(Area):
     CLASSID = MUIC_Dtpic
     ATTRIBUTES = { MUIA_Dtpic_Name: ('Name', 's', 'isg') }
 
-    def __init__(self, Name, **kwds):
+    def __init__(self, Name='', **kwds):
         super(Dtpic, self).__init__(Name=Name, **kwds)
 
 
@@ -601,15 +601,13 @@ class Group(Area):
             self._rem(child, lock)
             self._children.remove(child)
             
-    def AddChild(self, child, *children, **kwds):
+    def AddChild(self, *children, **kwds):
         lock = kwds.get('lock', False)
-        self.__add_child(child, lock)
         for o in children:
             self.__add_child(o, lock)
 
-    def RemChild(self, child, *children, **kwds):
+    def RemChild(self, *children, **kwds):
         lock = kwds.get('lock', False)
-        self.__rem_child(child, lock)
         for o in children:
             self.__rem_child(o, lock)
 
