@@ -159,6 +159,7 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 */
 
 #include <clib/debug_protos.h>
+#include <cybergraphx/cybergraphics.h>
 
 #include <proto/alib.h>
 #include <proto/exec.h>
@@ -166,6 +167,8 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 #include <proto/intuition.h>
 #include <proto/utility.h>
 #include <proto/muimaster.h>
+#include <proto/cybergraphics.h>
+
 
 extern void dprintf(char*fmt, ...);
 
@@ -255,16 +258,22 @@ typedef struct CreatedObjectNode_STRUCT {
     BOOL           n_IsMUI;
 } CreatedObjectNode;
 
+typedef struct PyRasterObject_STRUCT {
+    PyObject_HEAD
+
+    struct RastPort *rp;
+} PyRasterObject;
+
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
 
     CreatedObjectNode * node;
 } PyBOOPSIObject;
 
-
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject base;
-    PyObject *     children;
+    PyBOOPSIObject   base;
+    PyObject *       children;
+    PyRasterObject * raster;
 } PyMUIObject;
 
 
@@ -272,16 +281,14 @@ typedef struct PyMUIObject_STRUCT {
 ** Private Variables
 */
 
+static struct Library *MUIMasterBase;
+static struct Library *CyberGfxBase;
+
 static struct Hook OnAttrChangedHook;
+static PyTypeObject PyRasterObject_Type;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static struct MinList gCreatedObjectList;
-
-/*
-** Public Variables
-*/
-
-struct Library *MUIMasterBase;
 
 
 /*
@@ -992,8 +999,11 @@ muiobject_new(PyTypeObject *type, PyObject *args)
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
         self->children = PyList_New(0); /* NR */
-        if (NULL != self->children)
-            return (PyObject *)self;
+        if (NULL != self->children) {
+            self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
+            if (NULL != self->raster)
+                return (PyObject *)self;
+        }
 
         Py_DECREF((PyObject *)self);
     }
@@ -1006,6 +1016,7 @@ static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->children);
+    Py_VISIT(self->raster);
     return 0;
 }
 //-
@@ -1014,6 +1025,7 @@ static int
 muiobject_clear(PyMUIObject *self)
 {
     Py_CLEAR(self->children);
+    Py_CLEAR(self->raster);
     return 0;
 }
 //-
@@ -1137,6 +1149,28 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //- muiobject__notify
+//+ muiobject__get_raster
+/*! \cond */
+PyDoc_STRVAR(muiobject__get_raster_doc,
+"_get_raster() -> PyRasterObject\n\
+\n\
+Return a PyRasterObject set with the current RastPort of the MUI object.");
+/*! \endcond */
+
+static PyObject *
+muiobject__get_raster(PyMUIObject *self)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    self->raster->rp = _rp(mo);
+    Py_INCREF((PyObject *)self->raster);
+
+    return (PyObject *)self->raster;
+}
+//- muiobject__notify
 
 static PyMemberDef muiobject_members[] = {
     {"_children", T_OBJECT, offsetof(PyMUIObject, children), RO, NULL},
@@ -1144,8 +1178,9 @@ static PyMemberDef muiobject_members[] = {
 };
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
-    {"_notify", (PyCFunction) muiobject__notify, METH_VARARGS, muiobject__notify_doc},
+    {"_nnset",      (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
+    {"_notify",     (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
+    {"_get_raster", (PyCFunction) muiobject__get_raster, METH_NOARGS,  muiobject__get_raster_doc},
     {NULL, NULL} /* sentinel */
 };
 
@@ -1168,7 +1203,79 @@ static PyTypeObject PyMUIObject_Type = {
 };
 
 
-/*
+/*******************************************************************************************
+** RasterObject_Type
+*/
+
+//+ raster_dealloc
+static void
+raster_dealloc(PyRasterObject *self)
+{
+    self->rp = NULL;
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+//+ raster_scaled_blit8
+/*! \cond */
+PyDoc_STRVAR(raster_scaled_blit8_doc,
+"ScaleBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
+\n\
+Blit given RGBA-8 buffer on the raster. If src and dst size are different,\n\
+performs a scaling before blitting at given raster position.\n\
+\n\
+src_w: source rectangle width.\n\
+src_h: source rectangle height.\n\
+dst_x: destination position on X-axis in the raster.\n\
+dst_y: destination position on Y-axis in the raster.\n\
+dst_w: destination width.\n\
+dst_h: destination height.\n\
+");
+/*! \endcond */
+
+static PyObject *
+raster_scaled_blit8(PyRasterObject *self, PyObject *args)
+{
+    APTR lock;
+    char *buf;
+    UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+    int buf_size;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s#HHHHHH:ScaledBlit8", &buf, &buf_size,
+                          &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
+        return NULL;
+
+    lock = LockBitMapTags(self->rp->BitMap);
+    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGBA);
+    UnLockBitMap(lock);
+
+    Py_RETURN_NONE;
+}
+//-
+
+static struct PyMethodDef raster_methods[] = {
+    {"ScaledBlit8",  (PyCFunction) raster_scaled_blit8,  METH_VARARGS, raster_scaled_blit8_doc},
+    {NULL, NULL} /* sentinel */
+};
+
+static PyTypeObject PyRasterObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.PyRasterObject",
+    tp_basicsize    : sizeof(PyRasterObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_doc          : "Raster Objects",
+
+    tp_dealloc      : (destructor)raster_dealloc,
+    tp_methods      : raster_methods,
+};
+
+
+/*******************************************************************************************
 ** Module Functions
 **
 ** List of functions exported by this module reside here
@@ -1280,6 +1387,12 @@ PyMorphOS_CloseModule(void) {
         MUI_DisposeObject(keep_app);
     }
 
+    if (NULL != CyberGfxBase) {
+        DPRINT("Closing cybergfx library...\n");
+        CloseLibrary(CyberGfxBase);
+        CyberGfxBase = NULL;
+    }
+
     if (NULL != MUIMasterBase) {
         DPRINT("Closing muimaster library...\n");
         CloseLibrary(MUIMasterBase);
@@ -1311,7 +1424,11 @@ INITFUNC(void) {
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL == MUIMasterBase) return;
 
+    CyberGfxBase = OpenLibrary("cybergfx.library", 50);
+    if (NULL == CyberGfxBase) return;
+
     /* New Python types initialization */
+    if (PyType_Ready(&PyRasterObject_Type) < 0) return;
     if (PyType_Ready(&PyBOOPSIObject_Type) < 0) return;
     if (PyType_Ready(&PyMUIObject_Type) < 0) return;
 
