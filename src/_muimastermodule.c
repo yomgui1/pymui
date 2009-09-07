@@ -1171,17 +1171,99 @@ muiobject__get_raster(PyMUIObject *self)
     return (PyObject *)self->raster;
 }
 //- muiobject__notify
+//+ muiobject_get_mleft
+static PyObject *
+muiobject_get_mleft(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mleft(mo));
+}
+//-
+//+ muiobject_get_mright
+static PyObject *
+muiobject_get_mright(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mright(mo));
+}
+//-
+//+ muiobject_get_mtop
+static PyObject *
+muiobject_get_mtop(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mtop(mo));
+}
+//-
+//+ muiobject_get_mbottom
+static PyObject *
+muiobject_get_mbottom(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mbottom(mo));
+}
+//-
+//+ muiobject_get_mwidth
+static PyObject *
+muiobject_get_mwidth(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mwidth(mo));
+}
+//-
+//+ muiobject_get_mheight
+static PyObject *
+muiobject_get_mheight(PyObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    return PyInt_FromLong(_mheight(mo));
+}
+//-
+
+static PyGetSetDef muiobject_getseters[] = {
+    {"mleft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
+    {"mright",  (getter)muiobject_get_mright,  NULL, "_mright(obj)",  NULL},
+    {"mtop",    (getter)muiobject_get_mtop,    NULL, "_mtop(obj)",    NULL},
+    {"mbottom", (getter)muiobject_get_mbottom, NULL, "_mbottom(obj)", NULL},
+    {"mwidth",  (getter)muiobject_get_mwidth,  NULL, "_mwidth(obj)",  NULL},
+    {"mheight", (getter)muiobject_get_mheight, NULL, "_mheight(obj)", NULL},
+    {NULL} /* sentinel */
+};
 
 static PyMemberDef muiobject_members[] = {
     {"_children", T_OBJECT, offsetof(PyMUIObject, children), RO, NULL},
-    {NULL, NULL} /* sentinel */
+    {NULL} /* sentinel */
 };
 
 static struct PyMethodDef muiobject_methods[] = {
     {"_nnset",      (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
     {"_notify",     (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
     {"_get_raster", (PyCFunction) muiobject__get_raster, METH_NOARGS,  muiobject__get_raster_doc},
-    {NULL, NULL} /* sentinel */
+    {NULL} /* sentinel */
 };
 
 static PyTypeObject PyMUIObject_Type = {
@@ -1200,6 +1282,7 @@ static PyTypeObject PyMUIObject_Type = {
     tp_dealloc      : (destructor)muiobject_dealloc,
     tp_methods      : muiobject_methods,
     tp_members      : muiobject_members,
+    tp_getset       : muiobject_getseters,
 };
 
 
@@ -1249,7 +1332,7 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
                           &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    lock = LockBitMapTags(self->rp->BitMap);
+    lock = LockBitMapTags(self->rp->BitMap, TAG_DONE);
     ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGBA);
     UnLockBitMap(lock);
 
@@ -1422,10 +1505,16 @@ INITFUNC(void) {
     NEWLIST(&gCreatedObjectList);
 
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
-    if (NULL == MUIMasterBase) return;
+    if (NULL == MUIMasterBase) {
+        DPRINT("Can't open library %s, V%u.\n", MUIMASTER_NAME, MUIMASTER_VLATEST);
+        return;
+    }
 
-    CyberGfxBase = OpenLibrary("cybergfx.library", 50);
-    if (NULL == CyberGfxBase) return;
+    CyberGfxBase = OpenLibrary("cybergraphics.library", 50);
+    if (NULL == CyberGfxBase) {
+        DPRINT("Can't open library %s, V%u.\n", "cybergraphics.library", 50);
+        return;
+    }
 
     /* New Python types initialization */
     if (PyType_Ready(&PyRasterObject_Type) < 0) return;
