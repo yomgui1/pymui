@@ -512,6 +512,22 @@ class Rectangle(Area):
         return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
 
 
+class Bitmap(Area):
+    CLASSID = MUIC_Bitmap
+    ATTRIBUTES = {
+        MUIA_Bitmap_Alpha:          ('Alpha',           'I', 'isg'),
+        MUIA_Bitmap_Bitmap:         ('Bitmap',          'p', 'isg'),
+        MUIA_Bitmap_Height:         ('Height',          'i', 'isg'),
+        MUIA_Bitmap_MappingTable:   ('MappingTable',    'p', 'isg'),
+        MUIA_Bitmap_Precision:      ('Precision',       'i', 'isg'),
+        MUIA_Bitmap_RemappedBitmap: ('RemappedBitmap',  'p', '..g'),
+        MUIA_Bitmap_SourceColors:   ('SourceColors',    'p', 'isg'),
+        MUIA_Bitmap_Transparent:    ('Transparent',     'i', 'isg'),
+        MUIA_Bitmap_UseFriend:      ('UseFriend',       'b', 'i..'),
+        MUIA_Bitmap_Width:          ('Width',           'i', 'isg'),
+        }
+
+
 class Text(Area):
     CLASSID = MUIC_Text
     ATTRIBUTES = {

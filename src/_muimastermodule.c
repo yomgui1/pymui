@@ -744,7 +744,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
 
     DPRINT("MUI=%p (%s), attr=0x%08x\n", obj, OBJ_TNAME(self), attr);
     if (!GetAttr(attr, obj, &value))
-        return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08lx) failed", attr);
+        return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08x) failed", (int)attr);
     DPRINT("value=(%d, %u, 0x%08lx)\n", (LONG)value, value, value);
 
     /* Format: Convertor class instance or char */
