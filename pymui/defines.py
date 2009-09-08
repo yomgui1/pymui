@@ -924,3 +924,6 @@ MUIV_Textinput_Format_Centre             = 1
 MUIV_Textinput_Format_Right              = 2
 MUIV_Textinput_Font_Normal               = 0
 MUIV_Textinput_Font_Fixed                = 1
+
+MADF_DRAWOBJECT = (1<< 0) # completely redraw yourself
+MADF_DRAWUPDATE = (1<< 1) # only update yourself

@@ -13,6 +13,10 @@ vars_to_change = { 'MUIV_Application_Save_ENV':      0,
                    'MUIV_Application_Load_ENVARC':   -1,
                    'MUIV_Textinput_NoMark':          -1,
                    }
+to_add = """
+MADF_DRAWOBJECT = (1<< 0) # completely redraw yourself
+MADF_DRAWUPDATE = (1<< 1) # only update yourself
+"""
 
 def parse(lines):
     attrs = []
@@ -55,6 +59,7 @@ try:
         fd.write("%-40s = %s\n" % t)
     for t in v:
         fd.write("%-40s = %s\n" % t)
+    fd.write(to_add);
 except:
     fd.close()
     os.remove(output)

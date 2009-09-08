@@ -207,13 +207,18 @@ class Notify(PyMUIObject, BoopsiWrapping):
         self._keep_dict = {}
         self._notify_cbdict = {} 
         
+        if kwds.pop('MCC', False):
+            superid = self.__class__.__bases__[0]._classid
+        else:
+            superid = None
+
         if 'attributes' in kwds:
             attrs = [(self._check_attr(k, 'i'), v) for k,v in kwds.pop('attributes')]
         else:
             attrs = []
         attrs += [(self._check_attr(k, 'i'), v) for k,v in kwds.iteritems()]
-        
-        self._create(self._classid, ((inf.value,v) for inf,v in attrs))
+
+        self._create(self._classid, superid, ((inf.value,v) for inf,v in attrs))
         
         for inf,v in attrs:
             self._keep(inf.value, v, inf.format[0])
@@ -501,7 +506,7 @@ class Rectangle(Area):
         g.AddChild((cl.HSpace(0), o, cl.HSpace(0)))
         return g
 
-    @ classmethod
+    @classmethod
     def VCenter(cl, o):
         g = Group.VGroup(Spacing=0)
         return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))

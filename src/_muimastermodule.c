@@ -201,6 +201,15 @@ extern void dprintf(char*fmt, ...);
 #define MAX(a, b) ({typeof(a)_a=(a);typeof(b)_b=(b);_a<_b?_b:_a;})
 #endif
 
+#ifndef DISPATCHER
+#define DISPATCHER(Name) \
+static ULONG Name##_Dispatcher(void); \
+static struct EmulLibEntry GATE ##Name##_Dispatcher = { TRAP_LIB, 0, (void (*)(void)) Name##_Dispatcher }; \
+static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0; Msg msg=(Msg)REG_A1; Object *obj=(Object*)REG_A2;
+#define DISPATCHER_REF(Name) &GATE##Name##_Dispatcher
+#define DISPATCHER_END }
+#endif
+
 #define INIT_HOOK(h, f) { struct Hook *_h = (struct Hook *)(h); \
     _h->h_Entry = (APTR) HookEntry; \
     _h->h_SubEntry = (APTR) (f); }
@@ -253,10 +262,16 @@ typedef struct DoMsg_STRUCT {
 } DoMsg;
 
 typedef struct CreatedObjectNode_STRUCT {
-    struct MinNode n_Node;
-    Object *       n_Object;
-    BOOL           n_IsMUI;
+    struct MinNode           n_Node;
+    Object *                 n_Object;
+    BOOL                     n_IsMUI;
+    struct MUI_CustomClass * n_MCC; 
 } CreatedObjectNode;
+
+typedef struct CreatedMCCNode_STRUCT {
+    struct MinNode           n_Node;
+    struct MUI_CustomClass * n_MCC;
+} CreatedMCCNode;
 
 typedef struct PyRasterObject_STRUCT {
     PyObject_HEAD
@@ -276,6 +291,10 @@ typedef struct PyMUIObject_STRUCT {
     PyRasterObject * raster;
 } PyMUIObject;
 
+typedef struct MCCData_STRUCT {
+    PyObject *PythonObject;
+} MCCData;
+
 
 /*
 ** Private Variables
@@ -289,6 +308,7 @@ static PyTypeObject PyRasterObject_Type;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static struct MinList gCreatedObjectList;
+static struct MinList gCreatedMCCList;
 
 
 /*
@@ -460,6 +480,95 @@ attrs2tags(PyObject *self, PyObject *attrs)
 
 
 /*******************************************************************************************
+** MCC MUI Object
+*/
+
+//+ mSetup
+static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+    ULONG result;
+
+    if (!DoSuperMethodA(cl, obj, msg))
+        return FALSE;
+
+    pyo = data->PythonObject;
+    DPRINT("pyo=%p\n", pyo);
+    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Setup"))
+        return TRUE;
+
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Setup", NULL); /* NR */
+    if (NULL != res)
+        result = PyInt_AsLong(res);
+    else
+        result = TRUE;
+    Py_XDECREF(res);
+    Py_DECREF(pyo);
+
+    return result;
+}
+//-
+//+ mCleanup
+static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+
+    pyo = data->PythonObject;
+    DPRINT("obj=%p, pyo=%p\n", obj, pyo);
+    if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Cleanup")) {
+        Py_INCREF(pyo);
+        res = PyObject_CallMethod((PyObject *)pyo, "MCC_Cleanup", NULL); /* NR */
+        Py_XDECREF(res);
+        Py_DECREF(pyo);
+    }
+
+    return DoSuperMethodA(cl, obj, msg);
+}
+//-
+//+ mDraw
+static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+
+    DoSuperMethodA(cl, obj, msg);
+
+    pyo = data->PythonObject;
+    DPRINT("pyo=%p\n", pyo);
+    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
+        return 0;
+
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Draw", "I", msg->flags); /* NR */
+    Py_XDECREF(res);
+    Py_DECREF(pyo);
+
+    return 0;
+}
+//-
+//+ MCC Dispatcher
+DISPATCHER(mcc)
+{
+    switch (msg->MethodID) {
+        //case MUIM_AskMinMax    : return mAskMinMax  (cl, obj, (APTR)msg);
+        case MUIM_Setup        : return mSetup      (cl, obj, (APTR)msg);
+        case MUIM_Cleanup      : return mCleanup    (cl, obj, (APTR)msg);
+        //case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
+        //case MUIM_Hide         : return mHide       (cl, obj, (APTR)msg);
+        case MUIM_Draw         : return mDraw       (cl, obj, (APTR)msg);
+        //case MUIM_HandleEvent  : return mHandleEvent(cl, obj, (APTR)msg);
+    }
+
+    return DoSuperMethodA(cl, obj, msg);
+}
+DISPATCHER_END
+//-
+
+
+/*******************************************************************************************
 ** PyBOOPSIObject_Type
 */
 
@@ -525,35 +634,83 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     PyObject *attrs=NULL;
     Object *obj;
     struct TagItem *tags;
+    STRPTR superid = NULL;
+    struct MUI_CustomClass *mcc = NULL;
 
-    if (!PyArg_ParseTuple(args, "s|O:PyBOOPSIObject", &classid, &attrs)) /* BR */
+    if (!PyArg_ParseTuple(args, "sz|O:PyBOOPSIObject", &classid, &superid, &attrs)) /* BR */
         return NULL;
 
     DPRINT("ClassID: '%s'\n", classid);
+    self->node->n_IsMUI = PyMUIObject_Check(self); 
+
+    if ((NULL != superid) && (self->node->n_IsMUI)) {
+        CreatedMCCNode *node = NULL, *next;
+
+        DPRINT("SuperID: '%s'\n", superid);
+        
+        ForeachNode(&gCreatedMCCList, next) {
+            if ((NULL != next->n_MCC->mcc_Super->cl_ID) && !strcmp(superid, next->n_MCC->mcc_Super->cl_ID)) {
+                node = next;
+                break;
+            }
+        }
+
+        if (NULL == node) {
+            node = malloc(sizeof(CreatedMCCNode));
+            if (NULL == node) {
+                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+                return NULL;
+            }
+
+            mcc = MUI_CreateCustomClass(NULL, superid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
+            if (NULL == mcc) {
+                free(node);
+                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+                return NULL;
+            }
+
+            node->n_MCC = mcc;
+            ADDTAIL(&gCreatedMCCList, node);
+        } else
+            mcc = node->n_MCC;
+
+        DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->n_MCC->mcc_Super->cl_ID);
+    }
 
     /* The Python object is needed before convertir the attributes dict into tagitem array */
-    self->node->n_IsMUI = PyMUIObject_Check(self);
     if (NULL != attrs) {
         tags = attrs2tags((PyObject *)self, attrs);
         if (NULL != tags) {
-            if (self->node->n_IsMUI)
-                obj = MUI_NewObjectA(classid, tags);
-            else
+            if (self->node->n_IsMUI) {
+                if (NULL == mcc)
+                    obj = MUI_NewObjectA(classid, tags);
+                else
+                    obj = NewObjectA(mcc->mcc_Class, NULL, tags);    
+            } else
                 obj = NewObjectA(NULL, classid, tags);
+            
             PyMem_Free(tags);
         } else
             obj = NULL;
-    } else if (self->node->n_IsMUI)
-        obj = MUI_NewObject(classid, TAG_DONE);
-    else
+    } else if (self->node->n_IsMUI) {
+        if (NULL == mcc)
+            obj = MUI_NewObject(classid, TAG_DONE);
+        else
+            obj = NewObject(mcc->mcc_Class, NULL, TAG_DONE); 
+    } else
         obj = NewObject(NULL, classid, TAG_DONE);
 
     if (NULL != obj) {
-        DPRINT("New %s object @ %p (self=%p, node=%p)\n", classid, obj, self, self->node);
+        DPRINT("New %s object @ %p (self=%p, node=%p, mcc=%p)\n", classid, obj, self, self->node, mcc);
         PyBOOPSIObject_OBJECT(self) = obj;
         ADDTAIL(&gCreatedObjectList, self->node);
-        if (self->node->n_IsMUI)
+        if (self->node->n_IsMUI) {
             muiUserData(obj) = (ULONG)self;
+            self->node->n_MCC = mcc;   
+            if (NULL != mcc) {
+                ((MCCData *)INST_DATA(mcc->mcc_Class, obj))->PythonObject = (APTR)self;
+            }
+        }
         Py_RETURN_NONE;
     } else
         PyErr_Format(PyExc_SystemError, "NewObjectA() failed on class %s.", classid);
@@ -816,6 +973,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
      * So here there is no need to INCREF argument python objects.
      */
 
+    msg->MethodID = meth;
     ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
     DPRINT("done\n");
 
@@ -1044,8 +1202,6 @@ muiobject_dealloc(PyMUIObject *self)
 
     DPRINT("self=%p (%s), obj=%p, node=%p: MUI dealloc\n", self, OBJ_TNAME(self), mo, node);
     if (NULL != mo) {
-        free(REMOVE(node));
-        
         if (!get(mo, MUIA_ApplicationObject, &app) || !get(mo, MUIA_Parent, &parent)) {
             DPRINT("unable to free object %p!\n", mo);
             goto end;
@@ -1063,7 +1219,11 @@ muiobject_dealloc(PyMUIObject *self)
 
             /* Just unlink it */
             muiUserData(mo) = NULL;
+            if (NULL != node->n_MCC)
+                ((MCCData *)INST_DATA(OCLASS(mo), mo))->PythonObject = NULL;
         }
+
+        free(REMOVE(node));    
     }
 
 end:
@@ -1318,7 +1478,7 @@ dst_h: destination height.\n\
 static PyObject *
 raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 {
-    APTR lock;
+    //APTR lock;
     char *buf;
     UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
     int buf_size;
@@ -1332,9 +1492,9 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
                           &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    lock = LockBitMapTags(self->rp->BitMap, TAG_DONE);
+    //lock = LockBitMapTags(self->rp->BitMap, TAG_DONE);
     ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGBA);
-    UnLockBitMap(lock);
+    //UnLockBitMap(lock);
 
     Py_RETURN_NONE;
 }
@@ -1407,8 +1567,10 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
             return NULL;
         }
 
-        if (PyErr_Occurred())
+        if (PyErr_Occurred()) {
+            DPRINT("bye mainloop with error...\n");
             return NULL;
+        }
     }
 
     DPRINT("bye mainloop...\n");
@@ -1430,7 +1592,9 @@ static PyMethodDef _muimaster_methods[] = {
 //+ PyMorphOS_CloseModule
 void
 PyMorphOS_CloseModule(void) {
-    CreatedObjectNode *node, *next;
+    CreatedObjectNode *node;
+    CreatedMCCNode *mcc_node;
+    APTR next;
     Object* keep_app = NULL;
 
     DPRINT("Closing module...\n");
@@ -1442,6 +1606,10 @@ PyMorphOS_CloseModule(void) {
         if (NULL != obj) {
             if (node->n_IsMUI) {
                 Object *app, *parent;
+
+                /* Remove invalid Python linkage! */
+                if (NULL != node->n_MCC)
+                    ((MCCData *)INST_DATA(OCLASS(obj), obj))->PythonObject = NULL;
 
                 if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
                     DPRINT("  app=%p, parent=%p\n", app, parent);
@@ -1468,6 +1636,12 @@ PyMorphOS_CloseModule(void) {
     if (NULL != keep_app) {
         DPRINT("Disposing application...\n");
         MUI_DisposeObject(keep_app);
+    }
+
+    ForeachNodeSafe(&gCreatedMCCList, mcc_node, next) {
+        DPRINT("Disposing MCC node @ %p (mcc=%p-'%s')\n", mcc_node, mcc_node->n_MCC, mcc_node->n_MCC->mcc_Super->cl_ID);
+        MUI_DeleteCustomClass(mcc_node->n_MCC);
+        free(mcc_node);
     }
 
     if (NULL != CyberGfxBase) {
@@ -1503,6 +1677,7 @@ INITFUNC(void) {
 
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
     NEWLIST(&gCreatedObjectList);
+    NEWLIST(&gCreatedMCCList);
 
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL == MUIMasterBase) {
