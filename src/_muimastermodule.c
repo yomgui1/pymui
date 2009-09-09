@@ -168,6 +168,8 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 #include <proto/utility.h>
 #include <proto/muimaster.h>
 #include <proto/cybergraphics.h>
+#include <proto/layers.h>
+#include <proto/graphics.h>
 
 
 extern void dprintf(char*fmt, ...);
@@ -302,6 +304,7 @@ typedef struct MCCData_STRUCT {
 
 static struct Library *MUIMasterBase;
 static struct Library *CyberGfxBase;
+static struct Library *LayersBase;
 
 static struct Hook OnAttrChangedHook;
 static PyTypeObject PyRasterObject_Type;
@@ -528,11 +531,57 @@ static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
     return DoSuperMethodA(cl, obj, msg);
 }
 //-
+//+ mShow
+static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+    ULONG result;
+
+    if (!DoSuperMethodA(cl, obj, msg))
+        return FALSE;
+
+    pyo = data->PythonObject;
+    DPRINT("pyo=%p\n", pyo);
+    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
+        return TRUE;
+
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Show", NULL); /* NR */
+    if (NULL != res)
+        result = PyInt_AsLong(res);
+    else
+        result = TRUE;
+    Py_XDECREF(res);
+    Py_DECREF(pyo);
+
+    return result;
+}
+//-
+//+ mHide
+static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+
+    pyo = data->PythonObject;
+    DPRINT("obj=%p, pyo=%p\n", obj, pyo);
+    if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
+        Py_INCREF(pyo);
+        res = PyObject_CallMethod((PyObject *)pyo, "MCC_Hide", NULL); /* NR */
+        Py_XDECREF(res);
+        Py_DECREF(pyo);
+    }
+
+    return DoSuperMethodA(cl, obj, msg);
+}
+//-
 //+ mDraw
 static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
 {
     MCCData *data = INST_DATA(cl, obj);
     PyObject *pyo, *res;
+    struct Region *region, *oldregion = NULL;
 
     DoSuperMethodA(cl, obj, msg);
 
@@ -541,10 +590,26 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
         return 0;
 
+    if (PyObject_HasAttrString(pyo, "_clip")) {
+        region = NewRegion();
+        if (NULL != region) {
+            struct Rectangle rect = { _left(obj), _mtop(obj), _mright(obj), _bottom(obj) };
+
+            OrRectRegion(region, &rect);
+            oldregion = InstallClipRegion(_window(obj)->WLayer, region);
+        }
+    } else
+        region = NULL;
+
     Py_INCREF(pyo);
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_Draw", "I", msg->flags); /* NR */
     Py_XDECREF(res);
     Py_DECREF(pyo);
+
+    if (NULL != region) {
+        InstallClipRegion(_window(obj)->WLayer, oldregion);
+        DisposeRegion(region);
+    }
 
     return 0;
 }
@@ -556,8 +621,8 @@ DISPATCHER(mcc)
         //case MUIM_AskMinMax    : return mAskMinMax  (cl, obj, (APTR)msg);
         case MUIM_Setup        : return mSetup      (cl, obj, (APTR)msg);
         case MUIM_Cleanup      : return mCleanup    (cl, obj, (APTR)msg);
-        //case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
-        //case MUIM_Hide         : return mHide       (cl, obj, (APTR)msg);
+        case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
+        case MUIM_Hide         : return mHide       (cl, obj, (APTR)msg);
         case MUIM_Draw         : return mDraw       (cl, obj, (APTR)msg);
         //case MUIM_HandleEvent  : return mHandleEvent(cl, obj, (APTR)msg);
     }
@@ -853,7 +918,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
 
         DPRINT("Converting using get method on object at %p\n", format_obj);
         Py_INCREF(format_obj);
-        res = PyObject_CallMethod(format_obj, "get", "s", value); /* NR */
+        res = PyObject_CallMethod(format_obj, "get", "I", value); /* NR */
         Py_DECREF(format_obj);
         return res;
     }
@@ -901,13 +966,8 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
         if (NULL == res)
             return res;
 
-        if (!PyString_CheckExact(res)) {
-            PyErr_Format(PyExc_TypeError, "convertor.set() shall return a str not %s.", OBJ_TNAME(res));
-            Py_DECREF(res);
+        if (!python2long((PyObject *)res, &value))
             return NULL;
-        }
-
-        value = (ULONG)PyString_AS_STRING(res);
 
         DPRINT("Attr 0x%lx set to pointer %p on BOOPSI obj @ %p\n", attr, value, obj);
         set(obj, attr, value);
@@ -1116,6 +1176,21 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
     return ret;
 }
 //-
+//+ boopsi_get_mo
+static PyObject *
+boopsi_get_mo(PyBOOPSIObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    return PyLong_FromVoidPtr(mo);
+}
+//-
+
+static PyGetSetDef boopsi_getseters[] = {
+    {"_mo",   (getter)boopsi_get_mo, NULL, "MUI object address", NULL},
+    {NULL} /* sentinel */
+};
 
 static struct PyMethodDef boopsi_methods[] = {
     {"_create", (PyCFunction) boopsi__create, METH_VARARGS, NULL},
@@ -1142,6 +1217,7 @@ static PyTypeObject PyBOOPSIObject_Type = {
     
     tp_repr         : (reprfunc)boopsi_repr,
     tp_methods      : boopsi_methods,
+    tp_getset       : boopsi_getseters,
 };
 
 /*******************************************************************************************
@@ -1331,6 +1407,31 @@ muiobject__get_raster(PyMUIObject *self)
     return (PyObject *)self->raster;
 }
 //- muiobject__notify
+//+ muiobject_redraw
+/*! \cond */
+PyDoc_STRVAR(muiobject_redraw_doc,
+"_redraw(flags) -> None\n\
+\n\
+Just direct call to MUI_Redraw(flags).");
+/*! \endcond */
+
+static PyObject *
+muiobject_redraw(PyMUIObject *self, PyObject *args)
+{
+    Object *mo;
+    ULONG flags;
+
+    if (!PyArg_ParseTuple(args, "I:Redraw", &flags))
+        return NULL;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    MUI_Redraw(mo, flags);
+
+    Py_RETURN_NONE;
+}
+//- muiobject__notify
 //+ muiobject_get_mleft
 static PyObject *
 muiobject_get_mleft(PyObject *self, void *closure)
@@ -1403,6 +1504,45 @@ muiobject_get_mheight(PyObject *self, void *closure)
     return PyInt_FromLong(_mheight(mo));
 }
 //-
+//+ muiobject_get__superid
+static PyObject *
+muiobject_get__superid(PyObject *self, void *closure)
+{
+    Object *mo;
+    ClassID id;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    id = OCLASS(mo)->cl_Super->cl_ID;
+    if (NULL != id)
+        return PyString_FromString(id);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject_get__children
+static PyObject *
+muiobject_get__children(PyMUIObject *self, void *closure)
+{
+    Py_INCREF(self->children);
+    return self->children;
+}
+//-
+//+ muiobject_set__children
+static int
+muiobject_set__children(PyMUIObject *self, PyObject *value, void *closure)
+{
+    if (NULL != value) {
+        PyErr_SetString(PyExc_TypeError, "This attribute can't be set");
+        return -1;
+    }
+
+    Py_DECREF(self->children);
+    self->children = PyList_New(0); /* NR */
+    return NULL != self->children;
+}
+//-
 
 static PyGetSetDef muiobject_getseters[] = {
     {"mleft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
@@ -1411,11 +1551,8 @@ static PyGetSetDef muiobject_getseters[] = {
     {"mbottom", (getter)muiobject_get_mbottom, NULL, "_mbottom(obj)", NULL},
     {"mwidth",  (getter)muiobject_get_mwidth,  NULL, "_mwidth(obj)",  NULL},
     {"mheight", (getter)muiobject_get_mheight, NULL, "_mheight(obj)", NULL},
-    {NULL} /* sentinel */
-};
-
-static PyMemberDef muiobject_members[] = {
-    {"_children", T_OBJECT, offsetof(PyMUIObject, children), RO, NULL},
+    {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
+    {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
     {NULL} /* sentinel */
 };
 
@@ -1423,6 +1560,7 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_nnset",      (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
     {"_notify",     (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
     {"_get_raster", (PyCFunction) muiobject__get_raster, METH_NOARGS,  muiobject__get_raster_doc},
+    {"Redraw",      (PyCFunction) muiobject_redraw,      METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
 
@@ -1441,7 +1579,6 @@ static PyTypeObject PyMUIObject_Type = {
 
     tp_dealloc      : (destructor)muiobject_dealloc,
     tp_methods      : muiobject_methods,
-    tp_members      : muiobject_members,
     tp_getset       : muiobject_getseters,
 };
 
@@ -1650,6 +1787,12 @@ PyMorphOS_CloseModule(void) {
         CyberGfxBase = NULL;
     }
 
+    if (NULL != LayersBase) {
+        DPRINT("Closing layers library...\n");
+        CloseLibrary(LayersBase);
+        LayersBase = NULL;
+    }
+ 
     if (NULL != MUIMasterBase) {
         DPRINT("Closing muimaster library...\n");
         CloseLibrary(MUIMasterBase);
@@ -1682,6 +1825,12 @@ INITFUNC(void) {
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL == MUIMasterBase) {
         DPRINT("Can't open library %s, V%u.\n", MUIMASTER_NAME, MUIMASTER_VLATEST);
+        return;
+    }
+
+    LayersBase = OpenLibrary("layers.library", 50);
+    if (NULL == LayersBase) {
+        DPRINT("Can't open library %s, V%u.\n", "layers.library", 50);
         return;
     }
 

@@ -3,7 +3,8 @@
 ## \author ROGUEZ "Yomgui" Guillaume
 ##
 
-import sys
+import sys, functools
+
 try:
     DEBUG = sys.argv[1] == '-v'
 except:
@@ -168,7 +169,7 @@ class BoopsiWrapping:
         inf = self._check_attr(attr, 's')
         if isinstance(inf.format, str):
             self._set(inf.value, value)
-            return self._keep(inf.value, value, inf.format[0]) 
+            return self._keep(inf.value, value, inf.format)
         else:
             self._set(inf.value, value, inf.format)
             return self._keep(inf.value, value, 'p')
@@ -213,44 +214,162 @@ class Notify(PyMUIObject, BoopsiWrapping):
             superid = None
 
         if 'attributes' in kwds:
-            attrs = [(self._check_attr(k, 'i'), v) for k,v in kwds.pop('attributes')]
+            attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.pop('attributes')]
         else:
             attrs = []
-        attrs += [(self._check_attr(k, 'i'), v) for k,v in kwds.iteritems()]
+        attrs += [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
 
-        self._create(self._classid, superid, ((inf.value,v) for inf,v in attrs))
+        self._create(self._classid, superid, ((inf.value,v) for inf, v in attrs))
         
-        for inf,v in attrs:
-            self._keep(inf.value, v, inf.format[0])
+        for inf, v in attrs:
+            if isinstance(inf.format, basestring):
+                self._keep(inf.value, v, inf.format)
         
     def _notify_cb(self, id, value):
         for cb, args in self._notify_cbdict[id]:
             def convertArgs(a, v):
+                if isinstance(a, weakref.ref):
+                    if a() is None:
+                        raise RuntimeError("Notify(%x): some arguments have been destroyed" % id)  
+                    else:
+                        a = a()
                 if a == MUIV_TriggerValue:
                     return v
                 elif a == MUIV_NotTriggerValue:
                     return not v
                 return a
-     
-            newargs = tuple(convertArgs(a(), value) for a in args if a() != None)
-            if len(newargs) != len(args):
-                raise RuntimeError("Notify(%x): some arguments have been destroyed" % id)
 
-            if cb(*newargs) == MUI_EventHandlerRC_Eat:
+            if cb(*tuple(convertArgs(a, value) for a in args)) == MUI_EventHandlerRC_Eat:
                 return
 
     def Notify(self, attr, trigvalue, callback, *args):
         attr = self._check_attr(attr, 'sg').value
         l = self._notify_cbdict.get(attr, [])
-        l.append((callback, map(weakref.ref, args)))
+        weak_args = []
+        for a in args:
+            try:
+                weak_args.append(weakref.ref(a))
+            except TypeError:
+                weak_args.append(a)
+        l.append((callback, weak_args))
         self._notify_cbdict.setdefault(attr, l)
         self._notify(attr, trigvalue)
 
     def NNSet(self, attr, value):
         inf = self._check_attr(attr, 's')
         self._nnset(inf.value, value)
-        self._keep(inf.value, value, inf.format[0])
+        self._keep(inf.value, value, inf.format)
 
+
+class Family(Notify):
+    CLASSID = MUIC_Family
+    ATTRIBUTES = {
+        MUIA_Family_Child: ('Child', 'M', 'i..'),
+        MUIA_Family_List:  ('List', 'p', '..g'),
+        }
+
+    def __init__(self, **kwds):
+        child = kwds.pop('Child', None)
+        super(Family, self).__init__(**kwds)
+        if child:
+            self._children.append(child)
+
+    def AddHead(self, o):
+        assert isinstance(o, PyMUIObject)
+        assert o not in self._children
+        self._do1(MUIM_Family_AddHead, o)
+        self._children.append(o)
+
+    def AddTail(self, o):
+        assert isinstance(o, PyMUIObject)
+        assert o not in self._children  
+        self._do1(MUIM_Family_AddTail, o)
+        self._children.append(o)
+
+    def Insert(self, o, p):
+        assert isinstance(o, PyMUIObject)
+        assert o not in self._children and p in self._children
+        self._do(MUIM_Family_Insert, (o, p))
+        self._children.append(o)
+
+    def Remove(self, o):
+        assert o in self._children
+        self._do1(MUIM_Family_Remove, o)
+        self._children.remove(o) 
+
+    def Sort(self, *args):
+        assert len(True for o in args if o in self._children) > 0
+        self._do1(MUIM_Family_Sort, array('L', [o._mo for o in args] + [0]))
+
+    def Transfer(self, f):
+        assert isinstance(f, Family)
+        self._do1(MUIM_Family_Transfer, f)
+        f._children = self._children
+        del self._children
+
+
+class Menustrip(Family):
+    CLASSID = MUIC_Menustrip
+    ATTRIBUTES = { MUIA_Menustrip_Enabled: ('Enabled', 'b', 'isg') }
+
+    def __init__(self, items=None, **kwds):
+        super(Menustrip, self).__init__(**kwds)
+        if not items: return
+        if hasattr(items, '__iter__'):
+            for x in items:
+                self.AddTail(x)
+        else:
+            self.AddTail(items)
+
+    def InitChange(self):
+        self._do(MUIM_Menustrip_InitChange)
+ 
+    def ExitChange(self):
+        self._do(MUIM_Menustrip_ExitChange)
+
+    def Popup(self, parent, x, y, flags=0):
+        assert isinstance(parent, Family)
+        self._do(MUIM_Menustrip_Popup, (parent, int(flags), int(x), int(y)))
+
+
+class Menu(Family):
+    CLASSID = MUIC_Menu
+    ATTRIBUTES = {
+        MUIA_Menu_Enabled: ('Enabled', 'b', 'isg'),
+        MUIA_Menu_Title:   ('Title',   's', 'isg'),
+        }
+
+    def __init__(self, Title, **kwds):
+        super(Menu, self).__init__(Title=Title, **kwds)
+ 
+
+class Menuitem(Family):
+    CLASSID = MUIC_Menuitem
+    ATTRIBUTES = {
+        MUIA_Menuitem_Checked:       ('Checked',       'b', 'isg'),
+        MUIA_Menuitem_Checkit:       ('Checkit',       'b', 'isg'),
+        MUIA_Menuitem_CommandString: ('CommandString', 'b', 'isg'),
+        MUIA_Menuitem_CopyStrings:   ('CopyStrings',   'b', 'i..'),
+        MUIA_Menuitem_Enabled:       ('Enabled',       'b', 'isg'),
+        MUIA_Menuitem_Exclude:       ('Exclude',       'i', 'isg'),
+        MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
+        MUIA_Menuitem_Title:         ('Title',         's', 'isg'),
+        MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
+        MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
+        }
+
+    def __init__(self, Title, Shortcut=None, **kwds):
+        if Shortcut:
+            kwds['Shortcut'] = Shortcut
+            if len(Shortcut) > 1:
+                kwds['CommandString'] = True
+            else:
+                kwds['CommandString'] = False
+        super(Menuitem, self).__init__(Title=Title, **kwds)
+
+    def action(self, callback, *args):
+        self.Notify('Trigger', MUIV_EveryTime, callback, *args)
+ 
 
 class Application(Notify):
     CLASSID = MUIC_Application
@@ -273,6 +392,7 @@ class Application(Notify):
         MUIA_Application_Iconified:      ('Iconified',      'b', '.sg'),
         MUIA_Application_MenuAction:     ('MenuAction',     'I', '..g'),
         MUIA_Application_MenuHelp:       ('MenuHelp',       'I', '..g'),
+        MUIA_Application_Menustrip:      ('Menustrip',      'M', 'i..'),
         MUIA_Application_RexxHook:       ('RexxHook',       'p', 'isg'),
         MUIA_Application_RexxMsg:        ('RexxMsg',        'p', '..g'),
         MUIA_Application_RexxString:     ('RexxString',     's', '.s.'),
@@ -287,9 +407,9 @@ class Application(Notify):
         MUIA_Application_WindowList:     ('WindowList',     'p', '..g'),
         }
 
-    def __init__(self, *args, **kwds):
+    def __init__(self, **kwds):
         win = kwds.pop('Window', None)
-        super(Application, self).__init__(*args, **kwds) 
+        super(Application, self).__init__(**kwds)
 
         # Add Window PyMUIObject passed as argument
         if win:
@@ -306,8 +426,7 @@ class Application(Notify):
             raise RuntimeError("Window already attached.")
         self._add(win)
         self._children.append(win)
-        win._app = self
-
+        win.SetApp(self)
 
 class Window(Notify):
     CLASSID = MUIC_Window
@@ -359,6 +478,8 @@ class Window(Notify):
     __window_ids = []
 
     def __init__(self, Title=None, ID=-1, **kwds):
+        self.__app = None
+
         if ID == -1:
             for x in xrange(1<<8):
                 if x not in self.__window_ids:
@@ -399,29 +520,59 @@ class Window(Notify):
             raise RuntimeError("No application set for this %s object" % self.__class__.__name__)
         app.Quit()
 
+    def SetApp(self, app):
+        """This function is called by Application.AddWindow method.
+        It permits to safely call Open/Close Window methods.
+        """
+        if self.__app: return
+        self.__app = app
+        self.__Open = functools.partial(self._set, MUIA_Window_Open, True)
+        self.__Close = functools.partial(self._set, MUIA_Window_Open, False)
+
+    def __Open(self):
+        raise RuntimeError("Can't open the Window object, not linked to an application yet.\n"
+                           "Please, see Window.SetApp method.")
+
+    def __Close(self):
+        raise RuntimeError("Can't close the Window object, not linked to an application yet.\n"
+                           "Please, see Window.SetApp method.")
+ 
     def Open(self):
-        if self._app: # _app set during the AddWindow
-            self._set(MUIA_Window_Open, True)
+        self.__Open() # raise error if object not linked to an application (SetApp)
 
     def Close(self):
-        if self._app: # _app set during the AddWindow
-            self._set(MUIA_Window_Open, False)
+        self.__Close() # raise error if object not linked to an application (SetApp)
 
 
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
     ATTRIBUTES = { MUIA_Aboutmui_Application: ('Application', 'M', 'i..') }
 
-    def __init__(self, Application, RefWindow=None, **kwds):
-        Window.__init__(self, Application=Application, RefWindow=RefWindow, **kwds)
-        self._app = Application
-        Application._children.append(self)
+    def __init__(self, app, **kwds):
+        Window.__init__(self, Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
+
+        # We don't call app.AddWindow() because this object do it itself at OM_NEW
+        app._children.append(self)
+        self.SetApp(app)
+
+
+class Convertor_ImageSpec:
+    @staticmethod
+    def get(value):
+        if value <= MUII_LASTPAT:
+            return value
+        else:
+            return None
+
+    @staticmethod 
+    def set(value):
+        return value
 
 
 class Area(Notify):
     CLASSID = MUIC_Area
     ATTRIBUTES = {
-        MUIA_Background:         ('Background',         'i', 'is.'),
+        MUIA_Background:         ('Background',         Convertor_ImageSpec, 'is.'),
         MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
         MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
         MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
@@ -510,6 +661,11 @@ class Rectangle(Area):
     def VCenter(cl, o):
         g = Group.VGroup(Spacing=0)
         return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
+
+
+class Balance(Area):
+    CLASSID = MUIC_Balance
+    ATTRIBUTES = { MUIA_Balance_Quiet: ('Quiet', 'i', 'i..') }
 
 
 class Bitmap(Area):
