@@ -19,8 +19,8 @@ try:
     from _muimaster import *
 except: # For testing => use stubs
     class PyBOOPSIObject(object):
-        def _create(self, i, a={}):
-            debug("Stubs: %s._create(%s, %s)", self.__class__.__name__, i, repr(a))
+        def _create(self, i, sid=None, a={}):
+            debug("Stubs: %s._create(%s, %s, %s)", self.__class__.__name__, i, sid, repr(a))
         def _set(self, i, v):
             debug("Stubs: %s._set(0x%x, %s)", self.__class__.__name__, i, repr(v))
         def _get(self, i, fmt):
@@ -35,10 +35,15 @@ except: # For testing => use stubs
             debug("Stubs: %s._add(%s, %s)", self.__class__.__name__, repr(o), bool(l))
         
     class PyMUIObject(PyBOOPSIObject):
+        def __init__(self, **kwds):
+            self.__children = []
         def _nnset(self, *args):
             pass
         def _notify(self, *args):
             pass
+        def __del_children(self):
+            self._children = []
+        _children = property(fget=lambda self: self.__children, fdel=__del_children)
     
 from defines import *
 import weakref
@@ -88,8 +93,8 @@ class MetaMCC(type):
                 raise TypeError("No valid MUI class name found")
             clid = clid[0]
 
-        dct['_classid'] = clid
-        dct['_id_meths'] = dct.pop('METHODS', {})
+        dct['_'+name+'__muiclassid'] = clid
+        dct['_'+name+'__id_meths'] = dct.pop('METHODS', {})
 
         kw = {}
         attrs = {}
@@ -209,17 +214,12 @@ class Notify(PyMUIObject, BoopsiWrapping):
         self._notify_cbdict = {} 
         
         if kwds.pop('MCC', False):
-            superid = self.__class__.__bases__[0]._classid
+            superid = self.__class__.__bases__[0].__muiclassid
         else:
             superid = None
 
-        if 'attributes' in kwds:
-            attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.pop('attributes')]
-        else:
-            attrs = []
-        attrs += [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
-
-        self._create(self._classid, superid, ((inf.value,v) for inf, v in attrs))
+        attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
+        self._create(self.__muiclassid, superid, ((inf.value,v) for inf, v in attrs))
         
         for inf, v in attrs:
             if isinstance(inf.format, basestring):
@@ -477,9 +477,20 @@ class Window(Notify):
 
     __window_ids = []
 
+    __attr_map = { 'LeftEdge': { 'centered': MUIV_Window_LeftEdge_Centered,
+                                 'moused': MUIV_Window_LeftEdge_Moused },
+                   'TopEdge' : { 'centered': MUIV_Window_TopEdge_Centered,
+                                 'moused': MUIV_Window_TopEdge_Moused },
+                   'Height':   { 'default': MUIV_Window_Height_Default,
+                                 'scaled':  MUIV_Window_Height_Scaled },
+                   'Width':    { 'default': MUIV_Window_Width_Default,
+                                 'scaled': MUIV_Window_Width_Scaled },
+                   }
+
     def __init__(self, Title=None, ID=-1, **kwds):
         self.__app = None
 
+        # Auto Window ID handling
         if ID == -1:
             for x in xrange(1<<8):
                 if x not in self.__window_ids:
@@ -495,17 +506,51 @@ class Window(Notify):
 
         self.__window_ids.append(ID)
 
+        # A root object is mandatory to create the window
+        # Use a dummy rectangle if nothing given
         if 'RootObject' not in kwds:
-            kwds['RootObject'] = Rectangle.HVSpace()
+            kwds['RootObject'] = Rectangle()
 
-        if not Title is None:
+        if Title is not None:
             kwds['Title'] = Title
 
-        if 'RightEdge' in kwds:
+        if 'LeftEdge' in kwds:
+            x = kwds.get('LeftEdge')
+            d = self.__attr_map['LeftEdge']
+            kwds['LeftEdge'] = d[x] if x in d else x
+        elif 'RightEdge' in kwds:
             kwds['LeftEdge'] = -1000 - kwds.pop('RightEdge')
-
-        if 'BottomEdge' in kwds:
+            
+        if 'TopEdge' in kwds:
+            x = kwds.get('TopEdge')
+            d = self.__attr_map['TopEdge']
+            kwds['TopEdge'] = d[x] if x in d else x
+        elif 'BottomEdge' in kwds:
             kwds['TopEdge'] = -1000 - kwds.pop('BottomEdge')
+        elif 'TopDeltaEdge' in kwds:
+            kwds['TopEdge'] = -3 - kwds.pop('TopDeltaEdge')
+
+        if 'Height' in kwds:
+            x = kwds.get('Height')
+            d = self.__attr_map['Height']
+            kwds['Height'] = d[x] if x in d else x
+        elif 'HeightMinMax' in kwds:
+            kwds['Height'] = 0 - max(min(kwds.pop('HeightMinMax'), 100), 0)
+        elif 'HeightScreen' in kwds:
+            kwds['Height'] = -200 - max(min(kwds.pop('HeightScreen'), 100), 0)
+        elif 'HeightVisible' in kwds:
+            kwds['Height'] = -100 - max(min(kwds.pop('HeightVisible'), 100), 0)
+            
+        if 'Width' in kwds:
+            x = kwds.get('Width')
+            d = self.__attr_map['Width']
+            kwds['Width'] = d[x] if x in d else x
+        elif 'WidthMinMax' in kwds:
+            kwds['Width'] = 0 - max(min(kwds.pop('WidthMinMax'), 100), 0)
+        elif 'WidthScreen' in kwds:
+            kwds['Width'] = -200 - max(min(kwds.pop('WidthScreen'), 100), 0)
+        elif 'WidthVisible' in kwds:
+            kwds['Width'] = -100 - max(min(kwds.pop('WidthVisible'), 100), 0)
 
         super(Window, self).__init__(ID=ID, **kwds)
         self._children.append(kwds['RootObject'])
@@ -620,6 +665,12 @@ class Area(Notify):
         MUIA_WindowObject:       ('WindowObject',       'M', '..g'),
         }
 
+    def __init__(self, **kwds):
+        v = kwds.pop('InnerSpacing', None)
+        if v:
+            kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'], 
+        super(Area, self).__init__(**kwds)
+
 
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
@@ -645,11 +696,11 @@ class Rectangle(Area):
 
     @classmethod
     def HSpace(cl, x):
-        return cl()
+        return cl(VertWeight=x)
 
     @classmethod
     def VSpace(cl, x):
-        return cl()
+        return cl(HorizWeight=x)
 
     @classmethod
     def HCenter(cl, o):
@@ -661,6 +712,12 @@ class Rectangle(Area):
     def VCenter(cl, o):
         g = Group.VGroup(Spacing=0)
         return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
+
+HVSpace = Rectangle.HVSpace
+HSpace = Rectangle.HSpace
+VSpace = Rectangle.VSpace
+HCenter = Rectangle.HCenter
+VCenter = Rectangle.VCenter
 
 
 class Balance(Area):
@@ -705,7 +762,7 @@ class Text(Area):
     # Factory class methods
 
     @classmethod
-    def Button(cl, x, key=None):
+    def KeyButton(cl, x, key=None):
         kwds = dict(Contents=x,
                     Font=MUIV_Font_Button,
                     Frame=MUIV_Frame_Button,
@@ -717,10 +774,12 @@ class Text(Area):
             kwds['ControlChar'] = key
         return cl(**kwds)
 
+SimpleButton = functools.partial(Text.Button, key=None)
+KeyButton = Text.Button
+
 
 class Gadget(Area):
     CLASSID = MUIC_Gadget
-
     ATTRIBUTES = {
         MUIA_Gadget_Gadget: ('Gadget',   'p', '..g'),
     }
@@ -728,7 +787,6 @@ class Gadget(Area):
 
 class String(Gadget):
     CLASSID = MUIC_String
-
     ATTRIBUTES = {
         MUIA_String_Accept:         ('Accept',          's', 'isg'),
         MUIA_String_Acknowledge:    ('Acknowledge',     's', '..g'),
@@ -828,6 +886,61 @@ class Group(Area):
         kwds['Rows'] = n
         return cl(**kwds)
 
+    @classmethod
+    def PageGroup(cl, **kwds):
+        kwds['PageMode'] = True
+        return cl(**kwds)
+
+HGroup = Group.HGroup
+VGroup = Group.VGroup
+ColGroup = Group.ColGroup
+RowGroup = Group.RowGroup
+PageGroup = Group.PageGroup
+ 
+
+class Virtgroup(Group):
+    CLASSID = MUIC_Virtgroup
+    ATTRIBUTES = {
+        MUIA_Virtgroup_Height: ('Height', 'i', '..g'),
+        MUIA_Virtgroup_Input:  ('Input',  'b', 'i..'),
+        MUIA_Virtgroup_Left:   ('Left',   'i', 'isg'),
+        MUIA_Virtgroup_Top:    ('Top',    'i', 'isg'),
+        MUIA_Virtgroup_Width:  ('Width',  'i', '..g'),
+    }
+
+    # Factory class methods
+
+    @classmethod
+    def HGroup(cl, **kwds):
+        kwds['Horiz'] = True
+        return cl(**kwds)
+
+    @classmethod
+    def VGroup(cl, **kwds):
+        kwds['Horiz'] = False
+        return cl(**kwds)
+
+    @classmethod
+    def ColGroup(cl, n, **kwds):
+        kwds['Columns'] = n
+        return cl(**kwds)
+
+    @classmethod
+    def RowGroup(cl, n, **kwds):
+        kwds['Rows'] = n
+        return cl(**kwds)
+
+    @classmethod
+    def PageGroup(cl, **kwds):
+        kwds['PageMode'] = True
+        return cl(**kwds)
+
+HGroupV = Virtgroup.HVirtgroup
+VGroupV = Virtgroup.VVirtgroup
+ColGroupV = Virtgroup.ColVirtgroup
+RowGroupV = Virtgroup.RowVirtgroup
+PageGroupV = Virtgroup.PageGroup
+
 
 class Coloradjust(Group):
     CLASSID = MUIC_Coloradjust
@@ -851,8 +964,8 @@ if __name__ == "__main__":
     a = Notify(HelpNode='An object')
     print a
 
-    print "\n=> b = Text(attributes=((MUIA_Text_Contents, 'test'), )) <="
-    b = Text(attributes=((MUIA_Text_Contents, 'test'), ))
+    print "\n=> b = Text(Contents='test') <="
+    b = Text(Contents='test')
     print b
 
     # Get
