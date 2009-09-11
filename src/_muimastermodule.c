@@ -253,6 +253,9 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
         PyErr_SetString(PyExc_RuntimeError, "no BOOPSI object associated"); \
         return NULL; }
 
+#define _between(a,x,b) ((x)>=(a) && (x)<=(b))
+#define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
+
 
 /*
 ** Private Types and Structures
@@ -293,6 +296,16 @@ typedef struct PyMUIObject_STRUCT {
     PyRasterObject * raster;
 } PyMUIObject;
 
+typedef struct PyEventHandlerObject_STRUCT {
+    PyObject_HEAD         
+
+    struct MUI_EventHandlerNode * handler;
+    PyObject *                    win_pyo;
+    struct IntuiMessage           imsg;   /* copied from MUIP_HandleEvent->imsg */
+    LONG                          muikey; /* copied from MUIP_HandleEvent */
+    BYTE                          inobject;
+} PyEventHandlerObject;
+
 typedef struct MCCData_STRUCT {
     PyObject *PythonObject;
 } MCCData;
@@ -310,6 +323,7 @@ static struct Hook OnAttrChangedHook;
 static PyTypeObject PyRasterObject_Type;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
+static PyTypeObject PyEventHandlerObject_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
 
@@ -497,7 +511,7 @@ static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
         return FALSE;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p\n", pyo);
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Setup"))
         return TRUE;
 
@@ -506,7 +520,7 @@ static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
     if (NULL != res)
         result = PyInt_AsLong(res);
     else
-        result = TRUE;
+        result = FALSE;
     Py_XDECREF(res);
     Py_DECREF(pyo);
 
@@ -520,7 +534,7 @@ static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
     PyObject *pyo, *res;
 
     pyo = data->PythonObject;
-    DPRINT("obj=%p, pyo=%p\n", obj, pyo);
+    DPRINT("%s: obj=%p, pyo=%p\n", __FUNCTION__, obj, pyo);
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Cleanup")) {
         Py_INCREF(pyo);
         res = PyObject_CallMethod((PyObject *)pyo, "MCC_Cleanup", NULL); /* NR */
@@ -614,6 +628,52 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
     return 0;
 }
 //-
+//+ mHandleEvent
+static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEvent *msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo, *res;
+    PyEventHandlerObject *ehn_obj;
+    ULONG result;
+
+    DPRINT("obj: %p, ehn: %p\n", obj, msg->ehn);
+
+    pyo = data->PythonObject;
+    DPRINT("pyo: %p-%s\n", pyo, OBJ_TNAME(pyo));
+    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_HandleEvent"))
+        return 0;
+
+    ehn_obj = *(PyEventHandlerObject **)(&msg->ehn[1]);
+    if (NULL == ehn_obj)
+        return 0;
+
+    DPRINT("ehn_obj=%p-%s\n", ehn_obj, OBJ_TNAME_SAFE(ehn_obj));
+
+    if (ehn_obj->handler != msg->ehn) {
+        PyErr_SetString(PyExc_TypeError, "mHandlerEvent called with inconsistant event handler!");
+        return 0;
+    }
+
+    /* Make a copy of data */
+    ehn_obj->imsg = *msg->imsg;
+    ehn_obj->muikey = msg->muikey;
+    ehn_obj->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
+
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_HandleEvent", "O", ehn_obj); /* NR */
+    if (NULL != res) {
+        if (res == Py_None)
+            result = 0;
+        else
+            result = PyLong_AsLong(res);
+        Py_DECREF(res);
+    } else
+        result = 0;
+    Py_DECREF(pyo);
+
+    return result;
+}
+//-
 //+ MCC Dispatcher
 DISPATCHER(mcc)
 {
@@ -624,7 +684,7 @@ DISPATCHER(mcc)
         case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
         case MUIM_Hide         : return mHide       (cl, obj, (APTR)msg);
         case MUIM_Draw         : return mDraw       (cl, obj, (APTR)msg);
-        //case MUIM_HandleEvent  : return mHandleEvent(cl, obj, (APTR)msg);
+        case MUIM_HandleEvent  : return mHandleEvent(cl, obj, (APTR)msg);
     }
 
     return DoSuperMethodA(cl, obj, msg);
@@ -807,7 +867,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "IO:_get", &attr, &format_obj)) /* BR */
         return NULL;
 
-    DPRINT("MUI=%p (%s), attr=0x%08x\n", obj, OBJ_TNAME(self), attr);
+    DPRINT("MUI=%p (%s - %s), attr=0x%08x\n", obj, OCLASS(obj)->cl_ID, OBJ_TNAME(self), attr);
     if (!GetAttr(attr, obj, &value))
         return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08x) failed", (int)attr);
     DPRINT("value=(%d, %u, 0x%08lx)\n", (LONG)value, value, value);
@@ -1576,8 +1636,8 @@ static PyTypeObject PyMUIObject_Type = {
     tp_new          : (newfunc)muiobject_new,
     tp_traverse     : (traverseproc)muiobject_traverse,
     tp_clear        : (inquiry)muiobject_clear,
-
     tp_dealloc      : (destructor)muiobject_dealloc,
+    
     tp_methods      : muiobject_methods,
     tp_getset       : muiobject_getseters,
 };
@@ -1638,8 +1698,8 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 //-
 
 static struct PyMethodDef raster_methods[] = {
-    {"ScaledBlit8",  (PyCFunction) raster_scaled_blit8,  METH_VARARGS, raster_scaled_blit8_doc},
-    {NULL, NULL} /* sentinel */
+    {"ScaledBlit8",  (PyCFunction)raster_scaled_blit8,  METH_VARARGS, raster_scaled_blit8_doc},
+    {NULL} /* sentinel */
 };
 
 static PyTypeObject PyRasterObject_Type = {
@@ -1654,6 +1714,193 @@ static PyTypeObject PyRasterObject_Type = {
     tp_methods      : raster_methods,
 };
 
+
+/*******************************************************************************************
+** EventHandlerObject_Type
+*/
+
+//+ evthandler_new
+static PyObject *
+evthandler_new(PyTypeObject *type, PyObject *args)
+{
+    PyEventHandlerObject *self;
+
+    self = (PyEventHandlerObject *)type->tp_alloc(type, 0); /* NR */
+    if (NULL != self) {
+        self->handler = PyMem_Malloc(sizeof(*self->handler) + sizeof(APTR));
+        if (NULL != self->handler) {
+            *(PyEventHandlerObject **)(&self->handler[1]) = self;
+            return (PyObject *)self;
+        }
+
+        Py_DECREF((PyObject *)self);
+    }
+
+    return NULL;
+}
+//-
+//+ evthandler_traverse
+static int
+evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->win_pyo);
+    return 0;
+}
+//-
+//+ evthandler_clear
+static int
+evthandler_clear(PyEventHandlerObject *self)
+{
+    if (NULL != self->win_pyo) {
+        Object *mo = PyBOOPSIObject_OBJECT(self->win_pyo);
+
+        DPRINT("%s: mo=%p\n", __FUNCTION__, mo);
+        if (NULL != mo)
+            DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)self->handler);
+    }
+ 
+    Py_CLEAR(self->win_pyo);
+    return 0;
+}
+//-
+//+ evthandler_dealloc
+static void
+evthandler_dealloc(PyEventHandlerObject *self)
+{
+    evthandler_clear(self);
+    
+    PyMem_Free(self->handler);
+    
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+//+ evthandler_install
+static PyObject *
+evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
+{
+    PyObject *pyo;
+    static CONST_STRPTR kwlist[] = {"object", "idcmp", "flags", "prio", NULL};
+    Object *mo, *win;
+
+    if (NULL != self->win_pyo) {
+        PyErr_SetString(PyExc_TypeError, "Already installed handler, remove it before!");
+        return NULL;
+    }
+
+    self->handler->ehn_Flags = 0;
+    self->handler->ehn_Priority = 0;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!I|Hb", (char **)kwlist,
+            &PyMUIObject_Type, &pyo,
+            &self->handler->ehn_Events,
+            &self->handler->ehn_Flags,
+            &self->handler->ehn_Priority)) /* BR */
+        return NULL;
+
+    mo = PyBOOPSIObject_OBJECT(pyo);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    win = _win(mo);
+    if (NULL == win) {
+        PyErr_SetString(PyExc_TypeError, "No Window MUI object found!");
+        return NULL;
+    }
+
+    pyo = (PyObject *)muiUserData(win);
+    if (NULL == pyo) {
+        PyErr_SetString(PyExc_TypeError, "No Python object found for the attached MUI window");
+        return NULL;
+    }
+
+    win = PyBOOPSIObject_OBJECT(pyo);
+    PyBOOPSIObject_CHECK_OBJ(win);
+
+    self->handler->ehn_Object = mo;
+    self->handler->ehn_Class = OCLASS(mo);
+
+    DPRINT("install handler  %p on win %p: idcmp=0x%lx, flags=%u, prio=%d\n", self->handler, win,
+        self->handler->ehn_Events,
+        self->handler->ehn_Flags,
+        self->handler->ehn_Priority);
+
+    Py_INCREF(pyo);
+    self->win_pyo = pyo;
+    DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)self->handler);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ evthandler_uninstall
+static PyObject *
+evthandler_uninstall(PyEventHandlerObject *self)
+{
+    Object *win;
+
+    if (NULL == self->win_pyo) {
+        PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
+        return NULL;
+    }
+
+    win = PyBOOPSIObject_OBJECT(self->win_pyo);
+    PyBOOPSIObject_CHECK_OBJ(win);
+
+    DPRINT("uninstall handler %p on win %p\n", self->handler, win);
+    DoMethod(win, MUIM_Window_RemEventHandler, (ULONG)self->handler);
+    Py_CLEAR(self->win_pyo);   
+
+    Py_RETURN_NONE;
+}
+//-
+//+ evthandler_get_idcmp
+static PyObject *
+evthandler_get_idcmp(PyEventHandlerObject *self, void *closure)
+{
+    return PyLong_FromUnsignedLong(self->handler->ehn_Events);
+}
+//-
+
+static PyGetSetDef evthandler_getseters[] = {
+    {"idcmp", (getter)evthandler_get_idcmp, NULL, "IDCMP value", NULL},
+    {NULL} /* sentinel */
+};
+
+static PyMemberDef evthandler_members[] = {
+    {"muikey",    T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
+    {"Class",     T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
+    {"Code",      T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
+    {"Qualifier", T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
+    {"MouseX",    T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
+    {"MouseY",    T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
+    {"Seconds",   T_ULONG, offsetof(PyEventHandlerObject, imsg.Seconds), RO, NULL},
+    {"Micros",    T_ULONG, offsetof(PyEventHandlerObject, imsg.Micros), RO, NULL},
+    {"InObject",  T_BYTE, offsetof(PyEventHandlerObject, inobject), RO, NULL},
+    {NULL} /* sentinel */
+};
+
+static struct PyMethodDef evthandler_methods[] = {
+    {"install",   (PyCFunction)evthandler_install,   METH_VARARGS, NULL},
+    {"uninstall", (PyCFunction)evthandler_uninstall, METH_NOARGS, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyEventHandlerObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.PyEventHandlerObject",
+    tp_basicsize    : sizeof(PyEventHandlerObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    tp_doc          : "Event Handler Objects",
+
+    tp_new          : (newfunc)evthandler_new,
+    tp_traverse     : (traverseproc)evthandler_traverse,
+    tp_clear        : (inquiry)evthandler_clear,
+    tp_dealloc      : (destructor)evthandler_dealloc,
+    
+    tp_members      : evthandler_members,
+    tp_methods      : evthandler_methods,
+    tp_getset       : evthandler_getseters,
+};
+ 
 
 /*******************************************************************************************
 ** Module Functions
@@ -1682,7 +1929,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     PyObject *pyapp;
     Object *app;
     
-    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &pyapp))
+    if (!PyArg_ParseTuple(args, "O!:mainloop", &PyMUIObject_Type, &pyapp))
         return NULL;
 
     app = PyBOOPSIObject_OBJECT(pyapp);
@@ -1844,6 +2091,7 @@ INITFUNC(void) {
     if (PyType_Ready(&PyRasterObject_Type) < 0) return;
     if (PyType_Ready(&PyBOOPSIObject_Type) < 0) return;
     if (PyType_Ready(&PyMUIObject_Type) < 0) return;
+    if (PyType_Ready(&PyEventHandlerObject_Type) < 0) return;
 
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
@@ -1851,6 +2099,7 @@ INITFUNC(void) {
 
     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
+    ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
 }
 //-
 
