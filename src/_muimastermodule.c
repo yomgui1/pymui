@@ -1,150 +1,27 @@
-/***************************************************************************//**
- *** \file _muimastermodule.c
- *** \author ROGUEZ "Yomgui" Guillaume
- *** \date 2007/06/06
- ***
- *** \brief Python wrapper for muimaster.library
- ***
- *******************************************************************************/
+/******************************************************************************
+Copyright (c) 2009 Guillaume Roguez
 
-//+ Dev notes
-/* Dev notes:
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
 
-***** Ma vie, mon oeuvre... *****
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
 
-* "dur dur... très dur!"
-
-Pour faire un 'wrapper' Python pour MUI, tout le problème est qu'il faut savoir quand un objet meurt (= OM_DISPOSE).
-Car comme l'objet Python va garder une référence  sur cet objet MUI (ou BOOPSI comme on veut...), il faut donc être sur
-que si on détruit ce dernier, l'objet MUI le soit aussi (ca c'est la partie simple: on appel MUI_DisposeObject () durant le dispose
-de l'objet python), mais aussi indiquer à l'objet python que l'objet MUI est détruit si jamais la méthode OM_DISPOSE de ce dernier
-est appelée (extérieurement, pas depuis le wrapper bien-sûr pour ne pas faire une boucle-infinie avec le premier cas).
-Evidement c'est ce dernier cas où tous les problèmes surgissent...
-
-Pourquoi? Il faut être certain d'être notifié (du côté python) de l'appel à la méthode OM_DISPOSE! En effet, les méthodes pour Python
-associées vont forcement utiliser cet object MUI, aui doit alors être valide.
-
-De quoi dispose t'on alors?
-
-1) Ne cherchons pas du côté de la classe Notify. Le système de notification de MUI ne fonctionne que sur des changenents
-de valeurs des attributs des objets... pas des méthodes.
-
-2) BOOPSI? Pouvoir savoir si OM_DISPOSE est appelé à coups-sur serait de contrôler le code du dispatcher de l'objet MUI.
-
-Comment faire cela? Ils y a plusieurs possibilitées:
-
-    a) Faire une classe 'wrapper' dont la super-classe serait identique à l'objet BOOPSI où on aurait le contrôle du dispatcher,
-    en particulier de notre méthode OM_DISPOSE et où on appelerait CoerceMethod() avec la classe d'origine de l'instance wrappée.
-    
-    => problèmes: vu que la classe d'origine s'attend à avoir ses données d'instance rattachés au pointeur associé il faut donc copier
-    ces données juste après la création donc pendant OM_NEW. Ainsi la classe d'origine n'ira pas taper n'importe où en mémoire.
-    C'est faisable, mais... quand on crée l'objet avec notre custom classe on passe les arguments comme si c'était la vraie classe, là c'est ok.
-    Mais comment fait-on pour une instance déjà créer, ailleur que par ntore code Python? On ne peut-pas créer une instance de notre custom class
-    pour contenir cette instance car pour faire cela notre custom classe doit avoir comme super la même classe que l'instance d'origine.
-    Or on ne connait pas les paramètres qu'il faut employer avec cette super classe! Il est trés parfaitement possible d'avoir des paramètres
-    obligatoires qu'on ne peut deviner. Ceci nous empêche alors d'utilisé des instances d'objets BOOPSI (= MUI) crées ailleur
-    que par notre module Python. Trop restrictif... abandonnons cette solution. Et même si on on fait une impasse sur les instances externes
-    d'autres problèmes sont à résoudre comme des classes qui gardent des pointeurs sur les instances (alors qu'on va justement créer une nouvelle
-    instance qui wrappe la première...), ce que je soupconne fortement car d'après quelques tests mes instance de classe Window ne veulent pas
-    êtres   reconnues par la classe Application (et donc rattachées...).
-    
-    b)  Disons qu'on garde alors notre instance qu'on veut embarquer dans une objet Python, on va donc s'attaquer juste au hook du dispatcher
-    qui est sauvé dans la structure IClass assocée avec l'instance. Remplaçons donc les fonctions h_Entry et h_SubEntry de façon à faire executer
-    notre propre dispatcher, qui lui-même appelera le dispatcher d'origine qu'on aura préalablement sauvé (d'ailleur rien que ce point est un problème).
-    
-    => problèmes: il faut savoir que l'adresse du hook est l'adresse de la structure IClass puisque la structure Hook y est embarquée au début.
-    C'est pour cela que le prototype du dispatcher commence par struct IClass * et non pas par struct Hook * comme tout hook car en fait
-    c'est la même chose ici. Le dispatcher étant tout simplement appelé par CallHook (ou CallHookA). On peut ce dire 'cool! Alors appelons
-    dans notre dispatcher custom le dispatcher d'origine!'... Et bah non, car comme on vient de le dire, on n'appel pas la fonction directement
-    mais on passe par CallHook, qui s'attend à avoir un pointeur sur un hook. Mais on ne peut pas passer une nouvelle structure hook
-    remplie avec les fonctions d'origines, car le pointeur change donc les données qui suivent la structure ne sont plus celle de la structure IClass.
-    Donc, soit juste avant d'appeler avec CallHook le "hook-IClass" on revient avec les fonctions d'origines et on remet notre dispatcher
-    just après l'appel, et ainsi la classe d'origine n'y voit que du feu (mais cela rajoute du code qui ralentit le dispatcher), soit on appel comme
-    un gros cochon la fonction h_Entry "à la main" (avec tout ce que cela implique pour MorphOS = setup des registres 68k,
-    appel de la couche émulation, ...). Alors déjà c'est franchement plus très propre tout cela mais rajoutons qu'on est en train de modifier le code
-    de la structure IClass, qui nous appartient pas du tout et donc on ne gère rien niveau vie (on retire comment notre disptacher si la classe
-    doit  être détruite?). Et c'est pas tout car on touche à des classes étant quasiement à coups-sûr utilisées ailleur que par notre module.
-    Résultat si notre module n'est pas 100% robuste on crash tous le système... et quand on quitte python on a intêret à faire le ménage proprement!
-    Alors solution envisageable mais très peut fiable (et je n'ai même pas parlé comment enregistré les fonctions du hook d'orginine!).
-
-    c) Patcher une fonction:
-    - J'ai tenté de patcher DisposeObject() de l'intuition.library. Effectivement cette fonction est bien appelé fréquement pour détruire un object.
-    Malheureusement cela n'est pas systèmatique, on peut-très bien appeler 'à la main' la méthode OM_DIPOSE et le meilleur (ou pire..) des exemples
-    pour cela est la fonction MUI_DiposeObject() de la muimaster.library. Patcher cette dernière alors (aussi...)? Cela n'arrange en rien
-    l'appel 'à la main'. Donc on oublis.
-    
-    d) Il me reste plus comme choix de patcher la rootclass... C'est pas très propre, mais au moins on patch uniquement qu'une seule classe.
-    L'idée est donc de modifier (comme expliqué en 2)) le hook de la classe root pour appeler notre prope dispatcher, propre à avertir
-    le pendant pythonesque de l'objet de la décision morbide de l'objet BOOPSI (donc MUI par l'occasion).
-    Reste à savoir où sauver les anciennes valeurs du hook. Sachant de plus qu'il ne faut faire cela qu'une seule fois (on va pas cummuler
-    les patches n'est-ce pas...) et vu que notre module peut-être initialisé plusieur fois (au moins une fois par tâche utilisant
-    la bibliothèque Python), le plus simple est d'externaliser la procédure de patch dans un code à part, en attendant que le système
-    d'initialisation des modules Python pour MorphOS implémente un appel unique (ce que je ne pense pas au passage).
-    Maintenant qu'on est d'accord, sur la façon de connaìt§re à coup-sûr la mort d'un objet, il faut trouver un moyen de mettre en relation,
-    l'objet MUI avec sont pendant Python.
-    Côté Python pas de pb, c'est enregistrer par notre module dans la structure Data de l'objet Python.
-    Côté BOOPSI maintenant... Sauf erreur de ma part, impossible de mettre un pointeur (celui de notre objet Python) quelque part dans l'instance
-    de l'object :-( . J'ai vérifé 20x, rien!
-    Unique façon restante, utiliser une table de correspondance BOOPSI -> Python. Pour accélérer la recherche dans cette table
-    on pourra utiliser une indexation par hachage du pointeur de l'objet BOOPSI. Reste à dimensionner tout cela pour que cela reste
-    efficace en terme d'accés.
-    Dernier point pour la route: comme les modules sont liés (en terme de données) au process exécutant, la table de correspondance
-    l'est donc aussi!
-    Donc si un process A demande de tuer un objet x et qu'un process B utilisant le module Python posséde un objet Python y
-    lié avec cet objet x, comment allons nous retrouver cette table et comment avertir le process B?
-    Il faut donc lier cette table avec le code de notre dispatcher, table qui contiendra des objets Python de différentes instances
-    de notre module. Les objets python seront déliés de la partie BOOPSI dans le dispatcher. L'accés au data du côté Python sera
-    protégée par l'utilisation d'un sémaphore pour gérer l'aspect multi-processes. Comme un objet BOOPSI peut-être lié à de multiples
-    objets Python, on utilisera une liste pour chaque objet BOOPSI, donnant ces objets Python liés.
-
-- Ré-évalutation:
-    Due à la complexité du code généré par une version où chaque objet BOOPSI peut-être associé avec plusieurs objets Python
-    (cas de plusieurs appli utilisant le module, se partagant un objets BOOPSI), une simplification s'impose...
-    
-    Définition des régles:
-        REG-01: associativité 1-1 entre BOOPSI et Python.
-        REG-02: code non re-entrant (même pour la destruction, donc attention!)
-        REG-03: pas de communications d'objets entre tâches.
-        REG-04: seulement la tâche ayant associée l'object python et l'objet boopsi peut les dissocier.
-        
-- News du 01/11/07:
-    L'implémentation du 2-d aurait du fonctionner...  en théorie. Mais la pratique ne l'est pas du tout! Après une discussion IRC
-    avec Stuntzi il s'avère que MUI ne suit pas les règles de BOOPSI, encore moins les appels indirects aux dispatchers des classes internes.
-    Ceci expliquant l'impossibilité de patcher les dispatchers des classes MUI => il ne sont pas appeler par le pointeur dans la structure IClass.
-    Devant ce fait il ne reste donc plus qu'une seule façon d'opérer: sous-classer toute classe utilisée. Cette dernière implique
-    certaines restrictions que je ne souhaitait pas (cela explique que j'en avais pas encore parlé):
-        - Le module ne pourra qu'opèrer sur des objets créé par lui-même. Aucun objet de l'extérieur (=déjà créé).
-        - Impossible de passer un objet X du process l'ayant créé vers un autre. MUIM_Application_PushMethod ne peut-être utilisé.
-        (Ceci n'est pas encore certain... il faudra y réfléchir après l'implémentation de la phase 1).
-        - Pas d'objets 'builtins' => on ne peut pas les sous-classer!
-
-- Autre soucis: quitter Python doit de-allouer tout objets, même ceux qui ont encore des ref > 0. Le pb évident c'est qu'on ne peut pas le faire
-dans n'importe quel ordre: si on prend un objet A ayant une référence sur un objet B, qu'on détruit l'objet B puis le A, si le A doit opérérer
-sur l'objet B on est dans le baba! A va accéder à un objet mort, donc de la mémoire aléatoire => crash.
-C'est ce qui arrive en ce moment (20080107) quand je quitte Python: l'objet Application n'est pas détruit le premier (aléas l'algorythme interne
-de Python quand il détruit tout), mais par exemple un objet Text inclus dans une fenêtre, incluse dans l'appli...
-
-Solution:
-=> augmenter le compteur de réf de l'objet Python ou un autre privé quand l'objet MUI est "parenté" dans un autre objet MUI, à
-l'instar de Python.
-=> Je pense que cela sera un compteur privé (histoire de pas tout mélanger).
-
-3) (News du 01/09/09) Après qq années à réfléchir (...) il y a beaucoup plus simple en faite...
-
-- Pour le problème de savoir quand on objet MUI est détruit pour ne plus être utilisé du côté python:
-=> ON S'EN TAPE! (La solution ultime à tous les problèmes du monde :-D)
-On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas être 'disposé' par personne, sauf:
-  - Par l'application elle-même, quand l'objet y est lié, directement ou non, car l'application est 'disposée' par notre module.
-  - Par le type Python l'encapsulant, mais seulement si l'objet MUI n'est pas lié (MUA_Parent == NULL),
-    exception faite de l'application elle-même évidement (car MUIA_Parent(app) == app).
-100 ligne de blabla résolus...
-
-- Reste le problème des références sur des choses données en paramétres à des fonctions BOOPSI/MUI qui les enregistes.
-=> pas solutionnable localement, c'est au programmeur d'en tenire compte!
-=> Notes pour la documentation utilisateur:
-   Expliquer le pb de garder des références des valeurs données.
-*/
-//-
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+******************************************************************************/
 
 /*
 ** Project Includes

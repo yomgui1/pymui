@@ -1,3 +1,28 @@
+###############################################################################
+# Copyright (c) 2009 Guillaume Roguez
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following
+# conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+# OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+###############################################################################
+
 from pymui.defines import TAG_USER
 from pymui import String, Group
 
@@ -7,8 +32,8 @@ MUIC_Textinputscroll = "Textinputscroll.mcc"
 MCC_TI_TAGBASE = TAG_USER | ((1307 << 16) + 0x712)
 MCC_TI_ID = lambda x: MCC_TI_TAGBASE + x
 
-MCC_Textinput_Version 29
-MCC_Textinput_Revision 1
+MCC_Textinput_Version  = 29
+MCC_Textinput_Revision = 1
 
 MUIM_Textinput_ExternalEdit = MCC_TI_ID(1)        # V1
 MUIM_Textinput_SaveToFile = MCC_TI_ID(5)          # V1

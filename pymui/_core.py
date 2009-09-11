@@ -1,7 +1,27 @@
-###
-## \file _core.py
-## \author ROGUEZ "Yomgui" Guillaume
-##
+###############################################################################
+# Copyright (c) 2009 Guillaume Roguez
+#
+# Permission is hereby granted, free of charge, to any person
+# obtaining a copy of this software and associated documentation
+# files (the "Software"), to deal in the Software without
+# restriction, including without limitation the rights to use,
+# copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following
+# conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+# OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+###############################################################################
 
 import sys, functools
 
@@ -16,6 +36,7 @@ def debug(x, *args):
 
 try:
     assert __name__ != "__main__"
+    import _muimaster
     from _muimaster import *
 except: # For testing => use stubs
     class PyBOOPSIObject(object):
@@ -78,6 +99,9 @@ class ArrayOf(object):
     def set(self, obj):
         return array.array(self.pointer_base, obj).tostring()
 
+# Transform the C EventHandler type into a classes to permit to add attributes
+class EventHandler(_muimaster.EventHandler):
+    pass
 
 ##
 ## MetaMCC takes some predefined class attributes and use it to fill the class dict
@@ -88,13 +112,13 @@ class MetaMCC(type):
     def __new__(metacl, name, bases, dct):
         clid = dct.pop('CLASSID', None)
         if not clid:
-            clid = [base._classid for base in bases if hasattr(base, '_classid')]
+            clid = [base._mclassid for base in bases if hasattr(base, '_mclassid')]
             if not len(clid):
                 raise TypeError("No valid MUI class name found")
             clid = clid[0]
 
-        dct['_'+name+'__muiclassid'] = clid
-        dct['_'+name+'__id_meths'] = dct.pop('METHODS', {})
+        dct['_mclassid'] = clid
+        dct['_id_meths'] = dct.pop('METHODS', {})
 
         kw = {}
         attrs = {}
@@ -214,12 +238,12 @@ class Notify(PyMUIObject, BoopsiWrapping):
         self._notify_cbdict = {} 
         
         if kwds.pop('MCC', False):
-            superid = self.__class__.__bases__[0].__muiclassid
+            superid = self.__class__.__bases__[0]._mclassid
         else:
             superid = None
 
         attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
-        self._create(self.__muiclassid, superid, ((inf.value,v) for inf, v in attrs))
+        self._create(self._mclassid, superid, ((inf.value,v) for inf, v in attrs))
         
         for inf, v in attrs:
             if isinstance(inf.format, basestring):
@@ -428,6 +452,15 @@ class Application(Notify):
         self._children.append(win)
         win.SetApp(self)
 
+class StrAsInt:
+    @staticmethod
+    def get(value):
+        return value
+
+    @staticmethod
+    def set(value):
+        return value
+
 class Window(Notify):
     CLASSID = MUIC_Window
     ATTRIBUTES = {
@@ -448,7 +481,7 @@ class Window(Notify):
         MUIA_Window_DragBar:                 ('DragBar',                 'b', 'i..'),
         MUIA_Window_FancyDrawing:            ('FancyDrawing',            'b', 'isg'),
         MUIA_Window_Height:                  ('Height',                  'i', 'i.g'),
-        MUIA_Window_ID:                      ('ID',                      'I', 'isg'),
+        MUIA_Window_ID:                      ('ID',                      StrAsInt, 'isg'),
         MUIA_Window_InputEvent:              ('InputEvent',              'p', '..g'),
         MUIA_Window_IsSubWindow:             ('IsSubWindow',             'b', 'isg'),
         MUIA_Window_LeftEdge:                ('LeftEdge',                'i', 'i.g'),
@@ -498,12 +531,6 @@ class Window(Notify):
                     break
             if ID == -1:
                 raise RuntimeError("No more available ID")
-        else:
-            if isinstance(ID, str):
-                ID = sum(ord(x) << (24-i*8) for i, x in enumerate(ID[:4]))
-            elif not isinstance(ID, (int, long)):
-                raise ValueError("ID shall be a int or long, not", type(ID).__name__)
-
         self.__window_ids.append(ID)
 
         # A root object is mandatory to create the window
@@ -774,8 +801,8 @@ class Text(Area):
             kwds['ControlChar'] = key
         return cl(**kwds)
 
-SimpleButton = functools.partial(Text.Button, key=None)
-KeyButton = Text.Button
+SimpleButton = functools.partial(Text.KeyButton, key=None)
+KeyButton = Text.KeyButton
 
 
 class Gadget(Area):
@@ -935,10 +962,10 @@ class Virtgroup(Group):
         kwds['PageMode'] = True
         return cl(**kwds)
 
-HGroupV = Virtgroup.HVirtgroup
-VGroupV = Virtgroup.VVirtgroup
-ColGroupV = Virtgroup.ColVirtgroup
-RowGroupV = Virtgroup.RowVirtgroup
+HGroupV = Virtgroup.HGroup
+VGroupV = Virtgroup.VGroup
+ColGroupV = Virtgroup.ColGroup
+RowGroupV = Virtgroup.RowGroup
 PageGroupV = Virtgroup.PageGroup
 
 
