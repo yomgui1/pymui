@@ -37,6 +37,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 #include <clib/debug_protos.h>
 #include <cybergraphx/cybergraphics.h>
+#include <libraries/asl.h>
 
 #include <proto/alib.h>
 #include <proto/exec.h>
@@ -47,6 +48,8 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <proto/cybergraphics.h>
 #include <proto/layers.h>
 #include <proto/graphics.h>
+
+#include <sys/param.h>
 
 
 extern void dprintf(char*fmt, ...);
@@ -178,9 +181,11 @@ typedef struct PyEventHandlerObject_STRUCT {
 
     struct MUI_EventHandlerNode * handler;
     PyObject *                    win_pyo;
+    LONG                          muikey; /* copied from MUIP_HandleEvent msg */
     struct IntuiMessage           imsg;   /* copied from MUIP_HandleEvent->imsg */
-    LONG                          muikey; /* copied from MUIP_HandleEvent */
+    struct TabletData             tabletdata; /* copied from MUIP_HandleEvent msg */
     BYTE                          inobject;
+    BYTE                          hastablet;
 } PyEventHandlerObject;
 
 typedef struct MCCData_STRUCT {
@@ -371,6 +376,89 @@ attrs2tags(PyObject *self, PyObject *attrs)
     return NULL;
 }
 //-
+//+ IntuiMsgFunc
+static void
+IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *imsg)
+{
+    if (IDCMP_REFRESHWINDOW == imsg->Class)
+        DoMethod(req->fr_UserData, MUIM_Application_CheckRefresh);
+}
+//-
+//+ getfilename
+/* Stolen from MUI psi.c demo */
+STRPTR
+getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL save)
+{
+    static char buf[MAXPATHLEN];
+    struct FileRequester *req;
+    struct Window *w = NULL;
+    static LONG left=-1,top=-1,width=-1,height=-1;
+    Object *app = NULL;
+    char *res = NULL;
+    static const struct Hook IntuiMsgHook;
+
+    INIT_HOOK(&IntuiMsgHook, IntuiMsgFunc)
+
+    get(win, MUIA_ApplicationObject, &app);
+    if (NULL != app) {
+        get(win, MUIA_Window_Window, &w);
+        if (NULL != win) {
+            if (-1 == left) {
+                left   = w->LeftEdge + w->BorderLeft + 2;
+                top    = w->TopEdge + w->BorderTop + 2;
+                width  = w->Width - w->BorderLeft - w->BorderRight - 4;
+                height = w->Height - w->BorderTop - w->BorderBottom - 4;
+            }
+
+            if (NULL == init_drawer)
+                init_drawer = "PROGDIR:";
+
+            if (NULL == init_pat)
+                init_pat = "#?";
+         
+            req = MUI_AllocAslRequestTags(ASL_FileRequest,
+                                          ASLFR_Window         , (ULONG)w,
+                                          ASLFR_TitleText      , (ULONG)title,
+                                          ASLFR_InitialLeftEdge, left,
+                                          ASLFR_InitialTopEdge , top,
+                                          ASLFR_InitialWidth   , width,
+                                          ASLFR_InitialHeight  , height,
+                                          ASLFR_InitialDrawer  , (ULONG)init_drawer,
+                                          ASLFR_InitialPattern , (ULONG)init_pat,
+                                          ASLFR_DoSaveMode     , save,
+                                          ASLFR_DoPatterns     , TRUE,
+                                          ASLFR_RejectIcons    , TRUE,
+                                          ASLFR_UserData       , (ULONG)app,
+                                          ASLFR_IntuiMsgFunc   , (ULONG)&IntuiMsgHook,
+                                          TAG_DONE);
+            if (NULL != req) {
+                set(app, MUIA_Application_Sleep, TRUE);
+                
+                if (MUI_AslRequestTags(req,TAG_DONE)) {
+                    if (NULL != *req->fr_File) {
+                        res = buf;
+                        stccpy(buf, req->fr_Drawer, sizeof(buf));
+                        AddPart(buf, req->fr_File, sizeof(buf));
+                    }
+
+                    left   = req->fr_LeftEdge;
+                    top    = req->fr_TopEdge;
+                    width  = req->fr_Width;
+                    height = req->fr_Height;
+                }
+                
+                MUI_FreeAslRequest(req);
+                set(app, MUIA_Application_Sleep, FALSE);
+            } else
+                fprintf(stderr, "MUI_AllocAslRequestTags() failed\n");
+        } else
+            fprintf(stderr, "no Window for win obj %p\n", win);
+    } else
+        fprintf(stderr, "no app for win obj %p\n", win);
+
+    return res;
+}
+//-
 
 
 /*******************************************************************************************
@@ -531,10 +619,18 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
         return 0;
     }
 
+    Py_INCREF(ehn_obj);
+
     /* Make a copy of data */
     ehn_obj->imsg = *msg->imsg;
     ehn_obj->muikey = msg->muikey;
     ehn_obj->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
+    ehn_obj->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+
+    if (ehn_obj->hastablet)
+        ehn_obj->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+    else
+        memset(&ehn_obj->tabletdata, 0, sizeof(ehn_obj->tabletdata));
 
     Py_INCREF(pyo);
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_HandleEvent", "O", ehn_obj); /* NR */
@@ -547,6 +643,8 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     } else
         result = 0;
     Py_DECREF(pyo);
+
+    Py_DECREF(ehn_obj);
 
     return result;
 }
@@ -1417,28 +1515,75 @@ muiobject_get_mbottom(PyObject *self, void *closure)
     return PyInt_FromLong(_mbottom(mo));
 }
 //-
-//+ muiobject_get_mwidth
+//+ muiobject_get_mdim
 static PyObject *
-muiobject_get_mwidth(PyObject *self, void *closure)
+muiobject_get_mdim(PyObject *self, void *closure)
 {
     Object *mo;
 
     mo = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(mo);
 
-    return PyInt_FromLong(_mwidth(mo));
+    if (0 == closure)
+        return PyInt_FromLong(_mwidth(mo));
+    else
+        return PyInt_FromLong(_mheight(mo));
 }
 //-
-//+ muiobject_get_mheight
+//+ muiobject_get_mbox
 static PyObject *
-muiobject_get_mheight(PyObject *self, void *closure)
+muiobject_get_mbox(PyObject *self, void *closure)
 {
     Object *mo;
 
     mo = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(mo);
 
-    return PyInt_FromLong(_mheight(mo));
+    return Py_BuildValue("(HHHH)", _mleft(mo), _mtop(mo), _mright(mo), _mbottom(mo));
+}
+//-
+//+ muiobject_get_sdim
+static PyObject *
+muiobject_get_sdim(PyObject *self, void *closure)
+{
+    Object *mo;
+    struct Screen *scr;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    scr = _screen(mo);
+    if (NULL == scr) {
+        PyErr_SetString(PyExc_SystemError, "No valid Screen structure found");
+        return NULL;
+    }
+
+    if (0 == closure)
+        return PyInt_FromLong(scr->Width);
+    else
+        return PyInt_FromLong(scr->Height);
+}
+//-
+//+ muiobject_get_srange
+static PyObject *
+muiobject_get_srange(PyObject *self, void *closure)
+{
+    Object *mo;
+    struct Screen *scr;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    scr = _screen(mo);
+    if (NULL == scr) {
+        PyErr_SetString(PyExc_SystemError, "No valid Screen structure found");
+        return NULL;
+    }
+
+    if (0 == closure)
+        return PyInt_FromLong(scr->Width-1);
+    else
+        return PyInt_FromLong(scr->Height-1);
 }
 //-
 //+ muiobject_get__superid
@@ -1482,12 +1627,17 @@ muiobject_set__children(PyMUIObject *self, PyObject *value, void *closure)
 //-
 
 static PyGetSetDef muiobject_getseters[] = {
-    {"mleft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
-    {"mright",  (getter)muiobject_get_mright,  NULL, "_mright(obj)",  NULL},
-    {"mtop",    (getter)muiobject_get_mtop,    NULL, "_mtop(obj)",    NULL},
-    {"mbottom", (getter)muiobject_get_mbottom, NULL, "_mbottom(obj)", NULL},
-    {"mwidth",  (getter)muiobject_get_mwidth,  NULL, "_mwidth(obj)",  NULL},
-    {"mheight", (getter)muiobject_get_mheight, NULL, "_mheight(obj)", NULL},
+    {"MLeft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
+    {"MRight",  (getter)muiobject_get_mright,  NULL, "_mright(obj)",  NULL},
+    {"MTop",    (getter)muiobject_get_mtop,    NULL, "_mtop(obj)",    NULL},
+    {"MBottom", (getter)muiobject_get_mbottom, NULL, "_mbottom(obj)", NULL},
+    {"MHidth",  (getter)muiobject_get_mdim,    NULL, "_mwidth(obj)",   (APTR) 0},
+    {"MHeight", (getter)muiobject_get_mdim,    NULL, "_mheight(obj)",  (APTR)~0},
+    {"MBox",    (getter)muiobject_get_mbox,    NULL, "4-Tuple of the bounded box object values", NULL},
+    {"SWidth",  (getter)muiobject_get_sdim,    NULL, "Screen Width",   (APTR) 0},
+    {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
+    {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
+    {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
     {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
     {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
     {NULL} /* sentinel */
@@ -1735,22 +1885,42 @@ evthandler_get_idcmp(PyEventHandlerObject *self, void *closure)
     return PyLong_FromUnsignedLong(self->handler->ehn_Events);
 }
 //-
+//+ evthandler_get_normtablet
+static PyObject *
+evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
+{
+    if (0 == closure)
+        return PyFloat_FromDouble((double)self->tabletdata.td_TabletX / self->tabletdata.td_RangeX);
+    else
+        return PyFloat_FromDouble((double)self->tabletdata.td_TabletY / self->tabletdata.td_RangeY);
+}
+//-
 
 static PyGetSetDef evthandler_getseters[] = {
     {"idcmp", (getter)evthandler_get_idcmp, NULL, "IDCMP value", NULL},
+    {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
+    {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
     {NULL} /* sentinel */
 };
 
 static PyMemberDef evthandler_members[] = {
-    {"muikey",    T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
-    {"Class",     T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
-    {"Code",      T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
-    {"Qualifier", T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
-    {"MouseX",    T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
-    {"MouseY",    T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
-    {"Seconds",   T_ULONG, offsetof(PyEventHandlerObject, imsg.Seconds), RO, NULL},
-    {"Micros",    T_ULONG, offsetof(PyEventHandlerObject, imsg.Micros), RO, NULL},
-    {"InObject",  T_BYTE, offsetof(PyEventHandlerObject, inobject), RO, NULL},
+    {"muikey",       T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
+    {"Class",        T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
+    {"Code",         T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
+    {"Qualifier",    T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
+    {"MouseX",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
+    {"MouseY",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
+    {"Seconds",      T_ULONG, offsetof(PyEventHandlerObject, imsg.Seconds), RO, NULL},
+    {"Micros",       T_ULONG, offsetof(PyEventHandlerObject, imsg.Micros), RO, NULL},
+    {"InObject",     T_BYTE, offsetof(PyEventHandlerObject, inobject), RO, NULL},
+    {"ValidTD",      T_BYTE, offsetof(PyEventHandlerObject, hastablet), RO, NULL},
+    {"td_TabletX",   T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_TabletX), RO, NULL},
+    {"td_TabletY",   T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_TabletY), RO, NULL},
+    {"td_RangeX",    T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_RangeX), RO, NULL},
+    {"td_RangeY",    T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_RangeY), RO, NULL},
+    {"td_XFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_XFraction), RO, NULL},
+    {"td_YFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_YFraction), RO, NULL},
+
     {NULL} /* sentinel */
 };
 
@@ -1837,11 +2007,38 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     DPRINT("bye mainloop...\n");
     Py_RETURN_NONE;
 }
-//- _muimaster_mainloop
+//-
+//+ _muimaster_getfilename
+static PyObject *
+_muimaster_getfilename(PyObject *self, PyObject *args)
+{
+    PyBOOPSIObject *pyo;
+    Object *mo, *win;
+    STRPTR filename, title;
+    STRPTR init_drawer = NULL;
+    STRPTR init_pat = NULL;
+    UBYTE save = FALSE;
+
+    if (!PyArg_ParseTuple(args, "O!s|zzb:mainloop", &PyMUIObject_Type, &pyo, &title, &init_drawer, &init_pat, &save))
+        return NULL;
+
+    mo = PyBOOPSIObject_OBJECT(pyo);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    win = mo;
+    get(mo, MUIA_WindowObject, &win);
+    filename = getfilename(win, title, init_drawer, init_pat, save);
+    if (NULL == filename)
+        Py_RETURN_NONE;
+
+    return PyString_FromString(filename);
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 

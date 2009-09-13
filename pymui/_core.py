@@ -69,6 +69,10 @@ except: # For testing => use stubs
 from defines import *
 import weakref
 
+## Currently private defines, but very useful
+MUIA_Window_TabletMessages = 0x804217b7
+##
+
 MUI_EventHandlerRC_Eat = (1<<0)
 
 class AttributeInfo:
@@ -499,6 +503,7 @@ class Window(Notify):
         MUIA_Window_SizeGadget:              ('SizeGadget',              'b', 'i..'),
         MUIA_Window_SizeRight:               ('SizeRight',               'b', 'i..'),
         MUIA_Window_Sleep:                   ('Sleep',                   'b', '.sg'),
+        MUIA_Window_TabletMessages:          ('TabletMessages',          'b', 'i.g'),
         MUIA_Window_Title:                   ('Title',                   's', 'isg'),
         MUIA_Window_TopEdge:                 ('TopEdge',                 'i', 'i.g'),
         MUIA_Window_UseBottomBorderScroller: ('UseBottomBorderScroller', 'b', 'isg'),
