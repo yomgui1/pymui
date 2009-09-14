@@ -743,13 +743,15 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     DPRINT("ClassID: '%s'\n", classid);
     self->node->n_IsMUI = PyMUIObject_Check(self); 
 
-    if ((NULL != superid) && (self->node->n_IsMUI)) {
+    if (self->node->n_IsMUI) {
         CreatedMCCNode *node = NULL, *next;
 
         DPRINT("SuperID: '%s'\n", superid);
+        if (NULL == classid)
+            classid = superid;
         
         ForeachNode(&gCreatedMCCList, next) {
-            if ((NULL != next->n_MCC->mcc_Super->cl_ID) && !strcmp(superid, next->n_MCC->mcc_Super->cl_ID)) {
+            if ((NULL != next->n_MCC->mcc_Super->cl_ID) && !strcmp(classid, next->n_MCC->mcc_Super->cl_ID)) {
                 node = next;
                 break;
             }
@@ -762,7 +764,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
                 return NULL;
             }
 
-            mcc = MUI_CreateCustomClass(NULL, superid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
+            mcc = MUI_CreateCustomClass(NULL, classid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
             if (NULL == mcc) {
                 free(node);
                 PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
