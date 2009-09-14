@@ -24,7 +24,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 ******************************************************************************/
 
 /*
-** Project Includes
+** Top Includes
 */
 
 #include <Python.h>
