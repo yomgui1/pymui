@@ -1897,9 +1897,25 @@ evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
         return PyFloat_FromDouble((double)self->tabletdata.td_TabletY / self->tabletdata.td_RangeY);
 }
 //-
+//+ evthandler_get_up
+static PyObject *
+evthandler_get_up(PyEventHandlerObject *self, void *closure)
+{
+    return PyBool_FromLong(self->imsg.Code & IECODE_UP_PREFIX);
+}
+//-
+//+ evthandler_get_code
+static PyObject *
+evthandler_get_code(PyEventHandlerObject *self, void *closure)
+{
+    return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
+}
+//-
 
 static PyGetSetDef evthandler_getseters[] = {
     {"idcmp", (getter)evthandler_get_idcmp, NULL, "IDCMP value", NULL},
+    {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
+    {"Code", (getter)evthandler_get_code, NULL, "IntuiMessage Code field (without UP prefix if exists)", NULL},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
     {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
     {NULL} /* sentinel */
@@ -1908,7 +1924,7 @@ static PyGetSetDef evthandler_getseters[] = {
 static PyMemberDef evthandler_members[] = {
     {"muikey",       T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
     {"Class",        T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
-    {"Code",         T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
+    {"RawCode",      T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
     {"Qualifier",    T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
     {"MouseX",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
     {"MouseY",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
