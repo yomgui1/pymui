@@ -1349,7 +1349,7 @@ muiobject_dealloc(PyMUIObject *self)
     node = ((PyBOOPSIObject *)self)->node;
     DPRINT("self=%p (%s): clear()\n", self, OBJ_TNAME(self));
 
-    muiobject_clear(self); 
+    muiobject_clear(self);
 
     DPRINT("self=%p (%s), obj=%p, node=%p: MUI dealloc\n", self, OBJ_TNAME(self), mo, node);
     if (NULL != mo) {
@@ -1640,7 +1640,7 @@ muiobject_set__children(PyMUIObject *self, PyObject *value, void *closure)
 
     Py_DECREF(self->children);
     self->children = PyList_New(0); /* NR */
-    return NULL != self->children;
+    return NULL == self->children;
 }
 //-
 //+ muiobject_get_rp
