@@ -699,7 +699,7 @@ class Area(Notify):
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
-        if v:
+        if v is not None:
             kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
         super(Area, self).__init__(**kwds)
 

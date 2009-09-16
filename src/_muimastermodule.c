@@ -465,6 +465,43 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
 ** MCC MUI Object
 */
 
+//+ mAskMinMax
+static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *msg)
+{
+    MCCData *data = INST_DATA(cl, obj);  
+    PyObject *pyo, *res; 
+    WORD minw, defw, maxw, minh, defh, maxh;
+    
+    DoSuperMethodA(cl, obj, msg);
+
+    pyo = data->PythonObject;
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_AskMinMax"))
+        return 0;
+
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", NULL); /* NR */
+    Py_DECREF(pyo); 
+    
+    if (NULL != res) {
+        int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
+
+        Py_DECREF(res); 
+        if (!result)
+            return 0;
+    }
+
+    msg->MinMaxInfo->MinWidth  += minw;
+    msg->MinMaxInfo->DefWidth  += defw;
+    msg->MinMaxInfo->MaxWidth  += maxw;
+
+    msg->MinMaxInfo->MinHeight += minh;
+    msg->MinMaxInfo->DefHeight += defh;
+    msg->MinMaxInfo->MaxHeight += maxh;
+
+    return 0;
+}
+//-
 //+ mSetup
 static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
 {
@@ -482,12 +519,13 @@ static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
 
     Py_INCREF(pyo);
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_Setup", NULL); /* NR */
-    if (NULL != res)
+    Py_DECREF(pyo); 
+    
+    if (NULL != res) {
         result = PyInt_AsLong(res);
-    else
+        Py_DECREF(res);
+    } else
         result = FALSE;
-    Py_XDECREF(res);
-    Py_DECREF(pyo);
 
     return result;
 }
@@ -653,7 +691,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
 DISPATCHER(mcc)
 {
     switch (msg->MethodID) {
-        //case MUIM_AskMinMax    : return mAskMinMax  (cl, obj, (APTR)msg);
+        case MUIM_AskMinMax    : return mAskMinMax  (cl, obj, (APTR)msg);
         case MUIM_Setup        : return mSetup      (cl, obj, (APTR)msg);
         case MUIM_Cleanup      : return mCleanup    (cl, obj, (APTR)msg);
         case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
@@ -1046,7 +1084,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
     DPRINT("DoMethod(obj=%p, meth=0x%08x):\n", obj, meth);
 
     n = PyTuple_GET_SIZE(meth_data);
-    DPRINT("  Data size = %d\n", n);
+    DPRINT("#  Data size = %d\n", n);
     msg = (DoMsg *) PyMem_Malloc(sizeof(DoMsg) + sizeof(ULONG) * n);
     if (NULL == msg)
         return PyErr_NoMemory();
@@ -1060,7 +1098,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
             return NULL;
         }
 
-        DPRINT("  args[%u]: %d, %u, 0x%08x\n", i, (LONG)*ptr, *ptr, *ptr);
+        DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, (LONG)*ptr, *ptr, *ptr);
     }
 
     /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
@@ -1076,7 +1114,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
 
     if (PyErr_Occurred())
         Py_CLEAR(ret);
-
+    
     return ret;
 }
 //-
@@ -1421,29 +1459,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//- muiobject__notify
-//+ muiobject__get_raster
-/*! \cond */
-PyDoc_STRVAR(muiobject__get_raster_doc,
-"_get_raster() -> PyRasterObject\n\
-\n\
-Return a PyRasterObject set with the current RastPort of the MUI object.");
-/*! \endcond */
-
-static PyObject *
-muiobject__get_raster(PyMUIObject *self)
-{
-    Object *mo;
-
-    mo = PyBOOPSIObject_OBJECT(self);
-    PyBOOPSIObject_CHECK_OBJ(mo);
-
-    self->raster->rp = _rp(mo);
-    Py_INCREF((PyObject *)self->raster);
-
-    return (PyObject *)self->raster;
-}
-//- muiobject__notify
+//-
 //+ muiobject_redraw
 /*! \cond */
 PyDoc_STRVAR(muiobject_redraw_doc,
@@ -1627,6 +1643,21 @@ muiobject_set__children(PyMUIObject *self, PyObject *value, void *closure)
     return NULL != self->children;
 }
 //-
+//+ muiobject_get_rp
+static PyObject *
+muiobject_get_rp(PyMUIObject *self, void *closure)
+{
+    Object *mo;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ(mo);
+
+    self->raster->rp = _rp(mo);
+    Py_INCREF((PyObject *)self->raster);
+
+    return (PyObject *)self->raster;
+}
+//-
 
 static PyGetSetDef muiobject_getseters[] = {
     {"MLeft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
@@ -1640,6 +1671,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
+    {"_rp",     (getter)muiobject_get_rp,      NULL, "Object RastPort", NULL},
     {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
     {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
     {NULL} /* sentinel */
@@ -1648,7 +1680,6 @@ static PyGetSetDef muiobject_getseters[] = {
 static struct PyMethodDef muiobject_methods[] = {
     {"_nnset",      (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
     {"_notify",     (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
-    {"_get_raster", (PyCFunction) muiobject__get_raster, METH_NOARGS,  muiobject__get_raster_doc},
     {"Redraw",      (PyCFunction) muiobject_redraw,      METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
@@ -1689,7 +1720,7 @@ raster_dealloc(PyRasterObject *self)
 PyDoc_STRVAR(raster_scaled_blit8_doc,
 "ScaleBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
 \n\
-Blit given RGBA-8 buffer on the raster. If src and dst size are different,\n\
+Blit given ARGB8 buffer on the raster. If src and dst size are different,\n\
 performs a scaling before blitting at given raster position.\n\
 \n\
 src_w: source rectangle width.\n\
@@ -1704,7 +1735,6 @@ dst_h: destination height.\n\
 static PyObject *
 raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 {
-    //APTR lock;
     char *buf;
     UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
     int buf_size;
@@ -1718,16 +1748,60 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
                           &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    //lock = LockBitMapTags(self->rp->BitMap, TAG_DONE);
-    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGBA);
-    //UnLockBitMap(lock);
+    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_ARGB);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_scroll
+static PyObject *
+raster_scroll(PyRasterObject *self, PyObject *args)
+{
+    LONG dx, dy, minx, maxx, miny, maxy;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "iiiiii:Scroll", &dx, &dy, &minx, &maxx, &miny, &maxy)) /* BR */
+        return NULL;
+
+    ScrollRaster(self->rp, dx, dy, minx, maxx, miny, maxy);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_rect
+static PyObject *
+raster_rect(PyRasterObject *self, PyObject *args)
+{
+    LONG l, t, w, h;
+    UBYTE pen;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "Biiii:Rect", &pen, &l, &t, &w, &h)) /* BR */
+        return NULL;
+
+    SetAPen(self->rp, pen);
+    Move(self->rp, l, t);
+    Draw(self->rp, l+w-1, t);
+    Draw(self->rp, l+w-1, t+h-1);
+    Draw(self->rp, l, t+h-1);
+    Draw(self->rp, l, t);
 
     Py_RETURN_NONE;
 }
 //-
 
 static struct PyMethodDef raster_methods[] = {
-    {"ScaledBlit8",  (PyCFunction)raster_scaled_blit8,  METH_VARARGS, raster_scaled_blit8_doc},
+    {"ScaledBlit8", (PyCFunction)raster_scaled_blit8, METH_VARARGS, raster_scaled_blit8_doc},
+    {"Scroll",      (PyCFunction)raster_scroll,       METH_VARARGS, NULL},
+    {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},
     {NULL} /* sentinel */
 };
 
