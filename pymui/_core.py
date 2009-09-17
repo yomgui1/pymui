@@ -86,6 +86,9 @@ class AttributeInfo:
             raise ValueError("Not recognized ISG value: '%s'" % isg)
         self._isg = isg.lower()
 
+    def __repr__(self):
+        return "<Attribute %s (0x%08x)>" % (self._name, self._value)
+
     value = property(fget=lambda self: self._value)
     name = property(fget=lambda self: self._name)
     format = property(fget=lambda self: self._format)
