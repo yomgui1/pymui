@@ -480,7 +480,13 @@ static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *m
         return 0;
 
     Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", NULL); /* NR */
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "hhhhhh",
+                              msg->MinMaxInfo->MinWidth,
+                              msg->MinMaxInfo->DefWidth,
+                              msg->MinMaxInfo->MaxWidth,
+                              msg->MinMaxInfo->MinHeight,
+                              msg->MinMaxInfo->DefHeight,
+                              msg->MinMaxInfo->MaxHeight); /* NR */
     Py_DECREF(pyo); 
     
     if (NULL != res) {
@@ -491,13 +497,12 @@ static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *m
             return 0;
     }
 
-    msg->MinMaxInfo->MinWidth  += minw;
-    msg->MinMaxInfo->DefWidth  += defw;
-    msg->MinMaxInfo->MaxWidth  += maxw;
-
-    msg->MinMaxInfo->MinHeight += minh;
-    msg->MinMaxInfo->DefHeight += defh;
-    msg->MinMaxInfo->MaxHeight += maxh;
+    msg->MinMaxInfo->MinWidth  = minw;
+    msg->MinMaxInfo->DefWidth  = defw;
+    msg->MinMaxInfo->MaxWidth  = maxw;
+    msg->MinMaxInfo->MinHeight = minh;
+    msg->MinMaxInfo->DefHeight = defh;
+    msg->MinMaxInfo->MaxHeight = maxh;
 
     return 0;
 }
