@@ -211,6 +211,8 @@ class BoopsiWrapping:
     def Set(self, attr, value):
         inf = self._check_attr(attr, 's')
         if isinstance(inf.format, str):
+            if value is None and inf.format == 's':
+                raise TypeError("None value is not valid for this attribute")
             self._set(inf.value, value)
             return self._keep(inf.value, value, inf.format)
         else:
@@ -252,7 +254,7 @@ class Notify(PyMUIObject, BoopsiWrapping):
         self._notify_cbdict = {} 
         
         if kwds.pop('MCC', False):
-            superid = self.__class__.__bases__[0]._mclassid
+            superid = self._mclassid
         else:
             superid = None
 
@@ -768,6 +770,20 @@ class Balance(Area):
     ATTRIBUTES = { MUIA_Balance_Quiet: ('Quiet', 'i', 'i..') }
 
 
+class Image(Area):
+    CLASSID = MUIC_Image
+    ATTRIBUTES = {
+        MUIA_Image_FontMatch:       ('FontMatch',       'b', 'i..'),
+        MUIA_Image_FontMatchHeight: ('FontMatchHeight', 'b', 'i..'),
+        MUIA_Image_FontMatchWidth:  ('FontMatchWidth',  'b', 'i..'),
+        MUIA_Image_FreeHoriz:       ('FreeHoriz',       'b', 'i..'),
+        MUIA_Image_FreeVert:        ('FreeVert',        'b', 'i..'),
+        MUIA_Image_OldImage:        ('OldImage',        'p', 'i..'),
+        MUIA_Image_Spec:            ('Spec',            's', 'i..'),
+        MUIA_Image_State:           ('State',           'i', 'is.'),
+        }
+
+
 class Bitmap(Area):
     CLASSID = MUIC_Bitmap
     ATTRIBUTES = {
@@ -828,22 +844,22 @@ class Gadget(Area):
     }
 
 
-class String(Gadget):
+class String(Area):
     CLASSID = MUIC_String
     ATTRIBUTES = {
-        MUIA_String_Accept:         ('Accept',          's', 'isg'),
+        MUIA_String_Accept:         ('Accept',          'z', 'isg'),
         MUIA_String_Acknowledge:    ('Acknowledge',     's', '..g'),
         MUIA_String_AdvanceOnCR:    ('AdvanceOnCR',     'p', 'isg'),
         MUIA_String_AttachedList:   ('AttachedList',    'M', 'isg'),
         MUIA_String_BufferPos:      ('BufferPos',       'i', '.sg'),
-        MUIA_String_Contents:       ('Contents',        's', 'isg'),
+        MUIA_String_Contents:       ('Contents',        'z', 'isg'),
         MUIA_String_DisplayPos:     ('DisplayPos',      'i', '.sg'),
         MUIA_String_EditHook:       ('EditHook',        'p', 'isg'),
         MUIA_String_Format:         ('Format',          'i', 'i.g'),
         MUIA_String_Integer:        ('Integer',         'I', 'isg'),
         MUIA_String_LonelyEditHook: ('LonelyEditHook',  'p', 'isg'),
         MUIA_String_MaxLen:         ('MaxLen',          'i', 'i.g'),
-        MUIA_String_Reject:         ('Reject',          's', 'isg'),
+        MUIA_String_Reject:         ('Reject',          'z', 'isg'),
         MUIA_String_Secret:         ('Secret',          'b', 'i.g'),
     }
 

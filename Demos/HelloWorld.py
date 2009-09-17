@@ -34,7 +34,7 @@ button = Text(MUIX_C + "Ok",
               Font       = MUIV_Font_Button)
 
 color = Coloradjust(Red=0x45454545, Green=0xffffffff)
-g = Group.VGroup(Child=(button, color))
+g = Group.VGroup(Child=(button, color, String(Frame=MUIV_Frame_String)))
 
 win = Window("HelloWorld window",
              LeftEdge   = MUIV_Window_LeftEdge_Moused,

@@ -292,7 +292,9 @@ python2long(PyObject *obj, ULONG *value)
 {
     Py_ssize_t buffer_len;
 
-    if (PyString_Check(obj) || PyUnicode_Check(obj))
+    if (Py_None == obj)
+        *value = 0;
+    else if (PyString_Check(obj) || PyUnicode_Check(obj))
         *value = (ULONG)PyString_AsString(obj);
     else if (PyBOOPSIObject_Check(obj))
         *value = (ULONG)PyBOOPSIObject_OBJECT(obj);
@@ -707,11 +709,11 @@ DISPATCHER(mcc)
         default: result = DoSuperMethodA(cl, obj, msg);
     }
 
+    #if 0
     exception = PyErr_Occurred();
-    if (exception) {
+    if (NULL != exception)
         PyErr_WriteUnraisable(exception);
-        PyErr_Clear();
-    }
+    #endif
 
     return result;
 }
@@ -794,12 +796,11 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     DPRINT("ClassID: '%s'\n", classid);
     self->node->n_IsMUI = PyMUIObject_Check(self); 
 
-    if (self->node->n_IsMUI) {
+    if ((self->node->n_IsMUI) && (NULL != superid)) {
         CreatedMCCNode *node = NULL, *next;
 
         DPRINT("SuperID: '%s'\n", superid);
-        if (NULL == classid)
-            classid = superid;
+        classid = superid;
         
         ForeachNode(&gCreatedMCCList, next) {
             if ((NULL != next->n_MCC->mcc_Super->cl_ID) && !strcmp(classid, next->n_MCC->mcc_Super->cl_ID)) {
