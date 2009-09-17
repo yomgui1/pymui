@@ -279,8 +279,6 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
 
         Py_DECREF(pyo);
     }
-
-    /* in case of Python exception, the PyErr_Occurred() in the mainloop will catch it */
 }
 //-
 //+ python2long
@@ -695,17 +693,27 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
 //+ MCC Dispatcher
 DISPATCHER(mcc)
 {
+    ULONG result;
+    PyObject *exception;
+
     switch (msg->MethodID) {
-        case MUIM_AskMinMax    : return mAskMinMax  (cl, obj, (APTR)msg);
-        case MUIM_Setup        : return mSetup      (cl, obj, (APTR)msg);
-        case MUIM_Cleanup      : return mCleanup    (cl, obj, (APTR)msg);
-        case MUIM_Show         : return mShow       (cl, obj, (APTR)msg);
-        case MUIM_Hide         : return mHide       (cl, obj, (APTR)msg);
-        case MUIM_Draw         : return mDraw       (cl, obj, (APTR)msg);
-        case MUIM_HandleEvent  : return mHandleEvent(cl, obj, (APTR)msg);
+        case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
+        case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
+        case MUIM_Cleanup      : result = mCleanup    (cl, obj, (APTR)msg); break;
+        case MUIM_Show         : result = mShow       (cl, obj, (APTR)msg); break;
+        case MUIM_Hide         : result = mHide       (cl, obj, (APTR)msg); break;
+        case MUIM_Draw         : result = mDraw       (cl, obj, (APTR)msg); break;
+        case MUIM_HandleEvent  : result = mHandleEvent(cl, obj, (APTR)msg); break;
+        default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    return DoSuperMethodA(cl, obj, msg);
+    exception = PyErr_Occurred();
+    if (exception) {
+        PyErr_WriteUnraisable(exception);
+        PyErr_Clear();
+    }
+
+    return result;
 }
 DISPATCHER_END
 //-
@@ -1116,9 +1124,6 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
     msg->MethodID = meth;
     ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
     DPRINT("done\n");
-
-    if (PyErr_Occurred())
-        Py_CLEAR(ret);
     
     return ret;
 }
@@ -1144,13 +1149,8 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
         return NULL;
 
     DPRINT("DoMethod(obj=%p, meth=0x%08x, data=0x%08x):\n", obj, meth, data);
-
     ret = PyInt_FromLong(DoMethod(obj, meth, data));
-
     DPRINT("done\n");
-
-    if (PyErr_Occurred())
-        Py_CLEAR(ret);
 
     return ret;
 }
@@ -1197,11 +1197,6 @@ boopsi__add(PyBOOPSIObject *self, PyObject *args) {
 
     DPRINT("done\n");
 
-    if (PyErr_Occurred()) {
-        Py_XDECREF(ret);
-        return NULL;
-    }
-
     return ret;
 }
 //-
@@ -1247,11 +1242,6 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
     }
 
     DPRINT("done\n");
-    
-    if (PyErr_Occurred()) {
-        Py_XDECREF(ret);
-        return NULL;
-    }
 
     return ret;
 }
