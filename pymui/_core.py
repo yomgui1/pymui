@@ -74,6 +74,7 @@ MUIA_Window_TabletMessages = 0x804217b7
 ##
 
 MUI_EventHandlerRC_Eat = (1<<0)
+NM_BARLABEL = -1
 
 class AttributeInfo:
     def __init__(self, value, args):
@@ -106,6 +107,15 @@ class ArrayOf(object):
 # Transform the C EventHandler type into a classes to permit to add attributes
 class EventHandler(_muimaster.EventHandler):
     pass
+
+class StrAsInt:
+    @staticmethod
+    def get(value):
+        return value
+
+    @staticmethod
+    def set(value):
+        return value
 
 ##
 ## MetaMCC takes some predefined class attributes and use it to fill the class dict
@@ -381,7 +391,7 @@ class Menuitem(Family):
         MUIA_Menuitem_Enabled:       ('Enabled',       'b', 'isg'),
         MUIA_Menuitem_Exclude:       ('Exclude',       'i', 'isg'),
         MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
-        MUIA_Menuitem_Title:         ('Title',         's', 'isg'),
+        MUIA_Menuitem_Title:         ('Title',         StrAsInt, 'isg'),
         MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
         MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
         }
@@ -393,6 +403,8 @@ class Menuitem(Family):
                 kwds['CommandString'] = True
             else:
                 kwds['CommandString'] = False
+        if Title == '-':
+            Title = NM_BARLABEL
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
     def action(self, callback, *args):
@@ -456,14 +468,13 @@ class Application(Notify):
         self._children.append(win)
         win.SetApp(self)
 
-class StrAsInt:
-    @staticmethod
-    def get(value):
-        return value
+    def RemWindow(self, win):
+        if win not in self._children:
+            raise RuntimeError("Window not already attached.")
+        win.Close()
+        self._rem(win)
+        self._children.remove(win)
 
-    @staticmethod
-    def set(value):
-        return value
 
 class Window(Notify):
     CLASSID = MUIC_Window
