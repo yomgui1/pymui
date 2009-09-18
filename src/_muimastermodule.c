@@ -1716,7 +1716,7 @@ raster_dealloc(PyRasterObject *self)
 PyDoc_STRVAR(raster_scaled_blit8_doc,
 "ScaleBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
 \n\
-Blit given ARGB8 buffer on the raster. If src and dst size are different,\n\
+Blit given RGB8 buffer on the raster. If src and dst size are different,\n\
 performs a scaling before blitting at given raster position.\n\
 \n\
 src_w: source rectangle width.\n\
@@ -1744,7 +1744,7 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
                           &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_ARGB);
+    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGB);
 
     Py_RETURN_NONE;
 }
@@ -1975,12 +1975,12 @@ evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
 static PyObject *
 evthandler_get_up(PyEventHandlerObject *self, void *closure)
 {
-    return PyBool_FromLong(self->imsg.Code & IECODE_UP_PREFIX);
+    return PyBool_FromLong((self->imsg.Code & IECODE_UP_PREFIX) == IECODE_UP_PREFIX);
 }
 //-
-//+ evthandler_get_code
+//+ evthandler_get_key
 static PyObject *
-evthandler_get_code(PyEventHandlerObject *self, void *closure)
+evthandler_get_key(PyEventHandlerObject *self, void *closure)
 {
     return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
 }
@@ -1989,7 +1989,7 @@ evthandler_get_code(PyEventHandlerObject *self, void *closure)
 static PyGetSetDef evthandler_getseters[] = {
     {"idcmp", (getter)evthandler_get_idcmp, NULL, "IDCMP value", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
-    {"Code", (getter)evthandler_get_code, NULL, "IntuiMessage Code field (without UP prefix if exists)", NULL},
+    {"Key", (getter)evthandler_get_key, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
     {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
     {NULL} /* sentinel */
@@ -1998,7 +1998,7 @@ static PyGetSetDef evthandler_getseters[] = {
 static PyMemberDef evthandler_members[] = {
     {"muikey",       T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
     {"Class",        T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
-    {"RawCode",      T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
+    {"Code",         T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
     {"Qualifier",    T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
     {"MouseX",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
     {"MouseY",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
