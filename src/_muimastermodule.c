@@ -1660,7 +1660,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"MRight",  (getter)muiobject_get_mright,  NULL, "_mright(obj)",  NULL},
     {"MTop",    (getter)muiobject_get_mtop,    NULL, "_mtop(obj)",    NULL},
     {"MBottom", (getter)muiobject_get_mbottom, NULL, "_mbottom(obj)", NULL},
-    {"MHidth",  (getter)muiobject_get_mdim,    NULL, "_mwidth(obj)",   (APTR) 0},
+    {"MWidth",  (getter)muiobject_get_mdim,    NULL, "_mwidth(obj)",   (APTR) 0},
     {"MHeight", (getter)muiobject_get_mdim,    NULL, "_mheight(obj)",  (APTR)~0},
     {"MBox",    (getter)muiobject_get_mbox,    NULL, "4-Tuple of the bounded box object values", NULL},
     {"SWidth",  (getter)muiobject_get_sdim,    NULL, "Screen Width",   (APTR) 0},
@@ -1772,23 +1772,27 @@ raster_scroll(PyRasterObject *self, PyObject *args)
 static PyObject *
 raster_rect(PyRasterObject *self, PyObject *args)
 {
-    LONG l, t, w, h;
-    UBYTE pen;
+    LONG l, t, r, b;
+    UBYTE pen, fill=FALSE;
 
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "Biiii:Rect", &pen, &l, &t, &w, &h)) /* BR */
+    if (!PyArg_ParseTuple(args, "Biiii|B:Rect", &pen, &l, &t, &r, &b, &fill)) /* BR */
         return NULL;
 
     SetAPen(self->rp, pen);
-    Move(self->rp, l, t);
-    Draw(self->rp, l+w-1, t);
-    Draw(self->rp, l+w-1, t+h-1);
-    Draw(self->rp, l, t+h-1);
-    Draw(self->rp, l, t);
+    if (fill)
+        RectFill(self->rp, l, t, r, b);
+    else {
+        Move(self->rp, l, t);
+        Draw(self->rp, r, t);
+        Draw(self->rp, r, b);
+        Draw(self->rp, l, b);
+        Draw(self->rp, l, t);
+    }
 
     Py_RETURN_NONE;
 }
