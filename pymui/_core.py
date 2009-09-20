@@ -75,6 +75,17 @@ MUIA_Window_TabletMessages = 0x804217b7
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
+TABLETA_Dummy        = (TAG_USER + 0x3A000)
+TABLETA_TabletZ      = (TABLETA_Dummy + 1)
+TABLETA_RangeZ       = (TABLETA_Dummy + 2)
+TABLETA_AngleX       = (TABLETA_Dummy + 3)
+TABLETA_AngleY       = (TABLETA_Dummy + 4)
+TABLETA_AngleZ       = (TABLETA_Dummy + 5)
+TABLETA_Pressure     = (TABLETA_Dummy + 6)
+TABLETA_ButtonBits   = (TABLETA_Dummy + 7)
+TABLETA_InProximity  = (TABLETA_Dummy + 8)
+TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
+TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 
 class AttributeInfo:
     def __init__(self, value, args):

@@ -181,6 +181,7 @@ typedef struct PyEventHandlerObject_STRUCT {
 
     struct MUI_EventHandlerNode * handler;
     PyObject *                    win_pyo;
+    PyObject *                    TabletTagsList; /* a dict of tablet tags {Tag: Data} */
     LONG                          muikey; /* copied from MUIP_HandleEvent msg */
     struct IntuiMessage           imsg;   /* copied from MUIP_HandleEvent->imsg */
     struct TabletData             tabletdata; /* copied from MUIP_HandleEvent msg */
@@ -662,19 +663,49 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
         return 0;
     }
 
-    Py_INCREF(ehn_obj);
-
     /* Make a copy of data */
     ehn_obj->imsg = *msg->imsg;
     ehn_obj->muikey = msg->muikey;
     ehn_obj->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
     ehn_obj->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
 
-    if (ehn_obj->hastablet)
+    /* if tablet data, extract tag items */
+    Py_CLEAR(ehn_obj->TabletTagsList);
+    if (ehn_obj->hastablet) {
+        PyObject *o_tags, *dict;
+        struct TagItem *tag, *tags = ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData->td_TagList;
+
+        o_tags = PyList_New(0); /* NR */
+        if (NULL == o_tags)
+            return 0;
+
+        while (NULL != (tag = NextTagItem(&tags))) {
+            PyObject *item = Py_BuildValue("(II)", tag->ti_Tag, tag->ti_Data); /* NR */
+
+            if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
+                Py_XDECREF(item);
+                Py_DECREF(o_tags);
+                return 0;
+            }
+        }
+
+        dict = PyDict_New(); /* NR */
+        if (NULL == dict) {
+            Py_DECREF(o_tags);
+            return 0;
+        }
+
+        result = PyDict_MergeFromSeq2(dict, o_tags, TRUE); /* NR */
+        Py_DECREF(o_tags);   
+        if (result != 0)
+            return 0;
+        
+        ehn_obj->TabletTagsList = dict;
         ehn_obj->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
-    else
+    } else
         memset(&ehn_obj->tabletdata, 0, sizeof(ehn_obj->tabletdata));
 
+    Py_INCREF(ehn_obj); 
     Py_INCREF(pyo);
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_HandleEvent", "O", ehn_obj); /* NR */
     if (NULL != res) {
@@ -1846,6 +1877,7 @@ evthandler_new(PyTypeObject *type, PyObject *args)
 static int
 evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
 {
+    Py_VISIT(self->TabletTagsList);
     Py_VISIT(self->win_pyo);
     return 0;
 }
@@ -1862,6 +1894,7 @@ evthandler_clear(PyEventHandlerObject *self)
             DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)self->handler);
     }
  
+    Py_CLEAR(self->TabletTagsList);
     Py_CLEAR(self->win_pyo);
     return 0;
 }
@@ -2012,6 +2045,7 @@ static PyMemberDef evthandler_members[] = {
     {"td_RangeY",    T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_RangeY), RO, NULL},
     {"td_XFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_XFraction), RO, NULL},
     {"td_YFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_YFraction), RO, NULL},
+    {"td_Tags",      T_OBJECT, offsetof(PyEventHandlerObject, TabletTagsList), RO, NULL},
 
     {NULL} /* sentinel */
 };
