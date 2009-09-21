@@ -328,10 +328,26 @@ python2long(PyObject *obj, ULONG *value)
 static int
 parse_attribute_entry(PyObject *entry, ULONG *attr, ULONG *value)
 {
-    PyObject *value_obj;
+    PyObject *value_obj, *convertor;
 
-    if (!PyArg_ParseTuple(entry, "IO:PyBOOPSIObject", attr, &value_obj)) /* BR */
+    if (!PyArg_ParseTuple(entry, "IOO:PyBOOPSIObject", attr, &value_obj, &convertor)) /* BR */
         return FALSE;
+
+    if (!PyString_CheckExact(convertor)) {
+        PyObject *o;
+        int result;
+
+        Py_INCREF(value_obj);
+        o = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
+        Py_DECREF(value_obj);
+
+        if (NULL == o)
+            return 0;
+
+        result = python2long(o, value);
+        Py_DECREF(o);
+        return result;
+    }
 
     return python2long(value_obj, value);
 }
@@ -876,7 +892,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             
             PyMem_Free(tags);
         } else
-            obj = NULL;
+            return NULL;
     } else if (self->node->n_IsMUI) {
         if (NULL == mcc)
             obj = MUI_NewObject(classid, TAG_DONE);
@@ -1015,13 +1031,14 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
                 PyObject *o;
                 
                 switch (format) {
-                    case 'I':
+                    case 'L':
                         DPRINT("  %-04u: 0x%08x\n", n, *(ULONG *)ptr);
                         o = PyLong_FromUnsignedLong(*(ULONG *)ptr); /* NR */
                         ptr += sizeof(ULONG);
                         break;
                 
                     default:
+                        PyErr_Format(PyExc_ValueError, "Unsupported ArrayOf format: %c", format);
                         o = NULL;
                 }
 
@@ -1060,17 +1077,17 @@ Note: No reference kept on the given value object!");
 static PyObject *
 boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     Object *obj;
-    PyObject *value_obj, *convertor = NULL;
+    PyObject *value_obj, *convertor;
     ULONG attr;
     ULONG value;
 
     obj = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(obj);
 
-    if (!PyArg_ParseTuple(args, "IO|O:_set", &attr, &value_obj, &convertor)) /* BR */
+    if (!PyArg_ParseTuple(args, "IOO:_set", &attr, &value_obj, &convertor)) /* BR */
         return NULL;
     
-    if (NULL == convertor) {
+    if (PyString_CheckExact(convertor)) {
         if (!python2long((PyObject *)value_obj, &value))
             return NULL;
 
@@ -1080,7 +1097,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
         PyObject *res;
         
         Py_INCREF(value_obj);
-        res = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
+        res = PyObject_CallMethod(convertor, "set", "O", value_obj); /* NR */
         Py_DECREF(value_obj);
 
         if (NULL == res)
@@ -1584,7 +1601,7 @@ muiobject_get_mbox(PyObject *self, void *closure)
     mo = PyBOOPSIObject_OBJECT(self);
     PyBOOPSIObject_CHECK_OBJ(mo);
 
-    return Py_BuildValue("(HHHH)", _mleft(mo), _mtop(mo), _mright(mo), _mbottom(mo));
+    return Py_BuildValue("HHHH", _mleft(mo), _mtop(mo), _mright(mo), _mbottom(mo));
 }
 //-
 //+ muiobject_get_sdim
@@ -2160,11 +2177,22 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     return PyString_FromString(filename);
 }
 //-
+//+ _muimaster_stringaddress
+static PyObject *
+_muimaster_stringaddress(PyObject *self, PyObject *str)
+{
+    if (!PyString_Check(str))
+        return PyErr_Format(PyExc_TypeError, "object of type %s cannot be used here", OBJ_TNAME(str));
+
+    return PyLong_FromVoidPtr(PyString_AsString(str));
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
+    {"stringaddress", _muimaster_stringaddress, METH_O, NULL},
     {NULL, NULL} /* Sentinel */
 };
 

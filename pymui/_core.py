@@ -118,6 +118,23 @@ class ArrayOf(object):
     def set(self, obj):
         return array.array(self.pointer_base, obj).tostring()
 
+class ArrayOfString(object):
+    def __init__(self, size=0, keep=True):
+        self.pointer_base = 's'
+        self.size = size
+        if keep:
+            self.array = None
+
+    def get(*a):
+        raise Exception("Forbidden call")
+
+    def set(self, o):
+        x = array.array('L', [stringaddress(x) for x in o] + [0]).tostring()
+        if hasattr(self, 'array'):
+            self.array = x
+        return x
+
+
 # Transform the C EventHandler type into a classes to permit to add attributes
 class EventHandler(_muimaster.EventHandler):
     pass
@@ -127,7 +144,7 @@ class StrAsInt:
     def get(value):
         return value
 
-    @staticmethod
+    @staticmethod     
     def set(value):
         return value
 
@@ -207,6 +224,9 @@ class BoopsiWrapping:
             raise ValueError("Attribute %s is not supported" % repr(attr))
 
     def _keep(self, k, v, f='i'):
+        if not isinstance(f, str):
+            f = 'p'
+
         # Udpate the keep dict content
         if k in self._keep_dict and v is None:
             ov = self._keep_dict.pop(k)
@@ -224,23 +244,18 @@ class BoopsiWrapping:
 
     def Set(self, attr, value):
         inf = self._check_attr(attr, 's')
-        if isinstance(inf.format, str):
-            if value is None and inf.format == 's':
-                raise TypeError("None value is not valid for this attribute")
-            self._set(inf.value, value)
-            return self._keep(inf.value, value, inf.format)
-        else:
-            self._set(inf.value, value, inf.format)
-            return self._keep(inf.value, value, 'p')
+        if value is None and inf.format == 's':
+            raise TypeError("None value is not valid for this attribute")
+        self._set(inf.value, value, inf.format)
+        return self._keep(inf.value, value, inf.format)
 
-    def DoMethod(self, attr, *args):
-        """DoMethod(attr, *args) -> int
+    def DoMethod(self, mid, *args):
+        """DoMethod(mid, *args) -> int
 
         WARNING: this method doesn't keep reference on object given in args!
         User shall take care of this or the system may crash...
         """
-        #inf = self._check_attr(attr, 's')
-        return self._do(attr, args)
+        return self._do(mid, args)
 
 
 class Notify(PyMUIObject, BoopsiWrapping):
@@ -273,11 +288,10 @@ class Notify(PyMUIObject, BoopsiWrapping):
             superid = None
 
         attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
-        self._create(self._mclassid, superid, ((inf.value,v) for inf, v in attrs))
+        self._create(self._mclassid, superid, ((inf.value, v, inf.format) for inf, v in attrs))
         
         for inf, v in attrs:
-            if isinstance(inf.format, basestring):
-                self._keep(inf.value, v, inf.format)
+            self._keep(inf.value, v, inf.format)
         
     def _notify_cb(self, id, value):
         for cb, args in self._notify_cbdict[id]:
@@ -630,8 +644,8 @@ class Window(Notify):
         """
         if self.__app: return
         self.__app = app
-        self.__Open = functools.partial(self._set, MUIA_Window_Open, True)
-        self.__Close = functools.partial(self._set, MUIA_Window_Open, False)
+        self.__Open = functools.partial(self._set, MUIA_Window_Open, True, 'b')
+        self.__Close = functools.partial(self._set, MUIA_Window_Open, False, 'b')
 
     def __Open(self):
         raise RuntimeError("Can't open the Window object, not linked to an application yet.\n"
@@ -683,7 +697,7 @@ class Area(Notify):
         MUIA_ControlChar:        ('ControlChar',        'c', 'isg'),
         MUIA_CycleChain:         ('CycleChain',         'i', 'isg'),
         MUIA_Disabled:           ('Disabled',           'b', 'isg'),
-        MUIA_DoubleBuffer:       ('DoubleBuffer',           'b', 'isg'),
+        MUIA_DoubleBuffer:       ('DoubleBuffer',       'b', 'isg'),
         MUIA_Draggable:          ('Draggable',          'b', 'isg'),
         MUIA_Dropable:           ('Dropable',           'b', 'isg'),
         MUIA_FillArea:           ('FillArea',           'b', 'is.'),
@@ -728,6 +742,12 @@ class Area(Notify):
         v = kwds.pop('InnerSpacing', None)
         if v is not None:
             kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
+        frame = kwds.get('Frame', None)
+        if isinstance(frame, str):
+            try:
+                kwds['Frame'] = globals()['MUIV_Frame_'+frame]
+            except KeyError:
+                raise ValueError("Non existante frame name: MUIV_Frame_%s" % frame)
         super(Area, self).__init__(**kwds)
 
 
@@ -835,8 +855,8 @@ class Text(Area):
     # Factory class methods
 
     @classmethod
-    def KeyButton(cl, x, key=None):
-        kwds = dict(Contents=x,
+    def KeyButton(cl, label, key=None):
+        kwds = dict(Contents=label,
                     Font=MUIV_Font_Button,
                     Frame=MUIV_Frame_Button,
                     PreParse=MUIX_C,
@@ -847,8 +867,17 @@ class Text(Area):
             kwds['ControlChar'] = key
         return cl(**kwds)
 
+    ALIGN_MAP = {'r': MUIX_R, 'l': MUIX_L, 'c': MUIX_C}
+
+    @classmethod
+    def Label(cl, label, align='r'):
+        return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'), Weight=0)
+
+KeyButton = Text.KeyButton            
 SimpleButton = functools.partial(Text.KeyButton, key=None)
-KeyButton = Text.KeyButton
+Label = Text.Label
+LLabel = functools.partial(Label, align='l')
+CLabel = functools.partial(Label, align='c')
 
 
 class Gadget(Area):
@@ -876,6 +905,16 @@ class String(Area):
         MUIA_String_Reject:         ('Reject',          'z', 'isg'),
         MUIA_String_Secret:         ('Secret',          'b', 'i.g'),
     }
+
+    ALIGN_MAP = {'r': MUIV_String_Format_Right, 'l': MUIV_String_Format_Left, 'c': MUIV_String_Format_Center}
+
+    def __init__(self, Contents='', **kwds):
+        format = kwds.get('Format', None)
+        if format:
+            kwds['Format'] = self.ALIGN_MAP.get(format, format)
+        if Contents:
+            kwds['Contents'] = Contents
+        super(String, self).__init__(**kwds)
 
 
 class Group(Area):
@@ -1015,6 +1054,17 @@ RowGroupV = Virtgroup.RowGroup
 PageGroupV = Virtgroup.PageGroup
 
 
+class Cycle(Group):
+    CLASSID = MUIC_Cycle
+    ATTRIBUTES = {
+        MUIA_Cycle_Active:  ('Active', 'i', 'isg'),
+        MUIA_Cycle_Entries: ('Entries', ArrayOfString(), 'i..'),
+    }
+
+    def __init__(self, Entries, **kwds):
+        super(Cycle, self).__init__(Entries=Entries, **kwds)
+
+
 class Coloradjust(Group):
     CLASSID = MUIC_Coloradjust
     ATTRIBUTES = {
@@ -1022,7 +1072,7 @@ class Coloradjust(Group):
         MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
         MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
-        MUIA_Coloradjust_RGB:    ('RGB',    ArrayOf('I', 3), 'isg'),
+        MUIA_Coloradjust_RGB:    ('RGB',    ArrayOf('L', 3), 'isg'),
     }
 
 
