@@ -129,9 +129,11 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 
 #define PyBOOPSIObject_OBJECT(o) (((PyBOOPSIObject *)(o))->node->n_Object)
 
-#define PyBOOPSIObject_CHECK_OBJ(o) if (NULL == (o)) {                  \
+#define PyBOOPSIObject_CHECK_OBJ_X(o, v) if (NULL == (o)) {                  \
         PyErr_SetString(PyExc_RuntimeError, "no BOOPSI object associated"); \
-        return NULL; }
+        return v; }
+
+#define PyBOOPSIObject_CHECK_OBJ(o) PyBOOPSIObject_CHECK_OBJ_X(o, NULL)
 
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
@@ -423,8 +425,8 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
             if (-1 == left) {
                 left   = w->LeftEdge + w->BorderLeft + 2;
                 top    = w->TopEdge + w->BorderTop + 2;
-                width  = w->Width - w->BorderLeft - w->BorderRight - 4;
-                height = w->Height - w->BorderTop - w->BorderBottom - 4;
+                width  = MAX(400, w->Width - w->BorderLeft - w->BorderRight - 4);
+                height = MAX(400, w->Height - w->BorderTop - w->BorderBottom - 4);
             }
 
             if (NULL == init_drawer)
@@ -1097,7 +1099,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
         PyObject *res;
         
         Py_INCREF(value_obj);
-        res = PyObject_CallMethod(convertor, "set", "O", value_obj); /* NR */
+        res = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
         Py_DECREF(value_obj);
 
         if (NULL == res)
@@ -1528,7 +1530,7 @@ muiobject_redraw(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//- muiobject__notify
+//-
 //+ muiobject_get_mleft
 static PyObject *
 muiobject_get_mleft(PyObject *self, void *closure)
@@ -1702,6 +1704,37 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
     return (PyObject *)self->raster;
 }
 //-
+//+ muiobject_set_pointer
+static int
+muiobject_set_pointer(PyMUIObject *self, PyObject *value, void *closure)
+{
+    Object *mo;
+    struct Window *win;       
+    ULONG type;
+    
+    if (NULL == value) {
+        PyErr_SetString(PyExc_TypeError, "This attribute can't be deleted");
+        return -1;
+    }
+
+    type = PyInt_AsLong(value);
+    if (PyErr_Occurred())
+        return -1;
+
+    mo = PyBOOPSIObject_OBJECT(self);
+    PyBOOPSIObject_CHECK_OBJ_X(mo, -1);
+
+    win = NULL;
+    if (!get(mo, MUIA_Window, &win) || (NULL == win)) {
+        PyErr_SetString(PyExc_SystemError, "No window found on this MUI object");
+        return -1;
+    }
+
+    SetWindowPointer(win, WA_PointerType, type, TAG_DONE);
+
+    return 0;
+}
+//-
 
 static PyGetSetDef muiobject_getseters[] = {
     {"MLeft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
@@ -1715,6 +1748,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
+    {"pointer", NULL,                          (setter)muiobject_set_pointer, "Window pointer type", NULL},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "Object RastPort", NULL},
     {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
     {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
