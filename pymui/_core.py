@@ -87,6 +87,15 @@ TABLETA_InProximity  = (TABLETA_Dummy + 8)
 TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 
+class StrToChar:
+    @staticmethod
+    def get(value):
+        return chr(value)
+
+    @staticmethod
+    def set(value):
+        return ord(value)
+
 class AttributeInfo:
     def __init__(self, value, args):
         if type(value) not in (int, long):
@@ -96,6 +105,8 @@ class AttributeInfo:
         if isg not in ('i..', '.s.' , '..g', 'is.', 'i.g', '.sg', 'isg'):
             raise ValueError("Not recognized ISG value: '%s'" % isg)
         self._isg = isg.lower()
+        if self._format == 'c':
+            self._format = StrToChar
 
     def __repr__(self):
         return "<Attribute %s (0x%08x)>" % (self._name, self._value)
@@ -147,6 +158,7 @@ class StrAsInt:
     @staticmethod     
     def set(value):
         return value
+
 
 ##
 ## MetaMCC takes some predefined class attributes and use it to fill the class dict
@@ -742,12 +754,23 @@ class Area(Notify):
         v = kwds.pop('InnerSpacing', None)
         if v is not None:
             kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
+        g = globals()
         frame = kwds.get('Frame', None)
         if isinstance(frame, str):
             try:
-                kwds['Frame'] = globals()['MUIV_Frame_'+frame]
+                kwds['Frame'] = g['MUIV_Frame_'+frame]
             except KeyError:
-                raise ValueError("Non existante frame name: MUIV_Frame_%s" % frame)
+                raise ValueError("Unknown Frame name: MUIV_Frame_%s" % frame)
+        imode = kwds.get('InputMode', None)
+        if isinstance(imode, str):
+            try:
+                kwds['InputMode'] = g['MUIV_InputMode_'+imode]
+            except KeyError:
+                raise ValueError("Unknown InputMode name: MUIV_InputMode_%s" % imode)
+        bg = kwds.get('Background', None)
+        if isinstance(bg, str) and 'MUII_'+bg in g:
+            kwds['Background'] = g['MUII_'+bg]
+ 
         super(Area, self).__init__(**kwds)
 
 

@@ -377,7 +377,7 @@ attrs2tags(PyObject *self, PyObject *attrs)
                 if ((NULL == entry) || !parse_attribute_entry(entry, &tag->ti_Tag, &tag->ti_Data))
                     goto error;
 
-                DPRINT("  #%u: 0x%08x = 0x%08x\n", i, tag->ti_Tag, tag->ti_Data);
+                DPRINT("  #%lu: 0x%08lx = 0x%08lx\n", i, tag->ti_Tag, tag->ti_Data);
             }
 
             tags[size].ti_Tag = TAG_DONE;
