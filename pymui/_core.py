@@ -792,11 +792,22 @@ class Rectangle(Area):
         g = Group.VGroup(Spacing=0)
         return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
 
+    @classmethod
+    def HBar(cl, space):
+        return cl(HBar=True, InnerTop=space, InnerBottom=space)
+
+    @classmethod
+    def VBar(cl, space):
+        return cl(HBar=True, InnerLeft=space, InnerRight=space)
+ 
+
 HVSpace = Rectangle.HVSpace
-HSpace = Rectangle.HSpace
-VSpace = Rectangle.VSpace
+HSpace  = Rectangle.HSpace
+VSpace  = Rectangle.VSpace
 HCenter = Rectangle.HCenter
 VCenter = Rectangle.VCenter
+HBar    = Rectangle.HBar
+VBar    = Rectangle.VBar
 
 
 class Balance(Area):
