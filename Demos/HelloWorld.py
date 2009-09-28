@@ -30,10 +30,12 @@ from pymui import *
 app = Application()  
 
 button = Text(MUIX_C + "Ok",
-              Background = MUII_ButtonBack,
-              InputMode  = MUIV_InputMode_RelVerify,
-              Frame      = MUIV_Frame_Button,
-              Font       = MUIV_Font_Button)
+              Background  = MUII_ButtonBack,
+              InputMode   = MUIV_InputMode_RelVerify,
+              Frame       = MUIV_Frame_Button,
+              Font        = MUIV_Font_Button,
+              HiChar      = 'o',
+              ControlChar = 'o')
 button.Notify(MUIA_Pressed, False, app.Quit)
 
 win = Window("HelloWorld window",

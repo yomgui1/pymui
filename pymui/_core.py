@@ -872,7 +872,7 @@ class Text(Area):
     CLASSID = MUIC_Text
     ATTRIBUTES = {
         MUIA_Text_Contents:    ('Contents',       's', 'isg'),
-        MUIA_Text_ControlChar: ('ControlChar',    'c', 'isg'),
+        MUIA_Text_ControlChar: ('TextControlChar','c', 'isg'),
         MUIA_Text_Copy:        ('MUIA_Text_Copy', 'b', 'isg'),
         MUIA_Text_HiChar:      ('HiChar',         'c', 'isg'),
         MUIA_Text_PreParse:    ('PreParse',       's', 'i..'),
