@@ -306,7 +306,9 @@ class Notify(PyMUIObject, BoopsiWrapping):
             self._keep(inf.value, v, inf.format)
         
     def _notify_cb(self, id, value):
-        for cb, args in self._notify_cbdict[id]:
+        for cb, trigvalue, args in self._notify_cbdict[id]:
+            if value != trigvalue and trigvalue != MUIV_EveryTime: continue
+
             def convertArgs(a, v):
                 if isinstance(a, weakref.ref):
                     if a() is None:
@@ -324,16 +326,19 @@ class Notify(PyMUIObject, BoopsiWrapping):
 
     def Notify(self, attr, trigvalue, callback, *args):
         attr = self._check_attr(attr, 'sg').value
-        l = self._notify_cbdict.get(attr, [])
         weak_args = []
         for a in args:
             try:
                 weak_args.append(weakref.ref(a))
             except TypeError:
                 weak_args.append(a)
-        l.append((callback, weak_args))
-        self._notify_cbdict.setdefault(attr, l)
-        self._notify(attr, trigvalue)
+        
+        t = (callback, trigvalue, weak_args)
+        if attr in self._notify_cbdict:
+            self._notify_cbdict[attr].append(t)
+        else:
+            self._notify(attr, MUIV_EveryTime)
+            self._notify_cbdict[attr] = [ t ]
 
     def NNSet(self, attr, value):
         inf = self._check_attr(attr, 's')
