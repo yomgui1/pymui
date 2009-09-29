@@ -956,6 +956,29 @@ class String(Area):
         super(String, self).__init__(**kwds)
 
 
+class Numeric(Area):
+    CLASSID = "Numeric.mui"
+    ATTRIBUTES = {
+        MUIA_Numeric_CheckAllSizes: ('CheckAllSizes', 'b', 'isg'),
+        MUIA_Numeric_Default:       ('Default'      , 'i', 'isg'),
+        MUIA_Numeric_Format:        ('Format'       , 's', 'isg'),
+        MUIA_Numeric_Max:           ('Max'          , 'i', 'isg'),
+        MUIA_Numeric_Min:           ('Min'          , 'i', 'isg'),
+        MUIA_Numeric_Reverse:       ('Reverse'      , 'b', 'isg'),
+        MUIA_Numeric_RevLeftRight:  ('RevLeftRight' , 'b', 'isg'),
+        MUIA_Numeric_RevUpDown:     ('RevUpDown'    , 'b', 'isg'),
+        MUIA_Numeric_Value:         ('Value'        , 'i', 'isg'),
+        }
+
+
+class Slider(Numeric):
+    CLASSID = "Slider.mui"
+    ATTRIBUTES = {
+        MUIA_Slider_Horiz: ('Horiz', 'b', 'isg'),
+        MUIA_Slider_Quiet: ('Quiet', 'b', 'i..'),
+        }
+
+
 class Group(Area):
     CLASSID = MUIC_Group
     ATTRIBUTES = {
