@@ -822,11 +822,11 @@ class Rectangle(Area):
 
     @classmethod
     def HBar(cl, space):
-        return cl(HBar=True, InnerTop=space, InnerBottom=space)
+        return cl(HBar=True, InnerTop=space, InnerBottom=space, VertWeight=0)
 
     @classmethod
     def VBar(cl, space):
-        return cl(HBar=True, InnerLeft=space, InnerRight=space)
+        return cl(HBar=True, InnerLeft=space, InnerRight=space, HorizWeight=0)
  
 
 HVSpace = Rectangle.HVSpace

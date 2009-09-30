@@ -270,17 +270,19 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
     /* In case of the Python object die before the MUI object */
     if (NULL != pyo){
         PyObject *res;
+        PyGILState_STATE gstate;
 
+        gstate = PyGILState_Ensure();
         Py_INCREF(pyo); /* to prevent that our object was deleted during methods calls */
 
         DPRINT("{%#lx} Py=%p-%s, MUI=%p, value=(%ld, %lu, %p)\n",
                attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
 
-
         res = PyObject_CallMethod(pyo, "_notify_cb", "II", attr, value); /* NR */
         Py_XDECREF(res);
-
+        
         Py_DECREF(pyo);
+        PyGILState_Release(gstate);
     }
 }
 //-
@@ -746,6 +748,7 @@ DISPATCHER(mcc)
 {
     ULONG result;
     PyObject *exception;
+    PyGILState_STATE gstate = PyGILState_Ensure();
 
     switch (msg->MethodID) {
         case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
@@ -758,12 +761,11 @@ DISPATCHER(mcc)
         default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    #if 0
     exception = PyErr_Occurred();
     if (NULL != exception)
         PyErr_WriteUnraisable(exception);
-    #endif
 
+    PyGILState_Release(gstate);     
     return result;
 }
 DISPATCHER_END
@@ -2164,7 +2166,17 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
      */
 
     DPRINT("Goes into mainloop...\n");
-    while (DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs) != MUIV_Application_ReturnID_Quit) {
+    
+    for (;;) {
+        ULONG id;
+        
+        Py_BEGIN_ALLOW_THREADS;
+        id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
+        Py_END_ALLOW_THREADS;
+
+        if (MUIV_Application_ReturnID_Quit == id)
+            break;
+
         if (sigs)
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
         else
@@ -2172,6 +2184,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 
         if (sigs & SIGBREAKF_CTRL_C) {
             PyErr_SetNone(PyExc_KeyboardInterrupt);
+            DPRINT("bye mainloop with Keyboard Interruption...\n");
             return NULL;
         }
 
