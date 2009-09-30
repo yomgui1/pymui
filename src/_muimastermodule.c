@@ -784,7 +784,8 @@ DISPATCHER(mcc)
     if (NULL != data->PythonObject) {
         exception = PyErr_Occurred();
         if (NULL != exception)
-            PyErr_WriteUnraisable(exception);
+            PyErr_Print();
+            //PyErr_WriteUnraisable(exception);
 
         PyGILState_Release(gstate);     
     }
@@ -2188,13 +2189,12 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
      */
 
     DPRINT("Goes into mainloop...\n");
-    
+
+    Py_BEGIN_ALLOW_THREADS
     for (;;) {
         ULONG id;
         
-        Py_BEGIN_ALLOW_THREADS;
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
-        Py_END_ALLOW_THREADS;
 
         if (MUIV_Application_ReturnID_Quit == id)
             break;
@@ -2204,16 +2204,23 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
         else
             sigs = SetSignal(0, 0);
 
-        if (sigs & SIGBREAKF_CTRL_C) {
-            PyErr_SetNone(PyExc_KeyboardInterrupt);
-            DPRINT("bye mainloop with Keyboard Interruption...\n");
-            return NULL;
-        }
+        if (sigs & SIGBREAKF_CTRL_C)
+            break;
 
-        if (PyErr_Occurred()) {
-            DPRINT("bye mainloop with error...\n");
-            return NULL;
-        }
+        /*if (PyErr_Occurred())
+            break;*/
+    }
+    Py_END_ALLOW_THREADS
+
+    if (sigs & SIGBREAKF_CTRL_C) {
+        PyErr_SetNone(PyExc_KeyboardInterrupt);
+        DPRINT("bye mainloop with Keyboard Interruption...\n");
+        return NULL;
+    }
+
+    if (PyErr_Occurred()) {
+        DPRINT("bye mainloop with error...\n");
+        return NULL;
     }
 
     DPRINT("bye mainloop...\n");
