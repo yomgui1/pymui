@@ -502,7 +502,7 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
 static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *msg)
 {
     MCCData *data = INST_DATA(cl, obj);  
-    PyObject *pyo, *res; 
+    PyObject *pyo, *res, *args;
     WORD minw, defw, maxw, minh, defh, maxh;
     
     DoSuperMethodA(cl, obj, msg);
@@ -512,30 +512,34 @@ static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *m
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_AskMinMax"))
         return 0;
 
-    Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "hhhhhh",
-                              msg->MinMaxInfo->MinWidth,
-                              msg->MinMaxInfo->DefWidth,
-                              msg->MinMaxInfo->MaxWidth,
-                              msg->MinMaxInfo->MinHeight,
-                              msg->MinMaxInfo->DefHeight,
-                              msg->MinMaxInfo->MaxHeight); /* NR */
-    Py_DECREF(pyo); 
-    
-    if (NULL != res) {
-        int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
+    args = Py_BuildValue("hhhhhh",
+                         msg->MinMaxInfo->MinWidth,
+                         msg->MinMaxInfo->DefWidth,
+                         msg->MinMaxInfo->MaxWidth,
+                         msg->MinMaxInfo->MinHeight,
+                         msg->MinMaxInfo->DefHeight,
+                         msg->MinMaxInfo->MaxHeight); /* NR */
+    if (NULL != args) {
+        Py_INCREF(pyo);
+        res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "O", args);
+        Py_DECREF(pyo); 
+        Py_DECREF(args);
+        
+        if (NULL != res) {
+            int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
 
-        Py_DECREF(res); 
-        if (!result)
-            return 0;
+            Py_DECREF(res); 
+            if (!result)
+                return 0;
+        }
+
+        msg->MinMaxInfo->MinWidth  = minw;
+        msg->MinMaxInfo->DefWidth  = defw;
+        msg->MinMaxInfo->MaxWidth  = maxw;
+        msg->MinMaxInfo->MinHeight = minh;
+        msg->MinMaxInfo->DefHeight = defh;
+        msg->MinMaxInfo->MaxHeight = maxh;
     }
-
-    msg->MinMaxInfo->MinWidth  = minw;
-    msg->MinMaxInfo->DefWidth  = defw;
-    msg->MinMaxInfo->MaxWidth  = maxw;
-    msg->MinMaxInfo->MinHeight = minh;
-    msg->MinMaxInfo->DefHeight = defh;
-    msg->MinMaxInfo->MaxHeight = maxh;
 
     return 0;
 }
@@ -758,9 +762,13 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
 //+ MCC Dispatcher
 DISPATCHER(mcc)
 {
+    MCCData *data = INST_DATA(cl, obj);
     ULONG result;
     PyObject *exception;
-    PyGILState_STATE gstate = PyGILState_Ensure();
+    PyGILState_STATE gstate;
+    
+    if (NULL != data->PythonObject)
+        gstate = PyGILState_Ensure();
 
     switch (msg->MethodID) {
         case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
@@ -773,11 +781,13 @@ DISPATCHER(mcc)
         default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    exception = PyErr_Occurred();
-    if (NULL != exception)
-        PyErr_WriteUnraisable(exception);
+    if (NULL != data->PythonObject) {
+        exception = PyErr_Occurred();
+        if (NULL != exception)
+            PyErr_WriteUnraisable(exception);
 
-    PyGILState_Release(gstate);     
+        PyGILState_Release(gstate);     
+    }
     return result;
 }
 DISPATCHER_END

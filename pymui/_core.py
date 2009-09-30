@@ -912,11 +912,19 @@ class Text(Area):
     def Label(cl, label, align='r'):
         return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'), Weight=0)
 
+    @classmethod
+    def FreeLabel(cl, label, align='r'):
+        return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'))
+ 
+
 KeyButton = Text.KeyButton            
 SimpleButton = functools.partial(Text.KeyButton, key=None)
 Label = Text.Label
 LLabel = functools.partial(Label, align='l')
 CLabel = functools.partial(Label, align='c')
+FreeLabel = Text.FreeLabel
+LFreeLabel = functools.partial(FreeLabel, align='l')
+CFreeLabel = functools.partial(FreeLabel, align='c')
 
 
 class Gadget(Area):
