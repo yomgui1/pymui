@@ -324,7 +324,8 @@ class Notify(PyMUIObject, BoopsiWrapping):
             if cb(*tuple(convertArgs(a, value) for a in args)) == MUI_EventHandlerRC_Eat:
                 return
 
-    def Notify(self, attr, trigvalue, callback, *args):
+    def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *args):
+        assert callable(callback)
         attr = self._check_attr(attr, 'sg').value
         weak_args = []
         for a in args:
