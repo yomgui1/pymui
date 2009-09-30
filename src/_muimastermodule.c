@@ -63,7 +63,7 @@ extern void dprintf(char*fmt, ...);
         PyObject * __t__p0 = __p0;\
         char * __t__p1 = __p1;\
         long __base = (long)(PYTHON_BASE_NAME);\
-        (((PyObject * (*)(PyObject *, char *, char *, ...))_t_PyObject_CallMethod)(__t__p0, __t__p1, __VA_ARGS__,({__asm volatile("mr 12,%0": :"r"(__base):"r12");0L;})));\
+        (((PyObject * (*)(PyObject *, char *, char *, ...))*(void**)(__base - 2170))(__t__p0, __t__p1, __VA_ARGS__,({__asm volatile("mr 12,%0": :"r"(__base):"r12");0L;})));\
     })
 
 
