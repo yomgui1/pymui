@@ -857,6 +857,22 @@ class Image(Area):
         MUIA_Image_State:           ('State',           'i', 'is.'),
         }
 
+    @classmethod
+    def CheckMark(cl, selected, key=None):
+        kwds = {}
+        if key is not None:
+            kwds['ControlChar'] = key
+            
+        return cl(Frame='ImageButton',
+                  InputMode='Toggle',
+                  FreeVert=True,
+                  Selected=selected,
+                  Background='ButtonBack',
+                  ShowSelState=False,
+                  **kwds)
+
+CheckMark = Image.CheckMark
+
 
 class Bitmap(Area):
     CLASSID = MUIC_Bitmap
@@ -1130,7 +1146,7 @@ class Cycle(Group):
     ATTRIBUTES = {
         MUIA_Cycle_Active:  ('Active', 'i', 'isg'),
         MUIA_Cycle_Entries: ('Entries', ArrayOfString(), 'i..'),
-    }
+        }
 
     def __init__(self, Entries, **kwds):
         super(Cycle, self).__init__(Entries=Entries, **kwds)
@@ -1144,7 +1160,23 @@ class Coloradjust(Group):
         MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
         MUIA_Coloradjust_RGB:    ('RGB',    ArrayOf('L', 3), 'isg'),
-    }
+        }
+
+
+class Popstring(Group):
+    CLASSID = MUIC_Popstring
+    ATTRIBUTES = {
+        MUIA_Popstring_Button:    ('Button', 'M', 'i.g'),
+        MUIA_Popstring_CloseHook: ('CloseHook', 'p', 'isg'),
+        MUIA_Popstring_OpenHook:  ('OpenHook', 'p', 'isg'),
+        MUIA_Popstring_String:    ('String', 'M', 'i.g'),
+        MUIA_Popstring_Toggle:    ('Toggle', 'b', 'isg'),
+        }
+
+
+class Popobject(Popstring):
+    CLASSID = MUIC_Popobject
+    ATTRIBUTES = {}
 
 
 #################################################################################
