@@ -130,20 +130,15 @@ class ArrayOf(object):
         return array.array(self.pointer_base, obj).tostring()
 
 class ArrayOfString(object):
-    def __init__(self, size=0, keep=True):
+    def __init__(self, size=0):
         self.pointer_base = 's'
         self.size = size
-        if keep:
-            self.array = None
 
     def get(*a):
         raise Exception("Forbidden call")
 
     def set(self, o):
-        x = array.array('L', [stringaddress(x) for x in o] + [0]).tostring()
-        if hasattr(self, 'array'):
-            self.array = x
-        return x
+        return array.array('L', [stringaddress(x) for x in o] + [0]).tostring()
 
 
 # Transform the C EventHandler type into a classes to permit to add attributes
