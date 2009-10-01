@@ -858,16 +858,17 @@ class Image(Area):
         }
 
     @classmethod
-    def CheckMark(cl, selected, key=None):
+    def CheckMark(cl, selected=False, key=None):
         kwds = {}
         if key is not None:
             kwds['ControlChar'] = key
             
         return cl(Frame='ImageButton',
+                  Background='ButtonBack', 
                   InputMode='Toggle',
+                  Spec=MUII_CheckMark,
                   FreeVert=True,
                   Selected=selected,
-                  Background='ButtonBack',
                   ShowSelState=False,
                   **kwds)
 
