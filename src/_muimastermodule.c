@@ -133,6 +133,10 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
     #define SAVEDS __saveds
 #endif
 
+#define PyCPointer_ASVOIDPTR(o) (((PyCPointer *)(o))->ptr)
+#define PyCPointer_Check(op) PyObject_TypeCheck(op, &PyCPointer_Type)
+#define PyCPointer_CheckExact(op) ((op)->ob_type == &PyCPointer_Type)
+
 #define PyBOOPSIObject_Check(op) PyObject_TypeCheck(op, &PyBOOPSIObject_Type)
 #define PyBOOPSIObject_CheckExact(op) ((op)->ob_type == &PyBOOPSIObject_Type)
 
@@ -205,6 +209,12 @@ typedef struct MCCData_STRUCT {
     PyObject *PythonObject;
 } MCCData;
 
+typedef struct PyCPointer_STRUCT {
+    PyObject_HEAD
+
+    APTR ptr;
+} PyCPointer;
+
 
 /*
 ** Private Variables
@@ -219,6 +229,7 @@ static PyTypeObject PyRasterObject_Type;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static PyTypeObject PyEventHandlerObject_Type;
+static PyTypeObject PyCPointer_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
 
@@ -241,6 +252,18 @@ for more information on calls.");
 ** Private Functions
 */
 
+//+ PyCPointer_FromVoidPtr
+static PyObject *
+PyCPointer_FromVoidPtr(APTR ptr)
+{
+    PyCPointer *self;
+
+    self = PyObject_New(PyCPointer, &PyCPointer_Type);
+    if (NULL != self)
+        self->ptr = ptr;
+    return (PyObject *)self;
+}
+//-
 //+ PyBOOPSIObject_GetObject
 static inline Object *
 PyBOOPSIObject_GetObject(PyObject *pyo)
@@ -368,8 +391,8 @@ python2long(PyObject *obj, ULONG *value)
             return 0;
     } else if (PyBOOPSIObject_Check(obj))
         *value = (ULONG)PyBOOPSIObject_GET_OBJECT(obj);
-    else if (PyCObject_Check(obj))
-        *value = (ULONG)PyCObject_AsVoidPtr(obj);
+    else if (PyCPointer_Check(obj))
+        *value = (ULONG)PyCPointer_ASVOIDPTR(obj);
     else {
         PyObject *tmp = PyNumber_Int(obj);
 
@@ -1043,8 +1066,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
             return PyString_FromStringAndSize((char *)value, 1);
 
         case 'p':
-            return PyCObject_FromVoidPtr((void *)value, NULL);
-
+            return PyCPointer_FromVoidPtr((void *)value);
             
         case '0': /* list of pointers, NULL terminated */
         {
@@ -2145,6 +2167,68 @@ static PyTypeObject PyEventHandlerObject_Type = {
     tp_methods      : evthandler_methods,
     tp_getset       : evthandler_getseters,
 };
+
+
+/*******************************************************************************************
+** CPointer_Type
+*/
+
+//+ cpointer_init
+static int
+cpointer_init(PyCPointer *self, PyObject *args)
+{
+    APTR value = NULL;
+
+    if (!PyArg_ParseTuple(args, "|I", &value)) return -1;
+    self->ptr = value;
+    return 0;
+}
+//-
+//+ cpointer_nonzero
+static int
+cpointer_nonzero(PyCPointer *self)
+{
+    return NULL != self->ptr;
+}
+//-
+//+ cpointer_tostring
+static PyObject *
+cpointer_tostring(PyCPointer *self)
+{
+    if (NULL != self->ptr)
+        return PyString_FromString(self->ptr);
+
+    Py_RETURN_NONE;
+}
+//-
+
+static PyMemberDef cpointer_members[] = {
+    {"value", T_ULONG, offsetof(PyCPointer, ptr), 0, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyNumberMethods cpointer_as_number = {
+    nb_nonzero : (inquiry)cpointer_nonzero,
+};
+
+static struct PyMethodDef cpointer_methods[] = {
+    {"tostring", (PyCFunction)cpointer_tostring, METH_NOARGS, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyCPointer_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.CPointer",
+    tp_basicsize    : sizeof(PyCPointer),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_doc          : "CPointer Objects",
+
+    tp_init         : (initproc)cpointer_init,
+    tp_methods      : cpointer_methods,
+    tp_members      : cpointer_members,
+    tp_as_number    : &cpointer_as_number,
+};
  
 
 /*******************************************************************************************
@@ -2418,6 +2502,7 @@ INITFUNC(void) {
     }
 
     /* New Python types initialization */
+    if (PyType_Ready(&PyCPointer_Type) < 0) return;
     if (PyType_Ready(&PyRasterObject_Type) < 0) return;
     if (PyType_Ready(&PyBOOPSIObject_Type) < 0) return;
     if (PyType_Ready(&PyMUIObject_Type) < 0) return;
@@ -2427,6 +2512,7 @@ INITFUNC(void) {
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
     if (all_ins(m)) return;
 
+    ADD_TYPE(m, "CPointer", &PyCPointer_Type);
     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);

@@ -221,10 +221,9 @@ class BoopsiWrapping:
             ov = self._keep_dict.pop(k)
             debug("%s._keep(0x%x): del %s", self.__class__.__name__, k, repr(ov))
             return ov
-        elif f in 'szupM':
+        elif f[0] not in "Iic!":
             ov = self._keep_dict.pop(k, None)
-            if not isinstance(v, (int, long)):
-                self._keep_dict[k] = v
+            self._keep_dict[k] = v
             debug("%s._keep(0x%x): keep %s (old: %s)", self.__class__.__name__, k, repr(v), repr(ov))
             return ov
         
@@ -421,7 +420,9 @@ class Menuitem(Family):
         MUIA_Menuitem_Enabled:       ('Enabled',       'b', 'isg'),
         MUIA_Menuitem_Exclude:       ('Exclude',       'i', 'isg'),
         MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
-        MUIA_Menuitem_Title:         ('Title',         's', 'isg', None, lambda x: (x if x != NM_BARLABEL else stringaddress(x))),
+        MUIA_Menuitem_Title:         ('Title',         'p', 'isg',
+                                      None,
+                                      lambda x: (x if x.value != NM_BARLABEL else x.tostring())
         MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
         MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
         }
@@ -677,7 +678,7 @@ class AboutMUI(Window):
 class Area(Notify):
     CLASSID = MUIC_Area
     ATTRIBUTES = {
-        MUIA_Background:         ('Background',         's', 'is.'),
+        MUIA_Background:         ('Background',         'p', 'is.'),
         MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
         MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
         MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
@@ -1115,14 +1116,13 @@ class Cycle(Group):
     CLASSID = MUIC_Cycle
     ATTRIBUTES = {
         MUIA_Cycle_Active:  ('Active', 'i', 'isg'),
-        MUIA_Cycle_Entries: ('Entries', '0s', 'i..', lambda x: ArrayOfString(x), None),
+        MUIA_Cycle_Entries: ('Entries', '0s', 'i..',
+                             lambda x: ArrayOfString(x),
+                             None),
         }
 
     def __init__(self, Entries, **kwds):
-        x = ArrayOfString(Entries)
-        print ''.join('%02x' % ord(c) for c in x._data)
-        print ''.join(n for n in Entries)
-        super(Cycle, self).__init__(**kwds)
+        super(Cycle, self).__init__(Entries=Entries, **kwds)
 
 
 class Coloradjust(Group):
@@ -1132,7 +1132,9 @@ class Coloradjust(Group):
         MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
         MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
-        MUIA_Coloradjust_RGB:    ('RGB',    '3I', 'isg', lambda x: array.array('L', x), None),
+        MUIA_Coloradjust_RGB:    ('RGB',    '3I', 'isg',
+                                  lambda x: array.array('L', x),
+                                  None),
         }
 
 
