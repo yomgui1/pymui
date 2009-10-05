@@ -352,6 +352,9 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
  * /!\ This function doesn't incref the given python object.
  * This one shall be kept valid if a reference is stored by the MUI object,
  * until the object is disposed or if the reference is released.
+ * There are no effects for integer values, but for pointers...
+ *
+ * Moreover, no checks are done to prevent a non-wanted conversion.
  */
 static int
 python2long(PyObject *obj, ULONG *value)
@@ -360,16 +363,14 @@ python2long(PyObject *obj, ULONG *value)
 
     if (Py_None == obj)
         *value = 0;
-    else if (PyString_Check(obj) || PyUnicode_Check(obj))
-        *value = (ULONG)PyString_AsString(obj);
-    else if (PyBOOPSIObject_Check(obj))
-        *value = (ULONG)PyBOOPSIObject_GET_OBJECT(obj);
-    else if (PyCObject_Check(obj))
-        *value = (ULONG)PyCObject_AsVoidPtr(obj);
     else if (PyObject_CheckReadBuffer(obj)) {
         if (PyObject_AsReadBuffer(obj, (const void **)value, &buffer_len) != 0)
             return 0;
-    } else {
+    } else if (PyBOOPSIObject_Check(obj))
+        *value = (ULONG)PyBOOPSIObject_GET_OBJECT(obj);
+    else if (PyCObject_Check(obj))
+        *value = (ULONG)PyCObject_AsVoidPtr(obj);
+    else {
         PyObject *tmp = PyNumber_Int(obj);
 
         if (NULL == tmp) {
@@ -393,26 +394,11 @@ python2long(PyObject *obj, ULONG *value)
 static int
 parse_attribute_entry(PyObject *entry, ULONG *attr, ULONG *value)
 {
-    PyObject *value_obj, *convertor;
+    PyObject *value_obj;
+    PyObject *dummy;
 
-    if (!PyArg_ParseTuple(entry, "IOO:PyBOOPSIObject", attr, &value_obj, &convertor)) /* BR */
+    if (!PyArg_ParseTuple(entry, "IO|O:parse_attribute_entry", attr, &value_obj, &dummy)) /* BR */
         return FALSE;
-
-    if (!PyString_CheckExact(convertor)) {
-        PyObject *o;
-        int result;
-
-        Py_INCREF(value_obj);
-        o = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
-        Py_DECREF(value_obj);
-
-        if (NULL == o)
-            return 0;
-
-        result = python2long(o, value);
-        Py_DECREF(o);
-        return result;
-    }
 
     return python2long(value_obj, value);
 }
@@ -1060,16 +1046,18 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
             return PyCObject_FromVoidPtr((void *)value, NULL);
 
             
-        case '0':
+        case '0': /* list of pointers, NULL terminated */
         {
             PyObject *list;
             PyObject *(*func)(APTR) = NULL;
 
             list = PyList_New(0); /* NR */
+            if (NULL == list)
+                return NULL;
+            
             if (0 == value)
                 return list;
 
-            /* list of pointers, NULL terminated */
             switch(format[1]) {
                 case 'M':
                     func = (APTR)PyMUIObject_NewFromObject;
@@ -1109,10 +1097,25 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
         case '7':
         case '8':
         case '9':
+            {
+                ULONG n;
+
+                n = strtoul(&format[1], NULL, 10);
+                DPRINT("Array size: %lu\n", n);
+                if (0 == n) {
+                    PyErr_SetString(PyExc_ValueError, "array size shall not be zero");
+                    return NULL;
+                }
+
+                if ((ULONG_MAX != n) || (ERANGE != errno))
+                    return PyBuffer_FromMemory((APTR)value, n);
+                else
+                    PyErr_SetString(PyExc_OverflowError, "array size is too big for an unsigned long");
+            }
             break;
     }
 
-    return PyErr_Format(PyExc_ValueError, "Bad format: '%s'", format);
+    return PyErr_Format(PyExc_ValueError, "Bad _get() format: '%s'", format);
 }
 //-
 //+ boopsi__set
@@ -1128,7 +1131,7 @@ Note: No reference kept on the given value object!");
 static PyObject *
 boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     Object *obj;
-    PyObject *value_obj, *convertor;
+    PyObject *value_obj;
     ULONG attr;
     ULONG value;
 
@@ -1136,38 +1139,19 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "IOO:_set", &attr, &value_obj, &convertor)) /* BR */
+    if (!PyArg_ParseTuple(args, "IO:_set", &attr, &value_obj)) /* BR */
         return NULL;
-    
-    if (PyString_CheckExact(convertor)) {
-        if (!python2long((PyObject *)value_obj, &value))
-            return NULL;
 
-        DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
-        set(obj, attr, value);
-    } else  {
-        PyObject *res;
-        
-        Py_INCREF(value_obj);
-        res = PyObject_CallMethod(convertor, "set", "(O)", value_obj); /* NR */
-        Py_DECREF(value_obj);
+    if (!python2long((PyObject *)value_obj, &value))
+        return NULL;
 
-        if (NULL == res)
-            return res;
-
-        if (!python2long((PyObject *)res, &value))
-            return NULL;
-
-        DPRINT("Attr 0x%lx set to pointer %p on BOOPSI obj @ %p\n", attr, value, obj);
-        set(obj, attr, value);
-  
-        Py_DECREF(res);
-    }
-
+    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    set(obj, attr, value);
     DPRINT("done\n");
     
     /* We handle Python exception here because set an attribute can call a notification
-       that will raise an exception. In this case the set fails also. */
+     * that will raise an exception. In this case the set fails also.
+     */
     if (PyErr_Occurred())
         return NULL;
 
@@ -1355,14 +1339,14 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
 //-
 //+ boopsi_get_mo
 static PyObject *
-boopsi_get_mo(PyBOOPSIObject *self, void *closure)
+boopsi_get_object(PyBOOPSIObject *self, void *closure)
 {
     return PyLong_FromVoidPtr(PyBOOPSIObject_GET_OBJECT(self));
 }
 //-
 
 static PyGetSetDef boopsi_getseters[] = {
-    {"_mo",   (getter)boopsi_get_mo, NULL, "MUI object address", NULL},
+    {"_object", (getter)boopsi_get_object, NULL, "BOOPSI object address", NULL},
     {NULL} /* sentinel */
 };
 
@@ -1770,38 +1754,6 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
     return (PyObject *)self->raster;
 }
 //-
-//+ muiobject_set_pointer
-static int
-muiobject_set_pointer(PyMUIObject *self, PyObject *value, void *closure)
-{
-    Object *obj;
-    struct Window *win;       
-    ULONG type;
-    
-    if (NULL == value) {
-        PyErr_SetString(PyExc_TypeError, "This attribute can't be deleted");
-        return -1;
-    }
-
-    type = PyInt_AsLong(value);
-    if (PyErr_Occurred())
-        return -1;
-    
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
-    if (NULL == obj)
-        return -1;
-
-    win = NULL;
-    if (!get(obj, MUIA_Window, &win) || (NULL == win)) {
-        PyErr_SetString(PyExc_SystemError, "No window found on this MUI object");
-        return -1;
-    }
-
-    SetWindowPointer(win, WA_PointerType, type, TAG_DONE);
-
-    return 0;
-}
-//-
 
 static PyGetSetDef muiobject_getseters[] = {
     {"MLeft",   (getter)muiobject_get_mleft,   NULL, "_mleft(obj)",   NULL},
@@ -1815,7 +1767,6 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
-    {"pointer", NULL,                          (setter)muiobject_set_pointer, "Window pointer type", NULL},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "Object RastPort", NULL},
     {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
     {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
@@ -1823,9 +1774,9 @@ static PyGetSetDef muiobject_getseters[] = {
 };
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_nnset",      (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
-    {"_notify",     (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
-    {"Redraw",      (PyCFunction) muiobject_redraw,      METH_VARARGS, muiobject_redraw_doc},
+    {"_nnset",  (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
+    {"_notify", (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
+    {"Redraw",  (PyCFunction) muiobject_redraw,      METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
 
@@ -2310,12 +2261,40 @@ _muimaster_stringaddress(PyObject *self, PyObject *str)
     return PyLong_FromVoidPtr(PyString_AsString(str));
 }
 //-
+//+ _muimaster_setwinpointer
+static PyObject *
+_muimaster_setwinpointer(PyObject *self, PyObject *args)
+{
+    PyObject *pyo;
+    Object *obj;
+    struct Window *win;
+    ULONG type;
+
+    if (!PyArg_ParseTuple(args, "O!I", &PyMUIObject_Type, &pyo, &type))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL != obj) {
+        /* Try to obtain the system window of the given object */
+        win = NULL;
+        if (get(obj, MUIA_Window, &win) && (NULL != win)) {
+            SetWindowPointer(win, WA_PointerType, type, TAG_DONE); 
+            Py_RETURN_NONE;
+        }
+
+        PyErr_SetString(PyExc_SystemError, "No window found on this MUI object");
+    }
+
+    return NULL;
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {"stringaddress", _muimaster_stringaddress, METH_O, NULL},
+    {"setwinpointer", _muimaster_setwinpointer, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 

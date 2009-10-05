@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-import sys, functools
+import sys, functools, array
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -87,31 +87,35 @@ TABLETA_InProximity  = (TABLETA_Dummy + 8)
 TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 
-class StrToChar:
-    @staticmethod
-    def get(value):
-        return chr(value)
-
-    @staticmethod
-    def set(value):
-        return ord(value)
-
 class AttributeInfo:
-    def __init__(self, value, args):
-        if type(value) not in (int, long):
-            raise TypeError("Value argument shall be int or long")
-        self._value = value
-        self._name, self._format, isg = args
+    def __init__(self, attr, args):
+        if type(attr) not in (int, long):
+            raise TypeError("Attribute value shall be int or long")
+        self._attr = attr
+        l = len(args)
+        if l == 5:
+            self._name, self._format, isg, self.sconv, self.gconv = args
+        else:
+            self._name, self._format, isg = args
+            self.sconv = None
+            self.gconv = None
+
+        if self.sconv is None:
+            if self._format == 'c':
+                self.sconv = lambda x: x[0]
+            else:
+                self.sconv = lambda x: x
+        if self.gconv is None:
+            self.gconv = lambda x: x
+            
         if isg not in ('i..', '.s.' , '..g', 'is.', 'i.g', '.sg', 'isg'):
             raise ValueError("Not recognized ISG value: '%s'" % isg)
         self._isg = isg.lower()
-        if self._format == 'c':
-            self._format = StrToChar
-
+        
     def __repr__(self):
-        return "<Attribute %s (0x%08x)>" % (self._name, self._value)
+        return "<Attribute %s (0x%08x)>" % (self._name, self._attr)
 
-    value = property(fget=lambda self: self._value)
+    attr = property(fget=lambda self: self._attr)
     name = property(fget=lambda self: self._name)
     format = property(fget=lambda self: self._format)
     mode = property(fget=lambda self: self._isg)
@@ -119,40 +123,21 @@ class AttributeInfo:
     isset = property(fget=lambda self: 's' in self._isg)
     isget = property(fget=lambda self: 'g' in self._isg)
 
-import array
-
-class ArrayOf(object):
-    def __init__(self, itemtype, size=0):
-        self.pointer_base = str(itemtype)[0]
-        self.size = size
-
-    def set(self, obj):
-        return array.array(self.pointer_base, obj).tostring()
-
-class ArrayOfString(object):
-    def __init__(self, size=0):
-        self.pointer_base = 's'
-        self.size = size
-
-    def get(*a):
-        raise Exception("Forbidden call")
-
-    def set(self, o):
-        return array.array('L', [stringaddress(x) for x in o] + [0]).tostring()
-
 
 # Transform the C EventHandler type into a classes to permit to add attributes
 class EventHandler(_muimaster.EventHandler):
     pass
 
-class StrAsInt:
-    @staticmethod
-    def get(value):
-        return value
 
-    @staticmethod     
-    def set(value):
-        return value
+class ArrayOfString:
+    def __init__(self, strings):
+        self._strings = strings
+        a = array.array('L', (stringaddress(s) for s in strings))
+        a.append(0)
+        self._data = a.tostring()
+
+    def __int__(self):
+        return stringaddress(self._data)
 
 
 ##
@@ -180,10 +165,10 @@ class MetaMCC(type):
             # filter for doublons
             if x.name in kw:
                 raise RuntimeError("Attribute %s already given" % x.name)
-            if x.value in attrs:
+            if x.attr in attrs:
                 raise RuntimeError("Attribute %x already given" % x.value)
             
-            attrs[x.value] = x # dict (attribute id, AttributeInfo)
+            attrs[x.attr] = x # dict (attribute id, AttributeInfo)
             kw[x.name] = x # dict (attribute name, AttributeInfo) - for speed
 
             # Generate property objects when 's' or 'g' in format
@@ -231,30 +216,29 @@ class BoopsiWrapping:
             raise ValueError("Attribute %s is not supported" % repr(attr))
 
     def _keep(self, k, v, f='i'):
-        if not isinstance(f, str):
-            f = 'p'
-
         # Udpate the keep dict content
         if k in self._keep_dict and v is None:
             ov = self._keep_dict.pop(k)
             debug("%s._keep(0x%x): del %s", self.__class__.__name__, k, repr(ov))
             return ov
-        elif f in 'szupM': # None is permitted when format = 'z':
-            ov = self._keep_dict.get(k)
-            self._keep_dict[k] = v
+        elif f in 'szupM':
+            ov = self._keep_dict.pop(k, None)
+            if not isinstance(v, (int, long)):
+                self._keep_dict[k] = v
             debug("%s._keep(0x%x): keep %s (old: %s)", self.__class__.__name__, k, repr(v), repr(ov))
             return ov
         
     def Get(self, attr):
         inf = self._check_attr(attr, 'g')
-        return self._get(inf.value, inf.format)
+        return inf.gconv(self._get(inf.attr, inf.format))
 
     def Set(self, attr, value):
         inf = self._check_attr(attr, 's')
-        if value is None and inf.format == 's':
+        if value is None and inf.format != 'z':
             raise TypeError("None value is not valid for this attribute")
-        self._set(inf.value, value, inf.format)
-        return self._keep(inf.value, value, inf.format)
+        value = inf.sconv(value)
+        self._set(inf.attr, value)
+        return self._keep(inf.attr, value, inf.format)
 
     def DoMethod(self, mid, *args):
         """DoMethod(mid, *args) -> int
@@ -294,11 +278,13 @@ class Notify(PyMUIObject, BoopsiWrapping):
         else:
             superid = None
 
-        attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
-        self._create(self._mclassid, superid, ((inf.value, v, inf.format) for inf, v in attrs))
+        attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.pop('extra', {})]
+        attrs += [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
+        data = tuple((inf.attr, inf.sconv(v), inf.format) for inf, v in attrs)
+        self._create(self._mclassid, superid, data)
         
-        for inf, v in attrs:
-            self._keep(inf.value, v, inf.format)
+        for t in data:
+            self._keep(*t)
         
     def _notify_cb(self, id, value):
         for cb, trigvalue, args in self._notify_cbdict[id]:
@@ -321,7 +307,7 @@ class Notify(PyMUIObject, BoopsiWrapping):
 
     def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *args):
         assert callable(callback)
-        attr = self._check_attr(attr, 'sg').value
+        attr = self._check_attr(attr, 'sg').attr
         weak_args = []
         for a in args:
             try:
@@ -338,8 +324,9 @@ class Notify(PyMUIObject, BoopsiWrapping):
 
     def NNSet(self, attr, value):
         inf = self._check_attr(attr, 's')
-        self._nnset(inf.value, value)
-        self._keep(inf.value, value, inf.format)
+        value = inf.sconv(value)
+        self._nnset(inf.attr, value)
+        self._keep(inf.attr, value, inf.format)
 
 
 class Family(Notify):
@@ -434,7 +421,7 @@ class Menuitem(Family):
         MUIA_Menuitem_Enabled:       ('Enabled',       'b', 'isg'),
         MUIA_Menuitem_Exclude:       ('Exclude',       'i', 'isg'),
         MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
-        MUIA_Menuitem_Title:         ('Title',         StrAsInt, 'isg'),
+        MUIA_Menuitem_Title:         ('Title',         's', 'isg', None, lambda x: (x if x != NM_BARLABEL else stringaddress(x))),
         MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
         MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
         }
@@ -539,7 +526,7 @@ class Window(Notify):
         MUIA_Window_DragBar:                 ('DragBar',                 'b', 'i..'),
         MUIA_Window_FancyDrawing:            ('FancyDrawing',            'b', 'isg'),
         MUIA_Window_Height:                  ('Height',                  'i', 'i.g'),
-        MUIA_Window_ID:                      ('ID',                      StrAsInt, 'isg'),
+        MUIA_Window_ID:                      ('ID',                      'I', 'isg'),
         MUIA_Window_InputEvent:              ('InputEvent',              'p', '..g'),
         MUIA_Window_IsSubWindow:             ('IsSubWindow',             'b', 'isg'),
         MUIA_Window_LeftEdge:                ('LeftEdge',                'i', 'i.g'),
@@ -657,8 +644,8 @@ class Window(Notify):
         """
         if self.__app: return
         self.__app = app
-        self.__Open = functools.partial(self._set, MUIA_Window_Open, True, 'b')
-        self.__Close = functools.partial(self._set, MUIA_Window_Open, False, 'b')
+        self.__Open = functools.partial(self._set, MUIA_Window_Open, True)
+        self.__Close = functools.partial(self._set, MUIA_Window_Open, False)
 
     def __Open(self):
         raise RuntimeError("Can't open the Window object, not linked to an application yet.\n"
@@ -687,23 +674,10 @@ class AboutMUI(Window):
         self.SetApp(app)
 
 
-class Convertor_ImageSpec:
-    @staticmethod
-    def get(value):
-        if value <= MUII_LASTPAT:
-            return value
-        else:
-            return None
-
-    @staticmethod 
-    def set(value):
-        return value
-
-
 class Area(Notify):
     CLASSID = MUIC_Area
     ATTRIBUTES = {
-        MUIA_Background:         ('Background',         Convertor_ImageSpec, 'is.'),
+        MUIA_Background:         ('Background',         's', 'is.'),
         MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
         MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
         MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
@@ -1141,11 +1115,14 @@ class Cycle(Group):
     CLASSID = MUIC_Cycle
     ATTRIBUTES = {
         MUIA_Cycle_Active:  ('Active', 'i', 'isg'),
-        MUIA_Cycle_Entries: ('Entries', ArrayOfString(), 'i..'),
+        MUIA_Cycle_Entries: ('Entries', '0s', 'i..', lambda x: ArrayOfString(x), None),
         }
 
     def __init__(self, Entries, **kwds):
-        super(Cycle, self).__init__(Entries=Entries, **kwds)
+        x = ArrayOfString(Entries)
+        print ''.join('%02x' % ord(c) for c in x._data)
+        print ''.join(n for n in Entries)
+        super(Cycle, self).__init__(**kwds)
 
 
 class Coloradjust(Group):
@@ -1155,7 +1132,7 @@ class Coloradjust(Group):
         MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
         MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
-        MUIA_Coloradjust_RGB:    ('RGB',    ArrayOf('L', 3), 'isg'),
+        MUIA_Coloradjust_RGB:    ('RGB',    '3I', 'isg', lambda x: array.array('L', x), None),
         }
 
 
