@@ -366,6 +366,10 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
         Py_XDECREF(res);
         
         Py_DECREF(pyo);
+
+        if (NULL != PyErr_Occurred())
+            PyErr_Print();
+
         PyGILState_Release(gstate);
     }
 }
