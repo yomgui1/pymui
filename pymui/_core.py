@@ -422,7 +422,7 @@ class Menuitem(Family):
         MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
         MUIA_Menuitem_Title:         ('Title',         'p', 'isg',
                                       None,
-                                      lambda x: (x if x.value != NM_BARLABEL else x.tostring())
+                                      lambda x: (x if x.value != NM_BARLABEL else x.tostring())),
         MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
         MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
         }
@@ -1134,7 +1134,7 @@ class Coloradjust(Group):
         MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
         MUIA_Coloradjust_RGB:    ('RGB',    '3I', 'isg',
                                   lambda x: array.array('L', x),
-                                  None),
+                                  lambda x: array.array('L', str(x)).tolist()),
         }
 
 

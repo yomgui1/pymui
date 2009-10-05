@@ -1121,17 +1121,27 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
         case '9':
             {
                 ULONG n;
+                char *end;
 
-                n = strtoul(&format[1], NULL, 10);
+                n = strtoul(&format[0], &end, 10);
                 DPRINT("Array size: %lu\n", n);
                 if (0 == n) {
                     PyErr_SetString(PyExc_ValueError, "array size shall not be zero");
                     return NULL;
                 }
 
-                if ((ULONG_MAX != n) || (ERANGE != errno))
-                    return PyBuffer_FromMemory((APTR)value, n);
-                else
+                if ((ULONG_MAX != n) || (ERANGE != errno)) {
+                    Py_ssize_t len;
+
+                    switch (*end) {
+                        case 'I': len = sizeof(ULONG); break;
+                        default:
+                            PyErr_SetString(PyExc_ValueError, "Unsupported array type");
+                            return NULL;
+                    }
+                    
+                    return PyBuffer_FromMemory((APTR)value, n*len);
+                } else
                     PyErr_SetString(PyExc_OverflowError, "array size is too big for an unsigned long");
             }
             break;
@@ -2024,7 +2034,7 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
             &self->handler->ehn_Priority)) /* BR */
         return NULL;
 
-    mo = PyBOOPSIObject_GetObject((PyObject *)self);
+    mo = PyBOOPSIObject_GetObject((PyObject *)pyo);
     if (NULL == mo)
         return NULL;
 
