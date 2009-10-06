@@ -232,6 +232,7 @@ static PyTypeObject PyEventHandlerObject_Type;
 static PyTypeObject PyCPointer_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
+static BOOL gClosingModule = FALSE;
 
 
 /*
@@ -826,9 +827,14 @@ DISPATCHER(mcc)
 {
     MCCData *data = INST_DATA(cl, obj);
     ULONG result;
-    PyObject *exception;
-    PyGILState_STATE gstate;
+    PyGILState_STATE gstate = 0;
     
+    if (gClosingModule && (NULL != data->PythonObject)) {
+        dprintf("Warning: closing _muimaster module, but PythonObject not NULL (%p-%s)\n",
+            data->PythonObject, OBJ_TNAME(data->PythonObject));
+        data->PythonObject = NULL;
+    }
+
     if (NULL != data->PythonObject)
         gstate = PyGILState_Ensure();
 
@@ -843,14 +849,13 @@ DISPATCHER(mcc)
         default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    if (NULL != data->PythonObject) {
-        exception = PyErr_Occurred();
-        if (NULL != exception)
+    if (gstate) {
+        if (NULL != PyErr_Occurred())
             PyErr_Print();
-            //PyErr_WriteUnraisable(exception);
 
         PyGILState_Release(gstate);     
     }
+
     return result;
 }
 DISPATCHER_END
@@ -2410,6 +2415,8 @@ PyMorphOS_CloseModule(void) {
     Object* keep_app = NULL;
 
     DPRINT("Closing module...\n");
+
+    gClosingModule = TRUE;
 
     ForeachNodeSafe(&gCreatedObjectList, node, next) {
         Object *obj = node->n_Object;
