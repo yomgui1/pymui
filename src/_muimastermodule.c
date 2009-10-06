@@ -1593,9 +1593,9 @@ static PyObject *
 muiobject_redraw(PyMUIObject *self, PyObject *args)
 {
     Object *obj;
-    ULONG flags;
+    ULONG flags = MADF_DRAWOBJECT;
 
-    if (!PyArg_ParseTuple(args, "I:Redraw", &flags))
+    if (!PyArg_ParseTuple(args, "|I:Redraw", &flags))
         return NULL;
 
     obj = PyBOOPSIObject_GetObject((PyObject *)self);
