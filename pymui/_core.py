@@ -233,7 +233,7 @@ class BoopsiWrapping:
 
     def Set(self, attr, value):
         inf = self._check_attr(attr, 's')
-        if value is None and inf.format != 'z':
+        if value is None and inf.format not in 'zMp':
             raise TypeError("None value is not valid for this attribute")
         value = inf.sconv(value)
         self._set(inf.attr, value)
