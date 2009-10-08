@@ -1852,10 +1852,45 @@ raster_dealloc(PyRasterObject *self)
     self->ob_type->tp_free((PyObject *)self);
 }
 //-
+//+ raster_blit8
+/*! \cond */
+PyDoc_STRVAR(raster_blit8_doc,
+"Blit8(buffer, dst_x, dst_y, src_w, src_h, src_x=0, src_y=0)\n\
+\n\
+Blit given RGB8 buffer on the raster.\n\
+\n\
+src_x, src_y: top-left corner of source rectangle to blit.\n\
+src_w: source rectangle width.\n\
+src_h: source rectangle height.\n\
+dst_x: destination position on X-axis in the raster.\n\
+dst_y: destination position on Y-axis in the raster.");
+/*! \endcond */
+
+static PyObject *
+raster_blit8(PyRasterObject *self, PyObject *args)
+{
+    char *buf;
+    UWORD src_x=0, src_y=0, dst_x, dst_y, src_w, src_h;
+    int buf_size;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s#HHHH|HH:Blit8", &buf, &buf_size,
+                          &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
+        return NULL;
+
+    WritePixelArray(buf, src_x, src_y, buf_size/src_h, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_RGB);
+
+    Py_RETURN_NONE;
+}
+//-
 //+ raster_scaled_blit8
 /*! \cond */
 PyDoc_STRVAR(raster_scaled_blit8_doc,
-"ScaleBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
+"ScaledBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
 \n\
 Blit given RGB8 buffer on the raster. If src and dst size are different,\n\
 performs a scaling before blitting at given raster position.\n\
@@ -1940,6 +1975,7 @@ raster_rect(PyRasterObject *self, PyObject *args)
 //-
 
 static struct PyMethodDef raster_methods[] = {
+    {"Blit8",       (PyCFunction)raster_blit8,        METH_VARARGS, raster_blit8_doc},
     {"ScaledBlit8", (PyCFunction)raster_scaled_blit8, METH_VARARGS, raster_scaled_blit8_doc},
     {"Scroll",      (PyCFunction)raster_scroll,       METH_VARARGS, NULL},
     {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},

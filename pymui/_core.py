@@ -783,13 +783,13 @@ class Rectangle(Area):
     @classmethod
     def HCenter(cl, o):
         g = Group.HGroup(Spacing=0)
-        g.AddChild((cl.HSpace(0), o, cl.HSpace(0)))
+        g.AddChild(cl.HSpace(0), o, cl.HSpace(0))
         return g
 
     @classmethod
     def VCenter(cl, o):
         g = Group.VGroup(Spacing=0)
-        return g.AddChild((cl.VSpace(0), o, cl.VSpace(0)))
+        return g.AddChild(cl.VSpace(0), o, cl.VSpace(0))
 
     @classmethod
     def HBar(cl, space):
