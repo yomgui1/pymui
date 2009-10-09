@@ -206,7 +206,9 @@ typedef struct PyEventHandlerObject_STRUCT {
 } PyEventHandlerObject;
 
 typedef struct MCCData_STRUCT {
-    PyObject *PythonObject;
+    PyObject *  PythonObject;
+    BOOL        Clip;
+    APTR        ClipHandle;
 } MCCData;
 
 typedef struct PyCPointer_STRUCT {
@@ -619,7 +621,12 @@ static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
 
     pyo = data->PythonObject;
     DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
-    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Setup"))
+    if (NULL == pyo)
+        return TRUE;
+
+    data->Clip = PyObject_HasAttrString(pyo, "_clip");
+
+    if (!PyObject_HasAttrString(pyo, "MCC_Setup"))
         return TRUE;
 
     Py_INCREF(pyo);
@@ -663,6 +670,9 @@ static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
     if (!DoSuperMethodA(cl, obj, msg))
         return FALSE;
 
+    if (data->Clip)
+        data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+
     pyo = data->PythonObject;
     DPRINT("pyo=%p\n", pyo);
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
@@ -686,6 +696,9 @@ static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
     MCCData *data = INST_DATA(cl, obj);
     PyObject *pyo, *res;
 
+    if (data->Clip)
+        MUI_RemoveClipping(muiRenderInfo(obj), data->ClipHandle);
+
     pyo = data->PythonObject;
     DPRINT("obj=%p, pyo=%p\n", obj, pyo);
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
@@ -703,7 +716,6 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
 {
     MCCData *data = INST_DATA(cl, obj);
     PyObject *pyo, *res;
-    struct Region *region, *oldregion = NULL;
 
     DoSuperMethodA(cl, obj, msg);
 
@@ -712,26 +724,10 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
         return 0;
 
-    if (PyObject_HasAttrString(pyo, "_clip")) {
-        region = NewRegion();
-        if (NULL != region) {
-            struct Rectangle rect = { _left(obj), _mtop(obj), _mright(obj), _bottom(obj) };
-
-            OrRectRegion(region, &rect);
-            oldregion = InstallClipRegion(_window(obj)->WLayer, region);
-        }
-    } else
-        region = NULL;
-
     Py_INCREF(pyo);
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_Draw", "I", msg->flags); /* NR */
     Py_XDECREF(res);
     Py_DECREF(pyo);
-
-    if (NULL != region) {
-        InstallClipRegion(_window(obj)->WLayer, oldregion);
-        DisposeRegion(region);
-    }
 
     return 0;
 }
@@ -828,7 +824,7 @@ DISPATCHER(mcc)
     MCCData *data = INST_DATA(cl, obj);
     ULONG result;
     PyGILState_STATE gstate = 0;
-    
+
     if (gClosingModule && (NULL != data->PythonObject)) {
         dprintf("Warning: closing _muimaster module, but PythonObject not NULL (%p-%s)\n",
             data->PythonObject, OBJ_TNAME(data->PythonObject));
@@ -837,7 +833,7 @@ DISPATCHER(mcc)
 
     if (NULL != data->PythonObject)
         gstate = PyGILState_Ensure();
-
+    
     switch (msg->MethodID) {
         case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
         case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
@@ -2325,28 +2321,31 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
      */
 
     DPRINT("Goes into mainloop...\n");
-
-    Py_BEGIN_ALLOW_THREADS
     for (;;) {
         ULONG id;
+        PyThreadState *py_thread_state; 
         
+        py_thread_state = PyEval_SaveThread();
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
+        PyEval_RestoreThread(py_thread_state);
 
         if (MUIV_Application_ReturnID_Quit == id)
             break;
 
-        if (sigs)
+        /* Exception occured ? */
+        if (PyErr_Occurred())
+            PyErr_Print();
+
+        if (sigs) {
+            py_thread_state = PyEval_SaveThread();
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
-        else
+            PyEval_RestoreThread(py_thread_state);  
+        } else
             sigs = SetSignal(0, 0);
 
         if (sigs & SIGBREAKF_CTRL_C)
             break;
-
-        /*if (PyErr_Occurred())
-            break;*/
     }
-    Py_END_ALLOW_THREADS
 
     if (sigs & SIGBREAKF_CTRL_C) {
         PyErr_SetNone(PyExc_KeyboardInterrupt);
