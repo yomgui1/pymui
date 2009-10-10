@@ -967,6 +967,17 @@ class Numeric(Area):
         }
 
 
+class Knob(Numeric):
+    CLASSID = "Knob.mui"
+
+
+class Levelmeter(Numeric):
+    CLASSID = "Levelmeter.mui"
+    ATTRIBUTES = {
+        MUIA_Levelmeter_Label: ('Label', 's', 'isg'),
+        }
+ 
+
 class Slider(Numeric):
     CLASSID = "Slider.mui"
     ATTRIBUTES = {
