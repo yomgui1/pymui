@@ -34,19 +34,19 @@ class MainWindow(Window):
                                          TopEdge=MUIV_Window_TopEdge_Moused,
                                          Width=320, Height=64)
  
-        buttons = [ Text.Button("Close"),
-                    Text.Button("Me"),
-                    Text.Button("Now!") ]
+        buttons = [ SimpleButton("Close"),
+                    SimpleButton("Me"),
+                    SimpleButton("Now!") ]
 
         butGroup = Group.HGroup()
-        butGroup.AddChild(buttons)
+        butGroup.AddChild(*buttons)
 
         text = Text(Contents=MUIX_C + "Hello! I'm a very good program!\nClose me now...",
                     Draggable=True,
                     Frame=MUIV_Frame_String)
 
         mainGroup = Group.VGroup()
-        mainGroup.AddChild( (text, butGroup) )
+        mainGroup.AddChild( text, butGroup )
         self.RootObject = mainGroup
         
 
@@ -62,4 +62,3 @@ class HelloWorld(Application):
 
 app = HelloWorld()
 app.Run()
-
