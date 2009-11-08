@@ -2411,7 +2411,7 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!I", &PyMUIObject_Type, &pyo, &type))
         return NULL;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyObject *)pyo);
     if (NULL != obj) {
         /* Try to obtain the system window of the given object */
         win = NULL;

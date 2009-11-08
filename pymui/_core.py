@@ -662,6 +662,10 @@ class Window(Notify):
     def Close(self):
         self.__Close() # raise error if object not linked to an application (SetApp)
 
+    def _set_pointer(self, value):
+        setwinpointer(self, value)
+
+    pointer = property(fset=_set_pointer)
 
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
