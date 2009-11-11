@@ -670,9 +670,6 @@ static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
     if (!DoSuperMethodA(cl, obj, msg))
         return FALSE;
 
-    if (data->Clip)
-        data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
-
     pyo = data->PythonObject;
     DPRINT("pyo=%p\n", pyo);
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
@@ -696,9 +693,6 @@ static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
     MCCData *data = INST_DATA(cl, obj);
     PyObject *pyo, *res;
 
-    if (data->Clip)
-        MUI_RemoveClipping(muiRenderInfo(obj), data->ClipHandle);
-
     pyo = data->PythonObject;
     DPRINT("obj=%p, pyo=%p\n", obj, pyo);
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
@@ -719,6 +713,9 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
 
     DoSuperMethodA(cl, obj, msg);
 
+    if ((msg->flags & MADF_DRAWOBJECT) && (data->Clip))
+        data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+
     pyo = data->PythonObject;
     DPRINT("pyo=%p\n", pyo);
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
@@ -728,6 +725,9 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
     res = PyObject_CallMethod((PyObject *)pyo, "MCC_Draw", "I", msg->flags); /* NR */
     Py_XDECREF(res);
     Py_DECREF(pyo);
+
+    if ((msg->flags & MADF_DRAWOBJECT) && (data->Clip))
+        MUI_RemoveClipping(muiRenderInfo(obj), data->ClipHandle);
 
     return 0;
 }
