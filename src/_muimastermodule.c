@@ -713,7 +713,7 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
 
     DoSuperMethodA(cl, obj, msg);
 
-    if ((msg->flags & MADF_DRAWOBJECT) && (data->Clip))
+    if (data->Clip)
         data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
 
     pyo = data->PythonObject;
@@ -726,7 +726,7 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
     Py_XDECREF(res);
     Py_DECREF(pyo);
 
-    if ((msg->flags & MADF_DRAWOBJECT) && (data->Clip))
+    if (data->Clip)
         MUI_RemoveClipping(muiRenderInfo(obj), data->ClipHandle);
 
     return 0;

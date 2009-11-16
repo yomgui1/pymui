@@ -1169,6 +1169,38 @@ class Popobject(Popstring):
     ATTRIBUTES = {}
 
 
+class List(Group):
+    CLASSID = MUIC_List
+    ATTRIBUTES = {
+        MUIA_List_Active:       ('Active',      'i', 'isg'),
+        MUIA_List_DoubleClick:  ('DoubleClick', 'b', 'i.g'),
+    }
+
+
+class DirList(List):
+    CLASSID = MUIC_Dirlist
+    ATTRIBUTES = {
+        MUIA_Dirlist_AcceptPattern: ('AcceptPattern',   's', 'is.'),
+        MUIA_Dirlist_Directory:     ('Directory',       's', 'isg'),
+        MUIA_Dirlist_DrawersOnly:   ('DrawersOnly',     'b', 'is.'),
+        MUIA_Dirlist_ExAllType:     ('ExAllType',       'I', 'i.g'),
+        MUIA_Dirlist_FilesOnly:     ('FilesOnly',       'b', 'is.'),
+        MUIA_Dirlist_FilterDrawers: ('FilterDrawers',   'b', 'is.'),
+        #MUIA_Dirlist_FilterHook:    ('FilterHook',      'p', 'is.'),
+        MUIA_Dirlist_MultiSelDirs:  ('MultiSelDirs',    'b', 'is.'),
+        MUIA_Dirlist_NumBytes:      ('NumBytes',        'i', '..g'),
+        MUIA_Dirlist_NumDrawers:    ('NumDrawers',      'i', '..g'),
+        MUIA_Dirlist_NumFiles:      ('NumFiles',        'i', '..g'),
+        MUIA_Dirlist_Path:          ('Path',            's', '..g'),
+        MUIA_Dirlist_RejectIcons:   ('RejectIcons',     'b', 'is.'),
+        MUIA_Dirlist_RejectPattern: ('RejectPattern',   's', 'is.'),
+        MUIA_Dirlist_SortDirs:      ('SortDirs',        'i', 'is.'),
+        MUIA_Dirlist_SortHighLow:   ('SortHighLow',     'b', 'is.'),
+        MUIA_Dirlist_SortType:      ('SortType',        'i', 'is.'),
+        MUIA_Dirlist_Status:        ('Status',          'i', '..g'),
+    }
+
+
 #################################################################################
 
 
