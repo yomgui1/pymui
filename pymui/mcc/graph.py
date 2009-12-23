@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Area
+from pymui import Area, c_ULONG, c_BOOL, MAttribute
 
 MUIC_Graph                  = "Graph.mcc"
 MUIA_Graph_MaxEntries       = 0xFED10005
@@ -33,9 +33,8 @@ MUIA_Graph_SetMax           = 0xFED10008
 
 class Graph(Area):
     CLASSID = MUIC_Graph
-    ATTRIBUTES = {
-        MUIA_Graph_MaxEntries:    ('MaxEntries',    'I', 'i.g'),
-        MUIA_Graph_Max:           ('Max',           'I', 'isg'),
-        MUIA_Graph_DrawBackCurve: ('DrawBackCurve', 'b', 'isg'),
-        MUIA_Graph_SetMax:        ('SetMax',        'b', 'i..'),
-        }
+
+    MaxEntries    = MAttribute(MUIA_Graph_MaxEntries    , 'i.g', c_ULONG)
+    Max           = MAttribute(MUIA_Graph_Max           , 'isg', c_ULONG)
+    DrawBackCurve = MAttribute(MUIA_Graph_DrawBackCurve , 'isg', c_BOOL)
+    SetMax        = MAttribute(MUIA_Graph_SetMax        , 'i..', c_BOOL)

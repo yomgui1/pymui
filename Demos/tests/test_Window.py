@@ -23,23 +23,41 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Area, c_LONG, c_BOOL, MAttribute
+from pymui import *
+from sys import getrefcount
 
-MUIC_Busy            = "Busy.mcc"
+t1 = 'MainWindow'
 
-MUIM_Busy_Move       = 0x80020001
+rc1 = getrefcount(t1)
+win = Window(t1)
+rc2 = getrefcount(t1)
+try:
+    assert rc2 == (rc1+1)
+except:
+    print rc1, rc2
+    raise
 
-MUIA_Busy_ShowHideIH = 0x800200a9
-MUIA_Busy_Speed      = 0x80020049
+def onclose(evt, win):
+    print "Received 'CloseRequest' from Window:", evt.source
+    win.KillApp()
 
-MUIV_Busy_Speed_Off  = 0
-MUIV_Busy_Speed_User = -1
+win.Notify('CloseRequest', True, onclose, win)
 
-class Busy(Area):
-    CLASSID = MUIC_Busy
+app = Application(Window=win)
 
-    ShowHideIH = MAttribute(MUIA_Busy_ShowHideIH , 'i..', c_BOOL)
-    Speed      = MAttribute(MUIA_Busy_Speed      , 'isg', c_LONG)
+win2 = Window('Another one', CloseOnReq=True)
 
-    def __init__(self, Speed=MUIV_Busy_Speed_User, **kwds):
-        super(Busy, self).__init__(Speed=Speed, **kwds)
+try:
+    win2.OpenWindow()
+    win2.Open = True
+except AttributeError:
+    pass
+else:
+    raise AssertionError("OpenWindow() success on non attached window")
+
+app.AddChild(win2)
+
+win.OpenWindow()
+win2.OpenWindow()
+
+app.Run()

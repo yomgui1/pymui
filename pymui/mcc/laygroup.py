@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Group
+from pymui import Group, MAttribute, c_ULONG, c_LONG, c_BOOL
 
 MUIC_LayGroup = "LayGroup.mcc"
 TAGBASE_LAYGROUP = (0x80000000 + (0x2553 << 16))
@@ -62,17 +62,16 @@ MUIV_LayGroup_MaxWidth_Auto  = -1
 
 class LayGroup(Group):
     CLASSID = MUIC_LayGroup
-    ATTRIBUTES = {
-        MUIA_LayGroup_ChildNumber:       ('ChildNumber',       'I', '..g'),
-        MUIA_LayGroup_MaxHeight:         ('MaxHeight',         'i', 'i..'),
-        MUIA_LayGroup_MaxWidth:          ('MaxWidth',          'i', 'i..'),
-        MUIA_LayGroup_HorizSpacing:      ('HorizSpacing',      'i', 'isg'),
-        MUIA_LayGroup_VertSpacing:       ('VertSpacing',       'i', 'isg'),
-        MUIA_LayGroup_Spacing:           ('Spacing',           'i', 'is.'),
-        MUIA_LayGroup_LeftOffset:        ('LeftOffset',        'i', 'isg'),
-        MUIA_LayGroup_TopOffset:         ('TopOffset',         'i', 'isg'),
-        MUIA_LayGroup_AskLayout:         ('AskLayout',         'b', 'i..'),
-        MUIA_LayGroup_NumberOfColumns:   ('NumberOfColumns',   'I', '..g'),
-        MUIA_LayGroup_NumberOfRows:      ('NumberOfRows',      'I', '..g'),
-        MUIA_LayGroup_InheritBackground: ('InheritBackground', 'b', 'i..'),
-        }
+
+    ChildNumber       = MAttribute(MUIA_LayGroup_ChildNumber       , '..g', c_ULONG)
+    MaxHeight         = MAttribute(MUIA_LayGroup_MaxHeight         , 'i..', c_LONG)
+    MaxWidth          = MAttribute(MUIA_LayGroup_MaxWidth          , 'i..', c_LONG)
+    HorizSpacing      = MAttribute(MUIA_LayGroup_HorizSpacing      , 'isg', c_LONG)
+    VertSpacing       = MAttribute(MUIA_LayGroup_VertSpacing       , 'isg', c_LONG)
+    Spacing           = MAttribute(MUIA_LayGroup_Spacing           , 'is.', c_LONG)
+    LeftOffset        = MAttribute(MUIA_LayGroup_LeftOffset        , 'isg', c_LONG)
+    TopOffset         = MAttribute(MUIA_LayGroup_TopOffset         , 'isg', c_LONG)
+    AskLayout         = MAttribute(MUIA_LayGroup_AskLayout         , 'i..', c_BOOL)
+    NumberOfColumns   = MAttribute(MUIA_LayGroup_NumberOfColumns   , '..g', c_ULONG)
+    NumberOfRows      = MAttribute(MUIA_LayGroup_NumberOfRows      , '..g', c_ULONG)
+    InheritBackground = MAttribute(MUIA_LayGroup_InheritBackground , 'i..', c_BOOL)

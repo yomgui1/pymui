@@ -24,7 +24,7 @@
 ###############################################################################
 
 from pymui.defines import TAG_USER
-from pymui import String, Group
+from pymui import *
 
 MUIC_Textinput       = "Textinput.mcc"
 MUIC_Textinputscroll = "Textinputscroll.mcc"
@@ -172,122 +172,120 @@ MUIV_Textinput_Font_Fixed      = 1
 
 class Textinput(String):
     CLASSID = MUIC_Textinput
-    ATTRIBUTES = {
-        MUIA_Textinput_Multiline: ('Multiline', 'b', 'i.g'),
-        MUIA_Textinput_MaxLen: ('MaxLen', 'I', 'i.g'),
-        MUIA_Textinput_MaxLines: ('MaxLines', 'I', 'i.g'),
-        MUIA_Textinput_AutoExpand: ('AutoExpand', 'b', 'isg'),
-        MUIA_Textinput_Contents: ('Contents', 's', 'isg'),
-        MUIA_Textinput_Blinkrate: ('Blinkrate', 'I', 'isg'),
-        MUIA_Textinput_Cursorstyle: ('Cursorstyle', 'I', 'isg'),
-        MUIA_Textinput_AdvanceOnCR: ('AdvanceOnCR', 'b', 'isg'),
-        MUIA_Textinput_TmpExtension: ('TmpExtension', 's', 'isg'),
-        MUIA_Textinput_Quiet: ('Quiet', 'b', '.sg'),
-        MUIA_Textinput_Acknowledge: ('Acknowledge', 's', '..g'),
-        MUIA_Textinput_Integer: ('Integer', 'I', 'isg'),
-        MUIA_Textinput_MinVersion: ('MinVersion', 'I', 'i..'),
-        MUIA_Textinput_DefaultPopup: ('DefaultPopup', 'b', 'i..'),
-        MUIA_Textinput_WordWrap: ('WordWrap', 'I', 'isg'),
-        MUIA_Textinput_IsNumeric: ('IsNumeric', 'b', 'isg'),
-        MUIA_Textinput_MinVal: ('MinVal', 'I', 'isg'),
-        MUIA_Textinput_MaxVal: ('MaxVal', 'I', 'isg'),
-        MUIA_Textinput_AcceptChars: ('AcceptChars', 's', 'isg'),
-        MUIA_Textinput_RejectChars: ('RejectChars', 's', 'isg'),
-        MUIA_Textinput_Changed: ('Changed', '', '.sg'),
-        MUIA_Textinput_AttachedList: ('AttachedList', 'M', 'isg'),
-        MUIA_Textinput_RemainActive: ('RemainActive', 'b', 'isg'),
-        MUIA_Textinput_CursorPos: ('CursorPos', 'I', '.sg'),
-        MUIA_Textinput_Secret: ('Secret', 'b', 'isg'),
-        MUIA_Textinput_Lines: ('Lines', 'I', '..g'),
-        MUIA_Textinput_Editable: ('Editable', 'b', 'isg'),
-        MUIA_Textinput_IsOld: ('IsOld', 'b', 'isg'),
-        MUIA_Textinput_MarkStart: ('MarkStart', 'I', 'isg'),
-        MUIA_Textinput_MarkEnd: ('MarkEnd', 'I', 'isg'),
-        MUIA_Textinput_NoInput: ('NoInput', 'b', 'i.g'),
-        MUIA_Textinput_SetMin: ('SetMin', 'b', 'isg'),
-        MUIA_Textinput_SetMax: ('SetMax', 'b', 'isg'),
-        MUIA_Textinput_SetVMax: ('SetVMax', 'b', 'isg'),
-        MUIA_Textinput_Styles: ('Styles', 'I', 'isg'),
-        MUIA_Textinput_PreParse: ('PreParse', 's', 'isg'),
-        MUIA_Textinput_Format: ('Format', 'I', 'i.g'),
-        MUIA_Textinput_SetVMin: ('SetVMin', 'b', 'isg'),
-        MUIA_Textinput_HandleURLHook: ('HandleURLHook', 'p', 'isg'),
-        MUIA_Textinput_Tabs: ('Tabs', 'I', 'i..'),
-        MUIA_Textinput_TabLen: ('TabLen', 'I', 'isg'),
-        MUIA_Textinput_Bookmark1: ('Bookmark1', 'I', 'isg'),
-        MUIA_Textinput_Bookmark2: ('Bookmark2', 'I', 'isg'),
-        MUIA_Textinput_Bookmark3: ('Bookmark3', 'I', 'isg'),
-        MUIA_Textinput_CursorSize: ('CursorSize', 'I', 'isg'),
-        MUIA_Textinput_TopLine: ('TopLine', 'I', 'isg'),
-        MUIA_Textinput_Font: ('Font', 'I', 'isg'),
-        MUIA_Textinput_SuggestParse: ('SuggestParse', 'I', 'isg'),
-        MUIA_Textinput_ProhibitParse: ('ProhibitParse', 'I', 'isg'),
-        MUIA_Textinput_NoCopy: ('NoCopy', 'I', 'isg'),
-        MUIA_Textinput_MinimumWidth: ('MinimumWidth', 'I', 'i.g'),
-        MUIA_Textinput_ResetMarkOnCursor: ('ResetMarkOnCursor', 'b', 'isg'),
-        MUIA_Textinput_NoExtraSpacing: ('NoExtraSpacing', 'b', 'isg'),
-    }
+
+    MaxLines          = MAttribute(MUIA_Textinput_MaxLines          , 'i.g', c_ULONG)
+    AcceptChars       = MAttribute(MUIA_Textinput_AcceptChars       , 'isg', c_STRPTR)
+    Acknowledge       = MAttribute(MUIA_Textinput_Acknowledge       , '..g', c_STRPTR)
+    AdvanceOnCR       = MAttribute(MUIA_Textinput_AdvanceOnCR       , 'isg', c_BOOL)
+    AttachedList      = MAttribute(MUIA_Textinput_AttachedList      , 'isg', c_pObject)
+    AutoExpand        = MAttribute(MUIA_Textinput_AutoExpand        , 'isg', c_BOOL)
+    Blinkrate         = MAttribute(MUIA_Textinput_Blinkrate         , 'isg', c_ULONG)
+    Bookmark1         = MAttribute(MUIA_Textinput_Bookmark1         , 'isg', c_ULONG)
+    Bookmark2         = MAttribute(MUIA_Textinput_Bookmark2         , 'isg', c_ULONG)
+    Bookmark3         = MAttribute(MUIA_Textinput_Bookmark3         , 'isg', c_ULONG)
+    Changed           = MAttribute(MUIA_Textinput_Changed           , '.sg', c_BOOL)
+    Contents          = MAttribute(MUIA_Textinput_Contents          , 'isg', c_STRPTR)
+    CursorPos         = MAttribute(MUIA_Textinput_CursorPos         , '.sg', c_ULONG)
+    CursorSize        = MAttribute(MUIA_Textinput_CursorSize        , 'isg', c_ULONG)
+    Cursorstyle       = MAttribute(MUIA_Textinput_Cursorstyle       , 'isg', c_ULONG)
+    DefaultPopup      = MAttribute(MUIA_Textinput_DefaultPopup      , 'i..', c_BOOL)
+    Editable          = MAttribute(MUIA_Textinput_Editable          , 'isg', c_BOOL)
+    Font              = MAttribute(MUIA_Textinput_Font              , 'isg', c_ULONG)
+    Format            = MAttribute(MUIA_Textinput_Format            , 'i.g', c_ULONG)
+    HandleURLHook     = MAttribute(MUIA_Textinput_HandleURLHook     , 'isg', c_APTR)
+    Integer           = MAttribute(MUIA_Textinput_Integer           , 'isg', c_ULONG)
+    IsNumeric         = MAttribute(MUIA_Textinput_IsNumeric         , 'isg', c_BOOL)
+    IsOld             = MAttribute(MUIA_Textinput_IsOld             , 'isg', c_BOOL)
+    Lines             = MAttribute(MUIA_Textinput_Lines             , '..g', c_ULONG)
+    MarkEnd           = MAttribute(MUIA_Textinput_MarkEnd           , 'isg', c_ULONG)
+    MarkStart         = MAttribute(MUIA_Textinput_MarkStart         , 'isg', c_ULONG)
+    MaxLen            = MAttribute(MUIA_Textinput_MaxLen            , 'i.g', c_ULONG)
+    MaxVal            = MAttribute(MUIA_Textinput_MaxVal            , 'isg', c_ULONG)
+    MinVal            = MAttribute(MUIA_Textinput_MinVal            , 'isg', c_ULONG)
+    MinVersion        = MAttribute(MUIA_Textinput_MinVersion        , 'i..', c_ULONG)
+    MinimumWidth      = MAttribute(MUIA_Textinput_MinimumWidth      , 'i.g', c_ULONG)
+    Multiline         = MAttribute(MUIA_Textinput_Multiline         , 'i.g', c_BOOL)
+    NoCopy            = MAttribute(MUIA_Textinput_NoCopy            , 'isg', c_ULONG)
+    NoExtraSpacing    = MAttribute(MUIA_Textinput_NoExtraSpacing    , 'isg', c_BOOL)
+    NoInput           = MAttribute(MUIA_Textinput_NoInput           , 'i.g', c_BOOL)
+    PreParse          = MAttribute(MUIA_Textinput_PreParse          , 'isg', c_STRPTR)
+    ProhibitParse     = MAttribute(MUIA_Textinput_ProhibitParse     , 'isg', c_ULONG)
+    Quiet             = MAttribute(MUIA_Textinput_Quiet             , '.sg', c_BOOL)
+    RejectChars       = MAttribute(MUIA_Textinput_RejectChars       , 'isg', c_STRPTR)
+    RemainActive      = MAttribute(MUIA_Textinput_RemainActive      , 'isg', c_BOOL)
+    ResetMarkOnCursor = MAttribute(MUIA_Textinput_ResetMarkOnCursor , 'isg', c_BOOL)
+    Secret            = MAttribute(MUIA_Textinput_Secret            , 'isg', c_BOOL)
+    SetMax            = MAttribute(MUIA_Textinput_SetMax            , 'isg', c_BOOL)
+    SetMin            = MAttribute(MUIA_Textinput_SetMin            , 'isg', c_BOOL)
+    SetVMax           = MAttribute(MUIA_Textinput_SetVMax           , 'isg', c_BOOL)
+    SetVMin           = MAttribute(MUIA_Textinput_SetVMin           , 'isg', c_BOOL)
+    Styles            = MAttribute(MUIA_Textinput_Styles            , 'isg', c_ULONG)
+    SuggestParse      = MAttribute(MUIA_Textinput_SuggestParse      , 'isg', c_ULONG)
+    TabLen            = MAttribute(MUIA_Textinput_TabLen            , 'isg', c_ULONG)
+    Tabs              = MAttribute(MUIA_Textinput_Tabs              , 'i..', c_ULONG)
+    TmpExtension      = MAttribute(MUIA_Textinput_TmpExtension      , 'isg', c_STRPTR)
+    TopLine           = MAttribute(MUIA_Textinput_TopLine           , 'isg', c_ULONG)
+    WordWrap          = MAttribute(MUIA_Textinput_WordWrap          , 'isg', c_ULONG)
 
 class Textinputscroll(Group):
     CLASSID = MUIC_Textinputscroll
-    ATTRIBUTES = {
-        MUIA_Textinput_Multiline: ('Multiline', 'b', 'i.g'),
-        MUIA_Textinput_MaxLen: ('MaxLen', 'I', 'i.g'),
-        MUIA_Textinput_MaxLines: ('MaxLines', 'I', 'i.g'),
-        MUIA_Textinput_AutoExpand: ('AutoExpand', 'b', 'isg'),
-        MUIA_Textinput_Contents: ('Contents', 's', 'isg'),
-        MUIA_Textinput_Blinkrate: ('Blinkrate', 'I', 'isg'),
-        MUIA_Textinput_Cursorstyle: ('Cursorstyle', 'I', 'isg'),
-        MUIA_Textinput_AdvanceOnCR: ('AdvanceOnCR', 'b', 'isg'),
-        MUIA_Textinput_TmpExtension: ('TmpExtension', 's', 'isg'),
-        MUIA_Textinput_Quiet: ('Quiet', 'b', '.sg'),
-        MUIA_Textinput_Acknowledge: ('Acknowledge', 's', '..g'),
-        MUIA_Textinput_Integer: ('Integer', 'I', 'isg'),
-        MUIA_Textinput_MinVersion: ('MinVersion', 'I', 'i..'),
-        MUIA_Textinput_DefaultPopup: ('DefaultPopup', 'b', 'i..'),
-        MUIA_Textinput_WordWrap: ('WordWrap', 'I', 'isg'),
-        MUIA_Textinput_IsNumeric: ('IsNumeric', 'b', 'isg'),
-        MUIA_Textinput_MinVal: ('MinVal', 'I', 'isg'),
-        MUIA_Textinput_MaxVal: ('MaxVal', 'I', 'isg'),
-        MUIA_Textinput_AcceptChars: ('AcceptChars', 's', 'isg'),
-        MUIA_Textinput_RejectChars: ('RejectChars', 's', 'isg'),
-        MUIA_Textinput_Changed: ('Changed', '', '.sg'),
-        MUIA_Textinput_AttachedList: ('AttachedList', 'M', 'isg'),
-        MUIA_Textinput_RemainActive: ('RemainActive', 'b', 'isg'),
-        MUIA_Textinput_CursorPos: ('CursorPos', 'I', '.sg'),
-        MUIA_Textinput_Secret: ('Secret', 'b', 'isg'),
-        MUIA_Textinput_Lines: ('Lines', 'I', '..g'),
-        MUIA_Textinput_Editable: ('Editable', 'b', 'isg'),
-        MUIA_Textinput_IsOld: ('IsOld', 'b', 'isg'),
-        MUIA_Textinput_MarkStart: ('MarkStart', 'I', 'isg'),
-        MUIA_Textinput_MarkEnd: ('MarkEnd', 'I', 'isg'),
-        MUIA_Textinput_NoInput: ('NoInput', 'b', 'i.g'),
-        MUIA_Textinput_SetMin: ('SetMin', 'b', 'isg'),
-        MUIA_Textinput_SetMax: ('SetMax', 'b', 'isg'),
-        MUIA_Textinput_SetVMax: ('SetVMax', 'b', 'isg'),
-        MUIA_Textinput_Styles: ('Styles', 'I', 'isg'),
-        MUIA_Textinput_PreParse: ('PreParse', 's', 'isg'),
-        MUIA_Textinput_Format: ('Format', 'I', 'i.g'),
-        MUIA_Textinput_SetVMin: ('SetVMin', 'b', 'isg'),
-        MUIA_Textinput_HandleURLHook: ('HandleURLHook', 'p', 'isg'),
-        MUIA_Textinput_Tabs: ('Tabs', 'I', 'i..'),
-        MUIA_Textinput_TabLen: ('TabLen', 'I', 'isg'),
-        MUIA_Textinput_Bookmark1: ('Bookmark1', 'I', 'isg'),
-        MUIA_Textinput_Bookmark2: ('Bookmark2', 'I', 'isg'),
-        MUIA_Textinput_Bookmark3: ('Bookmark3', 'I', 'isg'),
-        MUIA_Textinput_CursorSize: ('CursorSize', 'I', 'isg'),
-        MUIA_Textinput_TopLine: ('TopLine', 'I', 'isg'),
-        MUIA_Textinput_Font: ('Font', 'I', 'isg'),
-        MUIA_Textinput_SuggestParse: ('SuggestParse', 'I', 'isg'),
-        MUIA_Textinput_ProhibitParse: ('ProhibitParse', 'I', 'isg'),
-        MUIA_Textinput_NoCopy: ('NoCopy', 'I', 'isg'),
-        MUIA_Textinput_MinimumWidth: ('MinimumWidth', 'I', 'i.g'),
-        MUIA_Textinput_ResetMarkOnCursor: ('ResetMarkOnCursor', 'b', 'isg'),
-        MUIA_Textinput_NoExtraSpacing: ('NoExtraSpacing', 'b', 'isg'),
 
-        MUIA_Textinputscroll_UseWinBorder: ('UseWinBorder', 'b', 'i..'),
-        MUIA_Textinputscroll_VertScrollerOnly: ('VertScrollerOnly', 'b', 'i..'),
-        MUIA_Textinputscroll_VertBar: ('VertBar', 'p', 'i..'),
-        MUIA_Textinputscroll_HorizBar: ('HorizBar', 'p', 'i..'),
-    }
+    MaxLines          = MAttribute(MUIA_Textinput_MaxLines          , 'i.g', c_ULONG)
+    AcceptChars       = MAttribute(MUIA_Textinput_AcceptChars       , 'isg', c_STRPTR)
+    Acknowledge       = MAttribute(MUIA_Textinput_Acknowledge       , '..g', c_STRPTR)
+    AdvanceOnCR       = MAttribute(MUIA_Textinput_AdvanceOnCR       , 'isg', c_BOOL)
+    AttachedList      = MAttribute(MUIA_Textinput_AttachedList      , 'isg', c_pObject)
+    AutoExpand        = MAttribute(MUIA_Textinput_AutoExpand        , 'isg', c_BOOL)
+    Blinkrate         = MAttribute(MUIA_Textinput_Blinkrate         , 'isg', c_ULONG)
+    Bookmark1         = MAttribute(MUIA_Textinput_Bookmark1         , 'isg', c_ULONG)
+    Bookmark2         = MAttribute(MUIA_Textinput_Bookmark2         , 'isg', c_ULONG)
+    Bookmark3         = MAttribute(MUIA_Textinput_Bookmark3         , 'isg', c_ULONG)
+    Changed           = MAttribute(MUIA_Textinput_Changed           , '.sg', c_BOOL)
+    Contents          = MAttribute(MUIA_Textinput_Contents          , 'isg', c_STRPTR)
+    CursorPos         = MAttribute(MUIA_Textinput_CursorPos         , '.sg', c_ULONG)
+    CursorSize        = MAttribute(MUIA_Textinput_CursorSize        , 'isg', c_ULONG)
+    Cursorstyle       = MAttribute(MUIA_Textinput_Cursorstyle       , 'isg', c_ULONG)
+    DefaultPopup      = MAttribute(MUIA_Textinput_DefaultPopup      , 'i..', c_BOOL)
+    Editable          = MAttribute(MUIA_Textinput_Editable          , 'isg', c_BOOL)
+    Font              = MAttribute(MUIA_Textinput_Font              , 'isg', c_ULONG)
+    Format            = MAttribute(MUIA_Textinput_Format            , 'i.g', c_ULONG)
+    HandleURLHook     = MAttribute(MUIA_Textinput_HandleURLHook     , 'isg', c_APTR)
+    Integer           = MAttribute(MUIA_Textinput_Integer           , 'isg', c_ULONG)
+    IsNumeric         = MAttribute(MUIA_Textinput_IsNumeric         , 'isg', c_BOOL)
+    IsOld             = MAttribute(MUIA_Textinput_IsOld             , 'isg', c_BOOL)
+    Lines             = MAttribute(MUIA_Textinput_Lines             , '..g', c_ULONG)
+    MarkEnd           = MAttribute(MUIA_Textinput_MarkEnd           , 'isg', c_ULONG)
+    MarkStart         = MAttribute(MUIA_Textinput_MarkStart         , 'isg', c_ULONG)
+    MaxLen            = MAttribute(MUIA_Textinput_MaxLen            , 'i.g', c_ULONG)
+    MaxVal            = MAttribute(MUIA_Textinput_MaxVal            , 'isg', c_ULONG)
+    MinVal            = MAttribute(MUIA_Textinput_MinVal            , 'isg', c_ULONG)
+    MinVersion        = MAttribute(MUIA_Textinput_MinVersion        , 'i..', c_ULONG)
+    MinimumWidth      = MAttribute(MUIA_Textinput_MinimumWidth      , 'i.g', c_ULONG)
+    Multiline         = MAttribute(MUIA_Textinput_Multiline         , 'i.g', c_BOOL)
+    NoCopy            = MAttribute(MUIA_Textinput_NoCopy            , 'isg', c_ULONG)
+    NoExtraSpacing    = MAttribute(MUIA_Textinput_NoExtraSpacing    , 'isg', c_BOOL)
+    NoInput           = MAttribute(MUIA_Textinput_NoInput           , 'i.g', c_BOOL)
+    PreParse          = MAttribute(MUIA_Textinput_PreParse          , 'isg', c_STRPTR)
+    ProhibitParse     = MAttribute(MUIA_Textinput_ProhibitParse     , 'isg', c_ULONG)
+    Quiet             = MAttribute(MUIA_Textinput_Quiet             , '.sg', c_BOOL)
+    RejectChars       = MAttribute(MUIA_Textinput_RejectChars       , 'isg', c_STRPTR)
+    RemainActive      = MAttribute(MUIA_Textinput_RemainActive      , 'isg', c_BOOL)
+    ResetMarkOnCursor = MAttribute(MUIA_Textinput_ResetMarkOnCursor , 'isg', c_BOOL)
+    Secret            = MAttribute(MUIA_Textinput_Secret            , 'isg', c_BOOL)
+    SetMax            = MAttribute(MUIA_Textinput_SetMax            , 'isg', c_BOOL)
+    SetMin            = MAttribute(MUIA_Textinput_SetMin            , 'isg', c_BOOL)
+    SetVMax           = MAttribute(MUIA_Textinput_SetVMax           , 'isg', c_BOOL)
+    SetVMin           = MAttribute(MUIA_Textinput_SetVMin           , 'isg', c_BOOL)
+    Styles            = MAttribute(MUIA_Textinput_Styles            , 'isg', c_ULONG)
+    SuggestParse      = MAttribute(MUIA_Textinput_SuggestParse      , 'isg', c_ULONG)
+    TabLen            = MAttribute(MUIA_Textinput_TabLen            , 'isg', c_ULONG)
+    Tabs              = MAttribute(MUIA_Textinput_Tabs              , 'i..', c_ULONG)
+    TmpExtension      = MAttribute(MUIA_Textinput_TmpExtension      , 'isg', c_STRPTR)
+    TopLine           = MAttribute(MUIA_Textinput_TopLine           , 'isg', c_ULONG)
+    WordWrap          = MAttribute(MUIA_Textinput_WordWrap          , 'isg', c_ULONG)
+    
+    UseWinBorder     = MAttribute(MUIA_Textinputscroll_UseWinBorder     , 'i..', c_BOOL)
+    VertScrollerOnly = MAttribute(MUIA_Textinputscroll_VertScrollerOnly , 'i..', c_BOOL)
+    VertBar          = MAttribute(MUIA_Textinputscroll_VertBar          , 'i..', c_APTR)
+    HorizBar         = MAttribute(MUIA_Textinputscroll_HorizBar         , 'i..', c_APTR)
  

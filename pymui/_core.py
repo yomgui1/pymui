@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-import sys, functools, array
+import sys, functools, array, ctypes, weakref
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -34,47 +34,19 @@ def debug(x, *args):
     if DEBUG:
         print x % args
 
-try:
-    assert __name__ != "__main__"
-    import _muimaster
-    from _muimaster import *
-except: # For testing => use stubs
-    class PyBOOPSIObject(object):
-        def _create(self, i, sid=None, a={}):
-            debug("Stubs: %s._create(%s, %s, %s)", self.__class__.__name__, i, sid, repr(a))
-        def _set(self, i, v):
-            debug("Stubs: %s._set(0x%x, %s)", self.__class__.__name__, i, repr(v))
-        def _get(self, i, fmt):
-            debug("Stubs: %s._get(0x%x, '%s')", self.__class__.__name__, i, fmt)
-        def _do(self, i, *args):
-            debug("Stubs: %s._do(0x%x, %s)", self.__class__.__name__, i, tuple(args))
-        def _do1(self, i, arg):
-            debug("Stubs: %s._do(0x%x, %s)", self.__class__.__name__, i, repr(arg))
-        def _add(self, o, l=False):
-            debug("Stubs: %s._add(%s, %s)", self.__class__.__name__, repr(o), bool(l))
-        def _rem(self, o, l=False):
-            debug("Stubs: %s._add(%s, %s)", self.__class__.__name__, repr(o), bool(l))
-        
-    class PyMUIObject(PyBOOPSIObject):
-        def __init__(self, **kwds):
-            self.__children = []
-        def _nnset(self, *args):
-            pass
-        def _notify(self, *args):
-            pass
-        def __del_children(self):
-            self._children = []
-        _children = property(fget=lambda self: self.__children, fdel=__del_children)
-    
+import _muimaster
+from _muimaster import *
 from defines import *
-import weakref
 
-## Currently private defines, but very useful
-MUIA_Window_TabletMessages = 0x804217b7
-##
+# MorphOS maps public memory from this address.
+# Below it's not a valid address and may lead to CPU bus exception.
+_ADDRESS_MIN = 0x10000000
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
+
+## Currently private defines, but very useful
+MUIA_Window_TabletMessages = 0x804217b7
 TABLETA_Dummy        = (TAG_USER + 0x3A000)
 TABLETA_TabletZ      = (TABLETA_Dummy + 1)
 TABLETA_RangeZ       = (TABLETA_Dummy + 2)
@@ -86,66 +58,399 @@ TABLETA_ButtonBits   = (TABLETA_Dummy + 7)
 TABLETA_InProximity  = (TABLETA_Dummy + 8)
 TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
+##
 
-class AttributeInfo:
-    def __init__(self, attr, args):
-        if type(attr) not in (int, long):
-            raise TypeError("Attribute value shall be int or long")
-        self._attr = attr
-        l = len(args)
-        if l == 5:
-            self._name, self._format, isg, self.sconv, self.gconv = args
-        else:
-            self._name, self._format, isg = args
-            self.sconv = None
-            self.gconv = None
+################################################################################
+#### PyMUI C types
+################################################################################
 
-        if self.sconv is None:
-            if self._format == 'c':
-                self.sconv = lambda x: x[0]
-            else:
-                self.sconv = lambda x: x
-        if self.gconv is None:
-            self.gconv = lambda x: x
-            
-        if isg not in ('i..', '.s.' , '..g', 'is.', 'i.g', '.sg', 'isg'):
-            raise ValueError("Not recognized ISG value: '%s'" % isg)
-        self._isg = isg.lower()
+class PyMUICType:
+    __pt_cache = {}
         
-    def __repr__(self):
-        return "<Attribute %s (0x%08x)>" % (self._name, self._attr)
+    @classmethod
+    def pointertype(cl):
+        n = 'LP_' + cl.__name__
+        if n in cl.__pt_cache: return cl.__pt_cache[n]
+        ptr = type(n, (ctypes._Pointer, AsCPointer), {'_type_': cl})
+        cl.__pt_cache[n] = ptr
+        return ptr
 
-    attr = property(fget=lambda self: self._attr)
-    name = property(fget=lambda self: self._name)
-    format = property(fget=lambda self: self._format)
-    mode = property(fget=lambda self: self._isg)
-    isinit = property(fget=lambda self: 'i' in self._isg)
-    isset = property(fget=lambda self: 's' in self._isg)
-    isget = property(fget=lambda self: 'g' in self._isg)
+    def pointer(self):
+        return self.pointertype()(self)
+
+    @classmethod
+    def mkarray(cl, c):
+        n = cl.__name__ + '_Array_%u' % c
+        if n in cl.__pt_cache: return cl.__pt_cache[n]
+        ncl = type(n, (ctypes.Array, AsCArray), {'_length_': c, '_type_': cl})
+        cl.__pt_cache[n] = ncl
+        return ncl
+
+class AsCInteger(PyMUICType):
+    keep = False
+    
+    @classmethod
+    def tomui(cl, o):
+        if not hasattr(o, 'value'): o = cl(o)
+        return None, o.value
+
+    @classmethod
+    def asobj(cl, i):
+        return cl(i).value
+
+    def __long__(self):
+        return self.value
+
+class AsCArray(PyMUICType):
+    keep = True
+
+    @classmethod
+    def tomui(cl, o):
+        if o is None: return None, 0
+        if isinstance(o, cl): return o, ctypes.addressof(o)
+        x=cl()
+        x[:] = o
+        return x, ctypes.addressof(x)
+
+    @classmethod
+    def asobj(cl, i):
+        if i: return cl.from_address(i)
+        return None
+
+    def __long__(self):
+        return ctypes.addressof(self)
+
+class AsCPointer(PyMUICType):
+    keep = True
+    
+    @classmethod
+    def tomui(cl, o):
+        if not isinstance(o, cl): o = cl(cl._type_(o))
+        return o, o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
+
+    @classmethod
+    def asobj(cl, i):
+        if i == 0: cl() # no arguments => NULL pointer
+        return cl(cl._type_.from_address(i)) # !!! DANGER !!!
+
+    def __long__(self):
+        return ctypes.cast(self, ctypes.c_void_p).value
+
+class AsCString(ctypes.c_char_p, PyMUICType):
+    keep = True
+
+    @classmethod
+    def tomui(cl, o):
+        if o is None: return None, 0
+        if not isinstance(o, cl): o = cl(o)
+        return o, o
+
+    @classmethod
+    def asobj(cl, i):
+        if i: return ctypes.string_at(i) # !!! DANGER !!!
+        return None
+
+    def __long__(self):
+        return ctypes.cast(self, ctypes.c_void_p).value
+
+# Some AmigaOS types
+class c_CHAR(ctypes.c_char, AsCInteger): pass
+class c_BYTE(ctypes.c_byte, AsCInteger): pass
+class c_UBYTE(ctypes.c_ubyte, AsCInteger): pass
+class c_SHORT(ctypes.c_short, AsCInteger): pass
+class c_USHORT(ctypes.c_ushort, AsCInteger): pass
+class c_LONG(ctypes.c_long, AsCInteger): pass
+class c_ULONG(ctypes.c_ulong, AsCInteger): pass
+class c_APTR(ctypes.c_void_p, AsCInteger): pass # yes! as we use the 'value' method and we don't keep reference.
+class c_STRPTR(AsCString): pass
+class c_BOOL(c_ULONG): pass
+class c_pTextFont(c_APTR): pass
+class c_pList(c_APTR): pass
+class c_pMinList(c_APTR): pass
+
+class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
+    _type_ = c_STRPTR # XXX: bad! how to change that?
+
+    def __new__(cl, x):
+        if isinstance(x, (tuple, list)):
+            a = (c_STRPTR*(len(x)+1))()
+            a[:-1] = x
+            o = super(c_pSTRPTR, cl).__new__(cl)
+            o.contents = a[0]
+            return o
+        return super(c_pSTRPTR, cl).__new__(cl, x)
+
+    def __init__(self, x):
+        if isinstance(x, (tuple, list)):
+            super(c_pSTRPTR, self).__init__()
+        else:
+            super(c_pSTRPTR, self).__init__(x)
+
+    @classmethod
+    def tomui(cl, o):
+        if not isinstance(o, cl): o = cl(o)
+        return o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
+
+class c_pObject(c_APTR):
+    keep = True
+
+    def __new__(cl, x):
+        if isinstance(x, PyBOOPSIObject):
+            return ctypes.c_void_p.__new__(cl, x._object)
+        return ctypes.c_void_p.__new__(cl, x)
+
+    def __init__(self, x):
+        if isinstance(x, PyBOOPSIObject):
+            ctypes.c_void_p.__init__(self, x._object)
+        else:
+            ctypes.c_void_p.__init__(self, x)
+
+    @classmethod
+    def asobj(cl, i):
+        return _muimaster._BOOPSI2Python(i) # 0 is accepted
+
+class c_TagItem(ctypes.Structure):
+    _fields_ = [('ti_Tag', c_ULONG),
+                ('ti_Data', c_ULONG)]
+class c_pTagItem(ctypes.POINTER(c_TagItem), AsCPointer): pass
+
+class c_ImageSpec(c_STRPTR):
+    """Image specification can be a string or an integer.
+    MUI pre-defines some integer values: 'MUII_xxx' defines.
+    But this class accept also string specification by its address.
+    In this case the class knows the difference between an address string
+    and a plain integer by compare the given value to 0x10000000.
+    If stricly below, it's an plain integer.
+    If equals or upper, it's a string address.
+    0x10000000 has been choosen because MorphOS map the public memory
+    after this value.
+    """
+
+    @classmethod
+    def asobj(cl, i): # _muimaster always returns a ULONG for i
+        if i < _ADDRESS_MIN: return i
+        return c_STRPTR.asobj(i)
+
+class c_MenuitemTitle(c_STRPTR):
+    """Menuitem title accepts string address and some special integer values.
+    Currently only NM_BARLABEL is accepted.
+    """
+
+    @classmethod
+    def asobj(cl, i):
+        if i == NM_BARLABEL: return i
+        return c_STRPTR.asobj(i)
+
+def HOOKTYPE(a2_ctypes, a1_ctypes):
+    return CFUNCTYPE(c_APTR, a2_ctypes, a1_ctypes)
 
 
-# Transform the C EventHandler type into a classes to permit to add attributes
-class EventHandler(_muimaster.EventHandler):
-    pass
+################################################################################
+#### PyMUI internal base classes and routines
+################################################################################
+
+class MAttribute(property):
+    def __init__(self, id, isg, ctype, keep=None, doc=None, **kwds):
+        self.__isg = isg
+        self.__id = id
+        assert issubclass(ctype, PyMUICType)
+        self.__ctype = ctype
+
+        keep = (ctype.keep if keep is None else keep)
+        self.__keep = keep
+
+        if 'i' in isg:
+            def init(obj, v):
+                v, x = ctype.tomui(v)
+                if keep and v is not None: obj._keep_dict[id] = v
+                return long(x)
+        else:
+            def init(v):
+                raise AttributeError("attribute %08x can't be used at init" % self.__id)
+
+        self.init = init
+
+        if 's' in isg:
+            def _setter(obj, v):
+                v, x = ctype.tomui(v)
+                obj._set(id, x)
+                if keep and v is not None: obj._keep_dict[id] = v
+        else:
+            _setter = None
+
+        if 'g' in isg:
+            def _getter(obj):
+                return ctype.asobj(obj._get(id))
+        else:
+            _getter = None
+
+        preSet = kwds.get('preSet')
+        postSet = kwds.get('postSet')
+        if preSet and postSet:
+            def setter(obj, v):
+                _setter(obj, preSet(obj, self, v))
+                postSet(obj, self, v)
+        elif preSet:
+            def setter(obj, v):
+                _setter(obj, preSet(obj, self, v))
+        elif postSet:
+            def setter(obj, v):
+                _setter(obj, v)
+                postSet(obj, self, v)
+        else:
+            setter = _setter
+
+        preGet = kwds.get('preGet')
+        postGet = kwds.get('postGet')
+        if preGet and postGet:
+            def getter(obj):
+                preGet(obj, self)
+                return postGet(obj, self, _getter(obj))
+        elif preGet:
+            def getter(obj, v):
+                preGet(obj, self)
+                return _getter(obj)
+        elif postGet:
+            def getter(obj, v):
+                return postGet(obj, self, _getter(obj))
+        else:
+            getter = _getter
+
+        property.__init__(self, fget=getter, fset=setter, doc=doc)
+
+    @property
+    def isg(self): return self.__isg
+    
+    @property
+    def id(self): return self.__id
+    
+    @property
+    def ctype(self): return self.__ctype
+    
+    @property
+    def keep(self): return self.__keep
+
+#===============================================================================
+
+class MMethod(property):
+    def __init__(self, id, argstypes=None, rettype=None,
+                 varargs=False, doc=None, **kwds):
+        self.__id = id
+        self.__rettp = rettype
+        if rettype is None:
+            self.__retconv = lambda x: None
+        else:
+            self.__retconv = rettype.asobj
+        
+        if argstypes:
+            if not isinstance(argstypes, (tuple, list)):
+                assert issubclass(argstypes, PyMUICType)
+                assert not varargs
+                self.__argstp = argstypes
+                cb = self.call1
+            else:
+                assert any(issubclass(tp, PyMUICType) for tp in argstypes)
+                self.__argstp = tuple(argstypes)
+                self.__varargs = varargs
+                if varargs:
+                    cb = self.callva
+                else:
+                    cb = self.call
+        else:
+            self.__argstp = None
+            self.__varargs = False
+            cb = self.call0
+
+        self.__cb = cb
+        self.__alias = None
+        property.__init__(self, fget=lambda obj: functools.partial(self.__cb, obj), doc=doc)
+
+    def __call__(self, obj, *args):
+        return self.__cb(obj, *args)
+
+    def alias(self, f):
+        @functools.wraps(f)
+        def wrapper(obj, *args):
+            return f(obj, self, *args)
+        return wrapper
+
+    def callva(self, obj, *args):
+        if len(self.__argstp) > len(args):
+            raise AttributeError("method accepts only %u argument(s), get %u"
+                                 % (len(self.__argstp), len(args)))
+        data = []
+        keep = []
+        for tp, v in zip(self.__argstp, args):
+            o, a = tp.tomui(v)
+            data.append(a)
+            if o is not None: keep.append(o)
+        for v in args[len(self.__argstp):]:
+            data.append(long(v))
+            keep.append(v)
+       
+        return self.__retconv(obj._do(self.__id, tuple(data)))
+
+    def call(self, obj, *args):
+        if len(args) != len(self.__argstp):
+            raise AttributeError("method accepts only %u argument(s), get %u"
+                                 % (len(self.__argstp), len(args)))
+        data = []
+        keep = []
+        for tp, v in zip(self.__argstp, args):
+            o, a = tp.tomui(v)
+            data.append(a)
+            if o is not Non: keep.append(o)
+
+        return self.__retconv(obj._do(self.__id, tuple(data)))
+            
+    def call0(self, obj):
+        return self.__retconv(obj._do(self.__id))
+
+    def call1(self, obj, data):
+        o, x = self.__argstp.tomui(data)
+        return self.__retconv(obj._do1(self.__id, long(x)))
+
+    @property
+    def id(self): return self.__id
+
+#===============================================================================
+
+class Event(object):
+    def __init__(self, source):
+        self.source = source
+
+    @staticmethod
+    def noevent(func):
+        @functools.wraps(func)
+        def wrapper(self, evt, *args):
+            return func(self, *args)
+        return wrapper
+
+class InuitionEvent(_muimaster.EventHandler, Event):
+    def __init__(self, source):
+        _muimaster.EventHandler.__init__(self)
+        Event.__init__(self, source)
 
 
-class ArrayOfString:
-    def __init__(self, strings):
-        self._strings = strings
-        a = array.array('L', (stringaddress(s) for s in strings))
-        a.append(0)
-        self._data = a.tostring()
+class AttributeEvent(Event):
+    def __init__(self, source, value, not_value):
+        Event.__init__(self, source)
+        self.value = value
+        self.not_value = not_value
+        
 
-    def __int__(self):
-        return stringaddress(self._data)
+class AttributeNotify(object):
+    def __init__(self, trigvalue, cb, args):
+        self.cb = cb
+        self.args = args
+        self.trigvalue = trigvalue
 
+    def __call__(self, e):
+        return self.cb(e, *self.args)
 
-##
-## MetaMCC takes some predefined class attributes and use it to fill the class dict
-## with usefull dict for raw functions.
-##
+#===============================================================================
 
-class MetaMCC(type):
+class MUIMetaClass(type):
     def __new__(metacl, name, bases, dct):
         clid = dct.pop('CLASSID', None)
         if not clid:
@@ -155,229 +460,299 @@ class MetaMCC(type):
             clid = clid[0]
 
         dct['_mclassid'] = clid
-        dct['_id_meths'] = dct.pop('METHODS', {})
+        dct['isMCC'] = bool(dct.pop('MCC', False))
 
-        kw = {}
+        # cache attributes/methods
         attrs = {}
-        for k,v in dct.pop('ATTRIBUTES', {}).iteritems():
-            x = AttributeInfo(k, v)
-            
-            # filter for doublons
-            if x.name in kw:
-                raise RuntimeError("Attribute %s already given" % x.name)
-            if x.attr in attrs:
-                raise RuntimeError("Attribute %x already given" % x.value)
-            
-            attrs[x.attr] = x # dict (attribute id, AttributeInfo)
-            kw[x.name] = x # dict (attribute name, AttributeInfo) - for speed
-
-            # Generate property objects when 's' or 'g' in format
-            if x.name not in dct:
-                d = {}
-                if x.isget:
-                    d['fget'] = eval("lambda self: self.Get('%s')" % x.name)
-                if x.isset:
-                    d['fset'] = dct.get('Set'+x.name, None)
-                    if d['fset'] is None:
-                        d['fset'] = eval("lambda self, value: self.Set('%s', value)" % x.name)
-                if d:
-                    dct[x.name] = property(**d)
-            
-        dct['_id_attrs'] = attrs
-        dct['_id_kw'] = kw
+        attrs_id = {}
+        meths = {}
+        meths_id = {}
         
+        for k, v in dct.iteritems():
+            if isinstance(v, MAttribute):
+                attrs[k] = v
+                attrs_id[v.id] = v
+            elif isinstance(v, MMethod):
+                meths[k] = v
+                meths_id[v.id] = v
+                
+        dct['_pymui_attrs_'] = attrs
+        dct['_pymui_attrs_id_'] = attrs_id
+        dct['_pymui_meths_'] = meths
+        dct['_pymui_meths_id_'] = meths_id
+            
+        # For super class accesses to methods and attributes,
+        # add a version tagged with class name
+        for k, v in attrs.iteritems():
+           dct[name+'_'+k] = v
+        for k, v in meths.iteritems():
+           dct[name+'_'+k] = v
+
         return type.__new__(metacl, name, bases, dct)
 
+#===============================================================================
 
-class BoopsiWrapping:
+class BOOPSIMixed:
     @classmethod
-    def _check_attr(cl, attr, mode):
-        """_check_attr(attr) -> dict
-
-        Take a MUI attribute, check if this one is permitted and return a dictionnary
-        with raw information to give to low level _muimaster functions.
-        attr is a integer (i.e. MUIA_xxx) or a string declared in the ATTRIBUTE field of the class.
-        """
-        if isinstance(attr, basestring):
-            inf = cl._id_kw.get(attr)
+    def _getMA(cl, o):
+        if type(o) is str:
+            return cl._getMAByName(o)
         else:
-            inf = cl._id_attrs.get(attr)
-            
-        if inf != None:
-            if [True for c in mode if c in inf.mode]:
-                return inf
-            raise SyntaxError("Attribute %s can't be used for this action" % inf.name)
-
-        # try the superclass
-        try:
-            # beurk!
-            return cl.__bases__[0]._check_attr(attr, mode)
-        except AttributeError:
-            raise ValueError("Attribute %s is not supported" % repr(attr))
-
-    def _keep(self, k, v, f='i'):
-        # Udpate the keep dict content
-        if k in self._keep_dict and v is None:
-            ov = self._keep_dict.pop(k)
-            debug("%s._keep(0x%x): del %s", self.__class__.__name__, k, repr(ov))
-            return ov
-        elif f[0] not in "Iic!":
-            ov = self._keep_dict.pop(k, None)
-            self._keep_dict[k] = v
-            debug("%s._keep(0x%x): keep %s (old: %s)", self.__class__.__name__, k, repr(v), repr(ov))
-            return ov
+            return cl._getMAByID(o)
         
-    def Get(self, attr):
-        inf = self._check_attr(attr, 'g')
-        return inf.gconv(self._get(inf.attr, inf.format))
+    @classmethod
+    def _getMAByName(cl, name):
+        # lookup in class first
+        try:
+            return cl._pymui_attrs_[name]
+        except KeyError:
+            # lookup in super classes
+            for b in cl.__bases__:
+                try:
+                    return b._getMAByName(name)
+                except:
+                    pass
+        raise AttributeError("MUI attribute '%s' not found" % name)
 
-    def Set(self, attr, value):
-        inf = self._check_attr(attr, 's')
-        if value is None and inf.format not in 'zMp':
-            raise TypeError("None value is not valid for this attribute")
-        value = inf.sconv(value)
-        self._set(inf.attr, value)
-        return self._keep(inf.attr, value, inf.format)
+    @classmethod
+    def _getMAByID(cl, id):
+        # lookup in class first
+        try:
+            return cl._pymui_attrs_id_[id]
+        except KeyError:
+            # lookup in super classes
+            for b in cl.__bases__:
+                try:
+                    return b._getMAByID(id)
+                except:
+                    pass
+        raise AttributeError("MUI attribute 0x%08x not found" % id)
+
+    @classmethod
+    def _getMM(cl, o):
+        if type(o) is str:
+            return cl._getMMByName(o)
+        else:
+            return cl._getMMByID(o)
+
+    @classmethod
+    def _getMMByName(cl, name):
+        # lookup in class first
+        try:
+            return cl._pymui_meths_[name]
+        except KeyError:
+            # lookup in super classes
+            for b in cl.__bases__:
+                try:
+                    return b._getMMByName(name)
+                except:
+                    pass
+        raise AttributeError("MUI method '%s' not found" % name)
+
+    @classmethod
+    def _getMMByID(cl, id):
+        # lookup in class first
+        try:
+            return cl._pymui_meths_id_[id]
+        except KeyError:
+            # lookup in super classes
+            for b in cl.__bases__:
+                try:
+                    return b._getMMByID(id)
+                except:
+                    pass
+        raise AttributeError("MUI method 0x%08x not found" % id)
+
+    def GetAttr(self, attr):
+        return self._getMA(attr).__get__(self)
+
+    def SetAttr(self, *args, **kwds):
+        if args:
+            self._getMA(args[0]).__set__(self, args[1])
+            
+        for k in kwds:
+            setattr(self, k, kwds[k])
 
     def DoMethod(self, mid, *args):
-        """DoMethod(mid, *args) -> int
-
-        WARNING: this method doesn't keep reference on object given in args!
-        User shall take care of this or the system may crash...
+        """DoMethod(mid, *args) -> value
         """
-        return self._do(mid, args)
+        return self._getMM(mid)(self, *args)
 
 
-class Notify(PyMUIObject, BoopsiWrapping):
-    __metaclass__ = MetaMCC
+################################################################################
+#### Official Public Classes
+################################################################################
 
-    CLASSID = MUIC_Notify
-    ATTRIBUTES = {
-        MUIA_ApplicationObject: ('ApplicationObject' , 'M', '..g'),
-        # not supported: MUIA_AppMessage
-        MUIA_HelpLine:          ('HelpLine'          , 'i', 'isg'),
-        MUIA_HelpNode:          ('HelpNode'          , 's', 'isg'),
-        MUIA_NoNotify:          ('NoNotify'          , 'b', '.s.'),
-        MUIA_NoNotifyMethod:    ('NoNotifyMethod'    , 'I', '.s.'),
-        MUIA_ObjectID:          ('ObjectID'          , 'I', 'isg'),
-        MUIA_Parent:            ('Parent'            , 'M', '..g'),
-        MUIA_Revision:          ('Revision'          , 'i', '..g'),
-        # forbidden: MUIA_UserData
-        MUIA_Version:           ('Version'           , 'i', '..g'),
-        }
+class rootclass(PyMUIObject, BOOPSIMixed):
+    """rootclass for all other PyMUI classes.
+
+    ATTENTION: You can't create instance of this class!
+    """
+
+    __metaclass__ = MUIMetaClass
+    CLASSID = "rootclass"
+
+    # filter out parameters for the class C interface
+    def __new__(cl, *args, **kwds):
+        return super(rootclass, cl).__new__(cl)
 
     def __init__(self, **kwds):
-        super(Notify, self).__init__()
+        super(rootclass, self).__init__()
 
         self._keep_dict = {}
         self._notify_cbdict = {} 
+
+        # Extra parameters overwrite local ones.
+        kwds.update(kwds.pop('pymui_extra', {}))
         
-        if kwds.pop('MCC', False):
-            superid = self._mclassid
-        else:
-            superid = None
+        # A 'struct TagItem' array
+        init_tags = (c_TagItem * (len(kwds)+1))()
 
-        attrs = [(self._check_attr(k, 'i'), v) for k, v in kwds.pop('extra', {})]
-        attrs += [(self._check_attr(k, 'i'), v) for k, v in kwds.iteritems()]
-        data = tuple((inf.attr, inf.sconv(v), inf.format) for inf, v in attrs)
-        self._create(self._mclassid, superid, data)
-        
-        for t in data:
-            self._keep(*t)
-        
-    def _notify_cb(self, id, value):
-        for cb, trigvalue, args in self._notify_cbdict[id]:
-            if value != trigvalue and trigvalue != MUIV_EveryTime: continue
+        # Convert keywords into (attr, value) tuples
+        for i, k in enumerate(kwds.keys()):
+            attr = self._getMAByName(k)
+            init_tags[i].ti_Tag = attr.id
+            init_tags[i].ti_Data = attr.init(self, kwds[k])
 
-            def convertArgs(a, v):
-                if isinstance(a, weakref.ref):
-                    if a() is None:
-                        raise RuntimeError("Notify(%x): some arguments have been destroyed" % id)  
-                    else:
-                        a = a()
-                if a == MUIV_TriggerValue:
-                    return v
-                elif a == MUIV_NotTriggerValue:
-                    return not v
-                return a
+        self._create(self._mclassid, ctypes.addressof(init_tags), self.__class__.isMCC)
 
-            if cb(*tuple(convertArgs(a, value) for a in args)) == MUI_EventHandlerRC_Eat:
-                return
+    def AddChild(self, o):
+        if getattr(o, '_parent', None) != None:
+            raise RuntimeError("already attached")
+        self._add(o)
+        self._children.add(o) # incref the child object to not lost it during next GC
 
-    def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *args):
+        # incref also the parent object to be sure that the MUI object remains valid
+        # if the parent is disposed.
+        # When the child will be deallocated, the PyMUI is decref this parent.
+        o._parent = self
+
+    def RemChild(self, o):
+        if o not in self._children:
+            raise RuntimeError("not attached yet")
+        self._rem(o)
+        self._children.remove(o)
+        self._parent = None
+
+#===============================================================================
+
+class Notify(rootclass):
+    CLASSID = MUIC_Notify
+
+    ApplicationObject = MAttribute(MUIA_ApplicationObject , '..g', c_pObject)
+    AppMessage        = MAttribute(MUIA_AppMessage        , '..g', c_APTR)
+    HelpLine          = MAttribute(MUIA_HelpLine          , 'isg', c_LONG)
+    HelpNode          = MAttribute(MUIA_HelpNode          , 'isg', c_STRPTR)
+    NoNotify          = MAttribute(MUIA_NoNotify          , '.s.', c_BOOL)
+    NoNotifyMethod    = MAttribute(MUIA_NoNotifyMethod    , '.s.', c_ULONG)
+    ObjectID          = MAttribute(MUIA_ObjectID          , 'isg', c_ULONG)
+    Parent            = MAttribute(MUIA_Parent            , '..g', c_pObject)
+    Revision          = MAttribute(MUIA_Revision          , '..g', c_LONG)
+    # forbidden: MUIA_UserData (intern usage)
+    Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
+
+    def NNSet(self, attr, v):
+        attr = self._getMA(attr)
+        v, x = attr.ctype.tomui(v)
+        self._nnset(attr.id, x)
+        if attr.keep and v is not None: self._keep_dict[attr.id] = v
+
+    def _notify_cb(self, a, v, nv):
+        attr = self._getMAByID(a)
+        v = attr.ctype.asobj(v)
+        e = AttributeEvent(self, v, nv)
+        for o in self._notify_cbdict[a]:
+            if o.trigvalue == MUIV_EveryTime or o.trigvalue == v:
+                if o(e): return
+
+    def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *_args, **kwds):
         assert callable(callback)
-        attr = self._check_attr(attr, 'sg').attr
-        weak_args = []
-        for a in args:
-            try:
-                weak_args.append(weakref.ref(a))
-            except TypeError:
-                weak_args.append(a)
-        
-        t = (callback, trigvalue, weak_args)
-        if attr in self._notify_cbdict:
-            self._notify_cbdict[attr].append(t)
+        attr = self._getMA(attr)
+        assert 's' in attr.isg or 'g' in attr.isg
+        event = AttributeNotify(trigvalue, callback, kwds.get('args', _args))
+        if attr.id in self._notify_cbdict:
+            self._notify_cbdict[attr.id].append(event)
         else:
-            self._notify(attr, MUIV_EveryTime)
-            self._notify_cbdict[attr] = [ t ]
+            self._notify(attr.id)
+            self._notify_cbdict[attr.id] = [ event ]
 
-    def NNSet(self, attr, value):
-        inf = self._check_attr(attr, 's')
-        value = inf.sconv(value)
-        self._nnset(inf.attr, value)
-        self._keep(inf.attr, value, inf.format)
+    def KillApp(self):
+        self.ApplicationObject.Quit()
 
+#===============================================================================
 
 class Family(Notify):
     CLASSID = MUIC_Family
-    ATTRIBUTES = {
-        MUIA_Family_Child: ('Child', 'M', 'i..'),
-        MUIA_Family_List:  ('List', 'p', '..g'),
-        }
+    
+    Child = MAttribute(MUIA_Family_Child, 'i..', c_pObject)
+    List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
         super(Family, self).__init__(**kwds)
         if child:
-            self._children.append(child)
+            self.AddTail(child)
 
     def AddHead(self, o):
-        assert isinstance(o, PyMUIObject)
-        assert o not in self._children
-        self._do1(MUIM_Family_AddHead, o)
-        self._children.append(o)
+        assert isinstance(o, (Family, c_pObject))
+        x = self._do1(MUIM_Family_AddHead, long(c_pObject(o)))
+        if isinstance(o, Family):
+            self._children.add(o)
+            o._parent = self
+        return x
 
     def AddTail(self, o):
-        assert isinstance(o, PyMUIObject)
-        assert o not in self._children  
-        self._do1(MUIM_Family_AddTail, o)
-        self._children.append(o)
+        assert isinstance(o, (Family, c_pObject))
+        x = self._do1(MUIM_Family_AddTail, long(c_pObject(o)))
+        if isinstance(o, Family):
+            self._children.add(o)
+            o._parent = self
+        return x
 
     def Insert(self, o, p):
-        assert isinstance(o, PyMUIObject)
-        assert o not in self._children and p in self._children
-        self._do(MUIM_Family_Insert, (o, p))
-        self._children.append(o)
+        assert p in self._children
+        assert isinstance(o, (Family, c_pObject))
+        x = self._do(MUIM_Family_Insert, (long(c_pObject(o)), long(c_pObject(p))))
+        if isinstance(o, Family):
+            self._children.add(o)
+            o._parent = self
+        return x
 
     def Remove(self, o):
         assert o in self._children
-        self._do1(MUIM_Family_Remove, o)
-        self._children.remove(o) 
+        x = self._do1(MUIM_Family_Remove, long(c_pObject(o)))
+        self._children.remove(o)
+        o._parent = None
+        return x
 
     def Sort(self, *args):
-        assert len(True for o in args if o in self._children) > 0
-        self._do1(MUIM_Family_Sort, array('L', [o._mo for o in args] + [0]))
+        a = (c_pObject * (len(args)+1))() # transitive object, not needed to be keep
+        a[:] = args
+        return self._do1(MUIM_Family_Sort, ctypes.addressof(a))
 
     def Transfer(self, f):
-        assert isinstance(f, Family)
-        self._do1(MUIM_Family_Transfer, f)
-        f._children = self._children
-        del self._children
+        if isinstance(f, Family):
+            x = self._do1(MUIM_Family_Transfer, long(c_pObject(o)))
+            f._children.update(self._children)
+            for o in self._children:
+                o._parent = f
+            del self._children
+        elif isinstance(f, c_pObject):
+            x = self._do1(MUIM_Family_Transfer, long(o))
+        else:
+            raise TypeError("Family or c_pObject instance waited as argument, not %s" % type(f))
+        return x
 
+#===============================================================================
 
 class Menustrip(Family):
     CLASSID = MUIC_Menustrip
-    ATTRIBUTES = { MUIA_Menustrip_Enabled: ('Enabled', 'b', 'isg') }
+    
+    Enabled = MAttribute(MUIA_Menustrip_Enabled, 'isg', c_BOOL)
+
+    InitChange = MMethod(MUIM_Menustrip_InitChange)
+    ExitChange = MMethod(MUIM_Menustrip_ExitChange)
+    Popup      = MMethod(MUIM_Menustrip_Popup, (c_pObject, c_ULONG, c_LONG, c_LONG))
 
     def __init__(self, items=None, **kwds):
         super(Menustrip, self).__init__(**kwds)
@@ -388,44 +763,36 @@ class Menustrip(Family):
         else:
             self.AddTail(items)
 
-    def InitChange(self):
-        self._do(MUIM_Menustrip_InitChange)
- 
-    def ExitChange(self):
-        self._do(MUIM_Menustrip_ExitChange)
+    @Popup.alias
+    def Popup(self, meth, parent, x, y, flags=0):
+        meth(self, parent, flags, x, y)
 
-    def Popup(self, parent, x, y, flags=0):
-        assert isinstance(parent, Family)
-        self._do(MUIM_Menustrip_Popup, (parent, int(flags), int(x), int(y)))
-
+#===============================================================================
 
 class Menu(Family):
     CLASSID = MUIC_Menu
-    ATTRIBUTES = {
-        MUIA_Menu_Enabled: ('Enabled', 'b', 'isg'),
-        MUIA_Menu_Title:   ('Title',   's', 'isg'),
-        }
+    
+    Enabled = MAttribute(MUIA_Menu_Enabled, 'isg', c_BOOL)
+    Title   = MAttribute(MUIA_Menu_Title  , 'isg', c_STRPTR)
 
     def __init__(self, Title, **kwds):
         super(Menu, self).__init__(Title=Title, **kwds)
- 
+
+#===============================================================================
 
 class Menuitem(Family):
     CLASSID = MUIC_Menuitem
-    ATTRIBUTES = {
-        MUIA_Menuitem_Checked:       ('Checked',       'b', 'isg'),
-        MUIA_Menuitem_Checkit:       ('Checkit',       'b', 'isg'),
-        MUIA_Menuitem_CommandString: ('CommandString', 'b', 'isg'),
-        MUIA_Menuitem_CopyStrings:   ('CopyStrings',   'b', 'i..'),
-        MUIA_Menuitem_Enabled:       ('Enabled',       'b', 'isg'),
-        MUIA_Menuitem_Exclude:       ('Exclude',       'i', 'isg'),
-        MUIA_Menuitem_Shortcut:      ('Shortcut',      's', 'isg'),
-        MUIA_Menuitem_Title:         ('Title',         'p', 'isg',
-                                      None,
-                                      lambda x: (x if x.value != NM_BARLABEL else x.tostring())),
-        MUIA_Menuitem_Toggle:        ('Toggle',        'b', 'isg'),
-        MUIA_Menuitem_Trigger:       ('Trigger',       'p', '..g'),
-        }
+    
+    Checked       = MAttribute(MUIA_Menuitem_Checked       , 'isg', c_BOOL)
+    Checkit       = MAttribute(MUIA_Menuitem_Checkit       , 'isg', c_BOOL)
+    CommandString = MAttribute(MUIA_Menuitem_CommandString , 'isg', c_BOOL)
+    CopyStrings   = MAttribute(MUIA_Menuitem_CopyStrings   , 'i..', c_BOOL)
+    Enabled       = MAttribute(MUIA_Menuitem_Enabled       , 'isg', c_BOOL)
+    Exclude       = MAttribute(MUIA_Menuitem_Exclude       , 'isg', c_LONG)
+    Shortcut      = MAttribute(MUIA_Menuitem_Shortcut      , 'isg', c_STRPTR)
+    Title         = MAttribute(MUIA_Menuitem_Title         , 'isg', c_MenuitemTitle)
+    Toggle        = MAttribute(MUIA_Menuitem_Toggle        , 'isg', c_BOOL)
+    Trigger       = MAttribute(MUIA_Menuitem_Trigger       , '..g', c_APTR)
 
     def __init__(self, Title, Shortcut=None, **kwds):
         if Shortcut:
@@ -434,151 +801,233 @@ class Menuitem(Family):
                 kwds['CommandString'] = True
             else:
                 kwds['CommandString'] = False
-        if Title == '-':
-            Title = NM_BARLABEL
+                
+        if Title == '-': Title = NM_BARLABEL
+        
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
-    def action(self, callback, *args):
-        self.Notify('Trigger', MUIV_EveryTime, callback, *args)
- 
+    def Bind(self, callback, *args):
+        self.Notify('Trigger', callback=lambda x: callback(), args=args)
+
+#===============================================================================
 
 class Application(Notify):
     CLASSID = MUIC_Application
-    ATTRIBUTES = {
-        MUIA_Application_Active:         ('Active',         'b', 'isg'),
-        MUIA_Application_Author:         ('Author',         's', 'i.g'),
-        MUIA_Application_Base:           ('Base',           's', 'i.g'),
-        MUIA_Application_Broker:         ('Broker',         'p', '..g'),
-        MUIA_Application_BrokerHook:     ('BrokerHook',     'p', 'isg'),
-        MUIA_Application_BrokerPort:     ('BrokerPort',     'p', '..g'),
-        MUIA_Application_BrokerPri:      ('BrokerPri',      'l', 'i.g'),
-        MUIA_Application_Commands:       ('Commands',       'p', 'isg'),
-        MUIA_Application_Copyright:      ('Copyright',      's', 'i.g'),
-        MUIA_Application_Description:    ('Description',    's', 'i.g'),
-        MUIA_Application_DiskObject:     ('DiskObject',     'p', 'isg'),
-        MUIA_Application_DoubleStart:    ('DoubleStart',    'b', '..g'),
-        MUIA_Application_DropObject:     ('DropObject',     'M', 'is.'),
-        MUIA_Application_ForceQuit:      ('ForceQuit',      'b', '..g'),
-        MUIA_Application_HelpFile:       ('HelpFile',       's', 'isg'),
-        MUIA_Application_Iconified:      ('Iconified',      'b', '.sg'),
-        MUIA_Application_MenuAction:     ('MenuAction',     'I', '..g'),
-        MUIA_Application_MenuHelp:       ('MenuHelp',       'I', '..g'),
-        MUIA_Application_Menustrip:      ('Menustrip',      'M', 'i..'),
-        MUIA_Application_RexxHook:       ('RexxHook',       'p', 'isg'),
-        MUIA_Application_RexxMsg:        ('RexxMsg',        'p', '..g'),
-        MUIA_Application_RexxString:     ('RexxString',     's', '.s.'),
-        MUIA_Application_SingleTask:     ('SingleTask',     'b', 'i..'),
-        MUIA_Application_Sleep:          ('Sleep',          'b', '.s.'),
-        MUIA_Application_Title:          ('Title',          's', 'i.g'),
-        MUIA_Application_UseCommodities: ('UseCommodities', 'b', 'i..'),
-        MUIA_Application_UsedClasses:    ('UsedClasses',    'p', 'isg'),
-        MUIA_Application_UseRexx:        ('UseRexx',        'b', 'i..'),
-        MUIA_Application_Version:        ('Version',        's', 'i.g'),
-        MUIA_Application_Window:         ('Window',         'M', 'i..'),
-        MUIA_Application_WindowList:     ('WindowList',     'p', '..g'),
-        }
+
+    Active         = MAttribute(MUIA_Application_Active         , 'isg', c_BOOL)
+    Author         = MAttribute(MUIA_Application_Author         , 'i.g', c_STRPTR)
+    Base           = MAttribute(MUIA_Application_Base           , 'i.g', c_STRPTR)
+    Broker         = MAttribute(MUIA_Application_Broker         , '..g', c_APTR)
+    BrokerHook     = MAttribute(MUIA_Application_BrokerHook     , 'isg', c_APTR)
+    BrokerPort     = MAttribute(MUIA_Application_BrokerPort     , '..g', c_APTR)
+    BrokerPri      = MAttribute(MUIA_Application_BrokerPri      , 'i.g', c_LONG)
+    Commands       = MAttribute(MUIA_Application_Commands       , 'isg', c_APTR)
+    Copyright      = MAttribute(MUIA_Application_Copyright      , 'i.g', c_STRPTR)
+    Description    = MAttribute(MUIA_Application_Description    , 'i.g', c_STRPTR)
+    DiskObject     = MAttribute(MUIA_Application_DiskObject     , 'isg', c_APTR)
+    DoubleStart    = MAttribute(MUIA_Application_DoubleStart    , '..g', c_BOOL)
+    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_pObject)
+    ForceQuit      = MAttribute(MUIA_Application_ForceQuit      , '..g', c_BOOL)
+    HelpFile       = MAttribute(MUIA_Application_HelpFile       , 'isg', c_STRPTR)
+    Iconified      = MAttribute(MUIA_Application_Iconified      , '.sg', c_BOOL)
+    MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
+    MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_pObject)
+    RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_APTR)
+    RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
+    RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
+    SingleTask     = MAttribute(MUIA_Application_SingleTask     , 'i..', c_BOOL)
+    Sleep          = MAttribute(MUIA_Application_Sleep          , '.s.', c_BOOL)
+    Title          = MAttribute(MUIA_Application_Title          , 'i.g', c_STRPTR)
+    UseCommodities = MAttribute(MUIA_Application_UseCommodities , 'i..', c_BOOL)
+    UsedClasses    = MAttribute(MUIA_Application_UsedClasses    , 'isg', c_pSTRPTR)
+    UseRexx        = MAttribute(MUIA_Application_UseRexx        , 'i..', c_BOOL)
+    Version        = MAttribute(MUIA_Application_Version        , 'i.g', c_STRPTR)
+    Window         = MAttribute(MUIA_Application_Window         , 'i..', c_pObject)
+    WindowList     = MAttribute(MUIA_Application_WindowList     , '..g', c_pList)
+
+    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , c_pObject)
+    #AddInputHandler
+    #BuildSettingsPanel
+    CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
+    #DefaultConfigItem
+    InputBuffered    = MMethod(MUIM_Application_InputBuffered)
+    Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
+    NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG.pointertype(), rettype=c_ULONG)
+    OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
+    PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_pObject, c_LONG), varargs=True)
+    #RemInputHandler
+    ReturnID         = MMethod(MUIM_Application_ReturnID         , c_ULONG)
+    Save             = MMethod(MUIM_Application_Save             , c_STRPTR)
+    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , (c_pObject, c_STRPTR, c_STRPTR, c_LONG))
 
     def __init__(self, **kwds):
         win = kwds.pop('Window', None)
         super(Application, self).__init__(**kwds)
 
         # Add Window PyMUIObject passed as argument
-        if win:
-            self.AddWindow(win)
+        if win: self.AddChild(win)
+
+    def AddChild(self, win):
+        assert isinstance(win, Window)
+        super(Application, self).AddChild(win)
+
+    def RemChild(self, win):
+        win.CloseWindow()
+        super(Application, self).RemChild(win)
 
     def Run(self):
-        mainloop(self)
+        _muimaster.mainloop(self)
 
     def Quit(self):
-        self._do1(MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit)
+        self.ReturnID(MUIV_Application_ReturnID_Quit)
 
-    def AddWindow(self, win):
-        if win in self._children:
-            raise RuntimeError("Window already attached.")
-        self._add(win)
-        self._children.append(win)
-        win.SetApp(self)
+    @AboutMUI.alias
+    def AboutMUI(self, meth, refwin=None):
+        meth(self, refwin)
 
-    def RemWindow(self, win):
-        if win not in self._children:
-            raise RuntimeError("Window not already attached.")
-        win.Close()
-        self._rem(win)
-        self._children.remove(win)
-
+#===============================================================================
 
 class Window(Notify):
     CLASSID = MUIC_Window
-    ATTRIBUTES = {
-        MUIA_Window_Activate:                ('Activate',                'b', 'isg'),
-        MUIA_Window_ActiveObject:            ('ActiveObject',            'M', '.sg'),
-        MUIA_Window_AltHeight:               ('AltHeight',               'i', 'i.g'),
-        MUIA_Window_AltLeftEdge:             ('AltLeftEdge',             'i', 'i.g'),
-        MUIA_Window_AltTopEdge:              ('AltTopEdge',              'i', 'i.g'),
-        MUIA_Window_AltWidth:                ('AltWidth',                'i', 'i.g'),
-        MUIA_Window_AppWindow:               ('AppWindow',               'b', 'i..'),
-        MUIA_Window_Backdrop:                ('Backdrop',                'b', 'i..'),
-        MUIA_Window_Borderless:              ('Borderless',              'b', 'i..'),
-        MUIA_Window_CloseGadget:             ('CloseGadget',             'b', 'i..'),
-        MUIA_Window_CloseRequest:            ('CloseRequest',            'b', '..g'),
-        MUIA_Window_DefaultObject:           ('DefaultObject',           'M', 'isg'),
-        MUIA_Window_DepthGadget:             ('DepthGadget',             'b', 'i..'),
-        MUIA_Window_DisableKeys:             ('DisableKeys',             'I', 'isg'),
-        MUIA_Window_DragBar:                 ('DragBar',                 'b', 'i..'),
-        MUIA_Window_FancyDrawing:            ('FancyDrawing',            'b', 'isg'),
-        MUIA_Window_Height:                  ('Height',                  'i', 'i.g'),
-        MUIA_Window_ID:                      ('ID',                      'I', 'isg'),
-        MUIA_Window_InputEvent:              ('InputEvent',              'p', '..g'),
-        MUIA_Window_IsSubWindow:             ('IsSubWindow',             'b', 'isg'),
-        MUIA_Window_LeftEdge:                ('LeftEdge',                'i', 'i.g'),
-        MUIA_Window_MenuAction:              ('MenuAction',              'I', 'isg'),
-        MUIA_Window_Menustrip:               ('Menustrip',               'M', 'i.g'),
-        MUIA_Window_MouseObject:             ('MouseObject',             'M', '..g'),
-        MUIA_Window_NeedsMouseObject:        ('NeedsMouseObject',        'b', 'i..'),
-        MUIA_Window_NoMenus:                 ('NoMenus',                 'b', 'is.'),
-        MUIA_Window_Open:                    ('Open',                    'b', '.sg'),
-        MUIA_Window_PublicScreen:            ('PublicScreen',            's', 'isg'),
-        MUIA_Window_RefWindow:               ('RefWindow',               'M', 'is.'),
-        MUIA_Window_RootObject:              ('RootObject',              'M', 'isg'),
-        MUIA_Window_Screen:                  ('Screen',                  'p', 'isg'),
-        MUIA_Window_ScreenTitle:             ('ScreenTitle',             's', 'isg'),
-        MUIA_Window_SizeGadget:              ('SizeGadget',              'b', 'i..'),
-        MUIA_Window_SizeRight:               ('SizeRight',               'b', 'i..'),
-        MUIA_Window_Sleep:                   ('Sleep',                   'b', '.sg'),
-        MUIA_Window_TabletMessages:          ('TabletMessages',          'b', 'i.g'),
-        MUIA_Window_Title:                   ('Title',                   's', 'isg'),
-        MUIA_Window_TopEdge:                 ('TopEdge',                 'i', 'i.g'),
-        MUIA_Window_UseBottomBorderScroller: ('UseBottomBorderScroller', 'b', 'isg'),
-        MUIA_Window_UseLeftBorderScroller:   ('UseLeftBorderScroller',   'b', 'isg'),
-        MUIA_Window_UseRightBorderScroller:  ('UseRightBorderScroller',  'b', 'isg'),
-        MUIA_Window_Width:                   ('Width',                   'i', 'i.g'),
-        MUIA_Window_Window:                  ('Window',                  'p', '..g'),
-        }
+    
+    def __postSetRootObject(self, attr, o):
+        if self._children:
+            self._children.pop()._parent = None
+            self._children.clear()
+        o._parent = self
+        self._children.add(o)
 
-    __window_ids = []
+    def __checkForApp(self, attr, o):
+        if not self.ApplicationObject:
+            raise AttributeError("Window not linked to an application yet")
+        return o
+
+    Activate                = MAttribute(MUIA_Window_Activate                , 'isg', c_BOOL)
+    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_pObject)
+    AltHeight               = MAttribute(MUIA_Window_AltHeight               , 'i.g', c_LONG)
+    AltLeftEdge             = MAttribute(MUIA_Window_AltLeftEdge             , 'i.g', c_LONG)
+    AltTopEdge              = MAttribute(MUIA_Window_AltTopEdge              , 'i.g', c_LONG)
+    AltWidth                = MAttribute(MUIA_Window_AltWidth                , 'i.g', c_LONG)
+    AppWindow               = MAttribute(MUIA_Window_AppWindow               , 'i..', c_BOOL)
+    Backdrop                = MAttribute(MUIA_Window_Backdrop                , 'i..', c_BOOL)
+    Borderless              = MAttribute(MUIA_Window_Borderless              , 'i..', c_BOOL)
+    CloseGadget             = MAttribute(MUIA_Window_CloseGadget             , 'i..', c_BOOL)
+    CloseRequest            = MAttribute(MUIA_Window_CloseRequest            , '..g', c_BOOL)
+    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_pObject)
+    DepthGadget             = MAttribute(MUIA_Window_DepthGadget             , 'i..', c_BOOL)
+    DisableKeys             = MAttribute(MUIA_Window_DisableKeys             , 'isg', c_LONG)
+    DragBar                 = MAttribute(MUIA_Window_DragBar                 , 'i..', c_BOOL)
+    FancyDrawing            = MAttribute(MUIA_Window_FancyDrawing            , 'isg', c_BOOL)
+    Height                  = MAttribute(MUIA_Window_Height                  , 'i.g', c_LONG)
+    ID                      = MAttribute(MUIA_Window_ID                      , 'isg', c_ULONG)
+    InputEvent              = MAttribute(MUIA_Window_InputEvent              , '..g', c_APTR)
+    IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
+    LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
+    MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_pObject)
+    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_pObject)
+    NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
+    NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
+    Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL,
+                                         preSet=__checkForApp)
+    PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
+    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_pObject)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_pObject,
+                                         postSet=__postSetRootObject)
+    Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
+    ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
+    SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
+    SizeRight               = MAttribute(MUIA_Window_SizeRight               , 'i..', c_BOOL)
+    Sleep                   = MAttribute(MUIA_Window_Sleep                   , '.sg', c_BOOL)
+    TabletMessages          = MAttribute(MUIA_Window_TabletMessages          , 'i.g', c_BOOL)
+    Title                   = MAttribute(MUIA_Window_Title                   , 'isg', c_STRPTR)
+    TopEdge                 = MAttribute(MUIA_Window_TopEdge                 , 'i.g', c_LONG)
+    UseBottomBorderScroller = MAttribute(MUIA_Window_UseBottomBorderScroller , 'isg', c_BOOL)
+    UseLeftBorderScroller   = MAttribute(MUIA_Window_UseLeftBorderScroller   , 'isg', c_BOOL)
+    UseRightBorderScroller  = MAttribute(MUIA_Window_UseRightBorderScroller  , 'isg', c_BOOL)
+    Width                   = MAttribute(MUIA_Window_Width                   , 'i.g', c_LONG)
+    Window                  = MAttribute(MUIA_Window_Window                  , '..g', c_APTR)
+
+    __idset = set()
 
     __attr_map = { 'LeftEdge': { 'centered': MUIV_Window_LeftEdge_Centered,
-                                 'moused': MUIV_Window_LeftEdge_Moused },
+                                 'moused':   MUIV_Window_LeftEdge_Moused },
                    'TopEdge' : { 'centered': MUIV_Window_TopEdge_Centered,
-                                 'moused': MUIV_Window_TopEdge_Moused },
-                   'Height':   { 'default': MUIV_Window_Height_Default,
-                                 'scaled':  MUIV_Window_Height_Scaled },
-                   'Width':    { 'default': MUIV_Window_Width_Default,
-                                 'scaled': MUIV_Window_Width_Scaled },
+                                 'moused':   MUIV_Window_TopEdge_Moused },
+                   'Height':   { 'default':  MUIV_Window_Height_Default,
+                                 'scaled':   MUIV_Window_Height_Scaled },
+                   'Width':    { 'default':  MUIV_Window_Width_Default,
+                                 'scaled':   MUIV_Window_Width_Scaled },
                    }
 
-    def __init__(self, Title=None, ID=-1, **kwds):
+    @classmethod
+    def __new_ID(cl, i=-1):
+        if isinstance(i, basestring):
+            i = -1 # XXX: ID bugged when id is string
+        if i == -1:
+            for i in xrange(1<<10):
+                if i not in cl.__idset:
+                    cl.__idset.add(i)
+                    return i
+            raise RuntimeError("No more availables IDs")
+        else:
+            # use address of string as ID integer, but store the string
+            if isinstance(i, basestring):
+                s = i
+                i = ctypes.addressof(c_STRPTR(i))
+            if i in cl.__idset:
+                raise RuntimeError("ID %u already taken" % i)
+            if s:
+                cl.__idset.add(s)
+                return i
+
+        cl.__idset.add(i)
+        return i
+
+    def __init__(self, Title=None, ID=None, **kwds):
+        """Window(Title=None, ID=None, **kwds) -> Window Instance.
+
+        Window MUI class.
+
+        === Specifics parameters ===
+        
+        - Title: (optional) window title to use. None or not set doesn't touch the attribute.
+
+        - ID: (optional) can be an integer (LONG) or a string.
+          If not given, set to None, zero or empty string, ID attribute is not touched.
+          If set to -1, a new unique ID is automatically set for you.
+
+        === Special PyMUI attributes (optionals) ===
+        
+        - LeftEdge      : positive integer as in MUI or a string: 'centered' or 'moused'.
+        - RightEdge     : window rigth edge on screen: integer [0-2147482648].
+        - TopEdge       : positive integer as in MUI or a string: 'centered' or 'moused'.
+        - TopDeltaEdge  : window appears n pixels below the screens title bar, n integer [0-996].
+        - BottomEdge    : window bottom edge on screen: integer [0-2147482648].
+        - Width         : positive integer as in MUI or a string: 'default' or 'scaled'.
+        - WidthMinMax   :
+        - WidthScreen   :
+        - WidthVisible  :
+        - Height        : positive integer as in MUI or a string: 'default' or 'scaled'.
+        - HeightMinMax  :
+        - HeightScreen  :
+        - HeightVisible :
+        - Position      : a 2-tuple for (LeftEdge, TopEdge) (overwritten by LeftEdge and TopEdge).
+        - Size          : a 2-tuple for (Width, Height) (overwritten by Width and Height).
+        - CloseOnRequest: Set it to True add a notification to close the window
+                          when CloseRequest attribute is set to True. False by default.
+
+        === Notes ===
+
+        A RootObject is mandatory to create a Window on MUI.
+        PyMUI uses a simple Rectangle object by default.
+        """
         self.__app = None
 
         # Auto Window ID handling
-        if ID == -1:
-            for x in xrange(1<<8):
-                if x not in self.__window_ids:
-                    ID = x
-                    break
-            if ID == -1:
-                raise RuntimeError("No more available ID")
-        self.__window_ids.append(ID)
+        if ID:
+            kwds['ID'] = self.__new_ID(ID)
 
         # A root object is mandatory to create the window
         # Use a dummy rectangle if nothing given
@@ -588,13 +1037,16 @@ class Window(Notify):
         if Title is not None:
             kwds['Title'] = Title
 
+        if 'Position' in kwds:
+            kwds['LeftEdge'], kwds['TopEdge'] = kwds.pop('Position')
+
         if 'LeftEdge' in kwds:
             x = kwds.get('LeftEdge')
             d = self.__attr_map['LeftEdge']
             kwds['LeftEdge'] = d[x] if x in d else x
         elif 'RightEdge' in kwds:
             kwds['LeftEdge'] = -1000 - kwds.pop('RightEdge')
-            
+
         if 'TopEdge' in kwds:
             x = kwds.get('TopEdge')
             d = self.__attr_map['TopEdge']
@@ -603,6 +1055,9 @@ class Window(Notify):
             kwds['TopEdge'] = -1000 - kwds.pop('BottomEdge')
         elif 'TopDeltaEdge' in kwds:
             kwds['TopEdge'] = -3 - kwds.pop('TopDeltaEdge')
+
+        if 'Size' in kwds:
+            kwds['Width'], kwds['Height'] = kwds.pop('Size')
 
         if 'Height' in kwds:
             x = kwds.get('Height')
@@ -614,7 +1069,7 @@ class Window(Notify):
             kwds['Height'] = -200 - max(min(kwds.pop('HeightScreen'), 100), 0)
         elif 'HeightVisible' in kwds:
             kwds['Height'] = -100 - max(min(kwds.pop('HeightVisible'), 100), 0)
-            
+
         if 'Width' in kwds:
             x = kwds.get('Width')
             d = self.__attr_map['Width']
@@ -626,109 +1081,86 @@ class Window(Notify):
         elif 'WidthVisible' in kwds:
             kwds['Width'] = -100 - max(min(kwds.pop('WidthVisible'), 100), 0)
 
-        super(Window, self).__init__(ID=ID, **kwds)
-        self._children.append(kwds['RootObject'])
+        autoclose = kwds.pop('CloseOnReq', False)
 
-    def SetRootObject(self, o):
-        self.Set(MUIA_Window_RootObject, o)
-        self._children[0] = o
+        super(Window, self).__init__(**kwds)
+        ro = self.RootObject
+        self._children.add(ro)
+        ro._parent = self
 
-    def KillApp(self):
-        app = self.Get(MUIA_ApplicationObject)
-        if app is None:
-            raise RuntimeError("No application set for this %s object" % self.__class__.__name__)
-        app.Quit()
+        if autoclose:
+            self.Notify('CloseRequest', True, lambda e: self.CloseWindow())
 
-    def SetApp(self, app):
-        """This function is called by Application.AddWindow method.
-        It permits to safely call Open/Close Window methods.
-        """
-        if self.__app: return
-        self.__app = app
-        self.__Open = functools.partial(self._set, MUIA_Window_Open, True)
-        self.__Close = functools.partial(self._set, MUIA_Window_Open, False)
+    def OpenWindow(self):
+        self.Open = True
 
-    def __Open(self):
-        raise RuntimeError("Can't open the Window object, not linked to an application yet.\n"
-                           "Please, see Window.SetApp method.")
+    def CloseWindow(self):
+        self.Open = False
 
-    def __Close(self):
-        raise RuntimeError("Can't close the Window object, not linked to an application yet.\n"
-                           "Please, see Window.SetApp method.")
- 
-    def Open(self):
-        self.__Open() # raise error if object not linked to an application (SetApp)
+    pointer = property(fset=_muimaster._setwinpointer, doc="Window mouse pointer")
 
-    def Close(self):
-        self.__Close() # raise error if object not linked to an application (SetApp)
-
-    def _set_pointer(self, value):
-        setwinpointer(self, value)
-
-    pointer = property(fset=_set_pointer)
+#===============================================================================
 
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
-    ATTRIBUTES = { MUIA_Aboutmui_Application: ('Application', 'M', 'i..') }
+
+    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_pObject)
 
     def __init__(self, app, **kwds):
-        Window.__init__(self, Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
-
-        # We don't call app.AddWindow() because this object do it itself at OM_NEW
-        app._children.append(self)
-        self.SetApp(app)
-
+        super(AboutMUI, self).__init__(Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
+        # We don't call app.AddChild() because this object do it itself during its OM_NEW
+        
+#===============================================================================
 
 class Area(Notify):
     CLASSID = MUIC_Area
-    ATTRIBUTES = {
-        MUIA_Background:         ('Background',         'p', 'is.'),
-        MUIA_BottomEdge:         ('BottomEdge',         'i', '..g'),
-        MUIA_ContextMenu:        ('ContextMenu',        'M', 'isg'),
-        MUIA_ContextMenuTrigger: ('ContextMenuTrigger', 'M', '..g'),
-        MUIA_ControlChar:        ('ControlChar',        'c', 'isg'),
-        MUIA_CycleChain:         ('CycleChain',         'i', 'isg'),
-        MUIA_Disabled:           ('Disabled',           'b', 'isg'),
-        MUIA_DoubleBuffer:       ('DoubleBuffer',       'b', 'isg'),
-        MUIA_Draggable:          ('Draggable',          'b', 'isg'),
-        MUIA_Dropable:           ('Dropable',           'b', 'isg'),
-        MUIA_FillArea:           ('FillArea',           'b', 'is.'),
-        MUIA_FixHeight:          ('FixHeight',          'i', 'i..'),
-        MUIA_FixHeightTxt:       ('FixHeightTxt',       's', 'i..'),
-        MUIA_FixWidth:           ('FixWidth',           'i', 'i..'),
-        MUIA_FixWidthTxt:        ('FixWidthTxt',        's', 'i..'),
-        MUIA_Font:               ('Font',               'p', 'i.g'),
-        MUIA_Frame:              ('Frame',              'i', 'i..'),
-        MUIA_FrameDynamic:       ('FrameDynamic',       'b', 'isg'),
-        MUIA_FramePhantomHoriz:  ('FramePhantomHoriz',  'b', 'i..'),
-        MUIA_FrameTitle:         ('FrameTitle',         's', 'i..'),
-        MUIA_FrameVisible:       ('FrameVisible',       'b', 'isg'),
-        MUIA_Height:             ('Height',             'i', '..g'),
-        MUIA_HorizDisappear:     ('HorizDisappear',     'i', 'isg'),
-        MUIA_HorizWeight:        ('HorizWeight',        'i', 'isg'),
-        MUIA_InnerBottom:        ('InnerBottom',        'i', 'i.g'),
-        MUIA_InnerLeft:          ('InnerLeft',          'i', 'i.g'),
-        MUIA_InnerRight:         ('InnerRight',         'i', 'i.g'),
-        MUIA_InnerTop:           ('InnerTop',           'i', 'i.g'),
-        MUIA_InputMode:          ('InputMode',          'i', 'i..'),
-        MUIA_LeftEdge:           ('LeftEdge',           'i', '..g'),
-        MUIA_MaxHeight:          ('MaxHeight',          'i', 'i..'),
-        MUIA_MaxWidth:           ('MaxWidth',           'i', 'i..'),
-        MUIA_Pressed:            ('Pressed',            'b', '..g'),
-        MUIA_RightEdge:          ('RightEdge',          'i', '..g'),
-        MUIA_Selected:           ('Selected',           'b', 'isg'),
-        MUIA_ShortHelp:          ('ShortHelp',          's', 'isg'),
-        MUIA_ShowMe:             ('ShowMe',             'b', 'isg'),
-        MUIA_ShowSelState:       ('ShowSelState',       'b', 'i..'),
-        MUIA_Timer:              ('Timer',              'i', '..g'),
-        MUIA_TopEdge:            ('TopEdge',            'i', '..g'),
-        MUIA_VertDisappear:      ('VertDisappear',      'i', 'isg'),
-        MUIA_VertWeight:         ('VertWeight',         'i', 'isg'),
-        MUIA_Weight:             ('Weight',             'i', 'i..'),
-        MUIA_Width:              ('Width',              'i', '..g'),
-        MUIA_Window:             ('Window',             'p', '..g'),
-        MUIA_WindowObject:       ('WindowObject',       'M', '..g'),
-        }
+
+    Background         = MAttribute(MUIA_Background         , 'is.', c_ImageSpec)
+    BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_pObject)
+    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_pObject)
+    ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
+    CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
+    Disabled           = MAttribute(MUIA_Disabled           , 'isg', c_BOOL)
+    DoubleBuffer       = MAttribute(MUIA_DoubleBuffer       , 'isg', c_BOOL)
+    Draggable          = MAttribute(MUIA_Draggable          , 'isg', c_BOOL)
+    Dropable           = MAttribute(MUIA_Dropable           , 'isg', c_BOOL)
+    FillArea           = MAttribute(MUIA_FillArea           , 'is.', c_BOOL)
+    FixHeight          = MAttribute(MUIA_FixHeight          , 'i..', c_LONG)
+    FixHeightTxt       = MAttribute(MUIA_FixHeightTxt       , 'i..', c_STRPTR)
+    FixWidth           = MAttribute(MUIA_FixWidth           , 'i..', c_LONG)
+    FixWidthTxt        = MAttribute(MUIA_FixWidthTxt        , 'i..', c_STRPTR)
+    Font               = MAttribute(MUIA_Font               , 'i.g', c_pTextFont)
+    Frame              = MAttribute(MUIA_Frame              , 'i..', c_LONG)
+    FrameDynamic       = MAttribute(MUIA_FrameDynamic       , 'isg', c_BOOL)
+    FramePhantomHoriz  = MAttribute(MUIA_FramePhantomHoriz  , 'i..', c_BOOL)
+    FrameTitle         = MAttribute(MUIA_FrameTitle         , 'i..', c_STRPTR)
+    FrameVisible       = MAttribute(MUIA_FrameVisible       , 'isg', c_BOOL)
+    Height             = MAttribute(MUIA_Height             , '..g', c_LONG)
+    HorizDisappear     = MAttribute(MUIA_HorizDisappear     , 'isg', c_LONG)
+    HorizWeight        = MAttribute(MUIA_HorizWeight        , 'isg', c_LONG)
+    InnerBottom        = MAttribute(MUIA_InnerBottom        , 'i.g', c_LONG)
+    InnerLeft          = MAttribute(MUIA_InnerLeft          , 'i.g', c_LONG)
+    InnerRight         = MAttribute(MUIA_InnerRight         , 'i.g', c_LONG)
+    InnerTop           = MAttribute(MUIA_InnerTop           , 'i.g', c_LONG)
+    InputMode          = MAttribute(MUIA_InputMode          , 'i..', c_LONG)
+    LeftEdge           = MAttribute(MUIA_LeftEdge           , '..g', c_LONG)
+    MaxHeight          = MAttribute(MUIA_MaxHeight          , 'i..', c_LONG)
+    MaxWidth           = MAttribute(MUIA_MaxWidth           , 'i..', c_LONG)
+    Pressed            = MAttribute(MUIA_Pressed            , '..g', c_BOOL)
+    RightEdge          = MAttribute(MUIA_RightEdge          , '..g', c_LONG)
+    Selected           = MAttribute(MUIA_Selected           , 'isg', c_BOOL)
+    ShortHelp          = MAttribute(MUIA_ShortHelp          , 'isg', c_STRPTR)
+    ShowMe             = MAttribute(MUIA_ShowMe             , 'isg', c_BOOL)
+    ShowSelState       = MAttribute(MUIA_ShowSelState       , 'i..', c_BOOL)
+    Timer              = MAttribute(MUIA_Timer              , '..g', c_LONG)
+    TopEdge            = MAttribute(MUIA_TopEdge            , '..g', c_LONG)
+    VertDisappear      = MAttribute(MUIA_VertDisappear      , 'isg', c_LONG)
+    VertWeight         = MAttribute(MUIA_VertWeight         , 'isg', c_LONG)
+    Weight             = MAttribute(MUIA_Weight             , 'i..', c_LONG)
+    Width              = MAttribute(MUIA_Width              , '..g', c_LONG)
+    Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
+    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_pObject)
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
@@ -750,86 +1182,90 @@ class Area(Notify):
         bg = kwds.get('Background', None)
         if isinstance(bg, str) and 'MUII_'+bg in g:
             kwds['Background'] = g['MUII_'+bg]
- 
+
         super(Area, self).__init__(**kwds)
 
+#===============================================================================
 
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
-    ATTRIBUTES = { MUIA_Dtpic_Name: ('Name', 's', 'isg') }
+    
+    Name = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR)
 
-    def __init__(self, Name='', **kwds):
-        super(Dtpic, self).__init__(Name=Name, **kwds)
+    def __init__(self, Name=None, **kwds):
+        if Name: kwds['Name'] = Name
+        super(Dtpic, self).__init__(**kwds)
 
+#===============================================================================
 
 class Rectangle(Area):
     CLASSID = MUIC_Rectangle
-    ATTRIBUTES = {
-        MUIA_Rectangle_BarTitle: ('BarTitle', 's', 'i.g'),
-        MUIA_Rectangle_HBar:     ('HBar',     'b', 'i.g'),
-        MUIA_Rectangle_VBar:     ('VBar',     'b', 'i.g'),
-        }
+
+    BarTitle = MAttribute(MUIA_Rectangle_BarTitle, 'i.g', c_STRPTR)
+    HBar     = MAttribute(MUIA_Rectangle_HBar,     'i.g', c_BOOL)
+    VBar     = MAttribute(MUIA_Rectangle_VBar,     'i.g', c_BOOL)
 
     # Factory class methods
 
     @classmethod
-    def HVSpace(cl):
+    def mkHVSpace(cl):
         return cl()
 
     @classmethod
-    def HSpace(cl, x):
+    def mkHSpace(cl, x):
         return cl(VertWeight=x)
 
     @classmethod
-    def VSpace(cl, x):
+    def mkVSpace(cl, x):
         return cl(HorizWeight=x)
 
     @classmethod
-    def HCenter(cl, o):
+    def mkHCenter(cl, o):
         g = Group.HGroup(Spacing=0)
         g.AddChild(cl.HSpace(0), o, cl.HSpace(0))
         return g
 
     @classmethod
-    def VCenter(cl, o):
+    def mkVCenter(cl, o):
         g = Group.VGroup(Spacing=0)
         return g.AddChild(cl.VSpace(0), o, cl.VSpace(0))
 
     @classmethod
-    def HBar(cl, space):
+    def mkHBar(cl, space):
         return cl(HBar=True, InnerTop=space, InnerBottom=space, VertWeight=0)
 
     @classmethod
-    def VBar(cl, space):
+    def mkVBar(cl, space):
         return cl(HBar=True, InnerLeft=space, InnerRight=space, HorizWeight=0)
- 
 
-HVSpace = Rectangle.HVSpace
-HSpace  = Rectangle.HSpace
-VSpace  = Rectangle.VSpace
-HCenter = Rectangle.HCenter
-VCenter = Rectangle.VCenter
-HBar    = Rectangle.HBar
-VBar    = Rectangle.VBar
+HVSpace = Rectangle.mkHVSpace
+HSpace  = Rectangle.mkHSpace
+VSpace  = Rectangle.mkVSpace
+HCenter = Rectangle.mkHCenter
+VCenter = Rectangle.mkVCenter
+HBar    = Rectangle.mkHBar
+VBar    = Rectangle.mkVBar
 
+#===============================================================================
 
 class Balance(Area):
     CLASSID = MUIC_Balance
-    ATTRIBUTES = { MUIA_Balance_Quiet: ('Quiet', 'i', 'i..') }
+    
+    Quiet = MAttribute(MUIA_Balance_Quiet, 'i..', c_LONG)
 
+#===============================================================================
 
 class Image(Area):
     CLASSID = MUIC_Image
-    ATTRIBUTES = {
-        MUIA_Image_FontMatch:       ('FontMatch',       'b', 'i..'),
-        MUIA_Image_FontMatchHeight: ('FontMatchHeight', 'b', 'i..'),
-        MUIA_Image_FontMatchWidth:  ('FontMatchWidth',  'b', 'i..'),
-        MUIA_Image_FreeHoriz:       ('FreeHoriz',       'b', 'i..'),
-        MUIA_Image_FreeVert:        ('FreeVert',        'b', 'i..'),
-        MUIA_Image_OldImage:        ('OldImage',        'p', 'i..'),
-        MUIA_Image_Spec:            ('Spec',            's', 'i..'),
-        MUIA_Image_State:           ('State',           'i', 'is.'),
-        }
+    
+    FontMatch       = MAttribute(MUIA_Image_FontMatch       , 'i..', c_BOOL)
+    FontMatchHeight = MAttribute(MUIA_Image_FontMatchHeight , 'i..', c_BOOL)
+    FontMatchWidth  = MAttribute(MUIA_Image_FontMatchWidth  , 'i..', c_BOOL)
+    FreeHoriz       = MAttribute(MUIA_Image_FreeHoriz       , 'i..', c_BOOL)
+    FreeVert        = MAttribute(MUIA_Image_FreeVert        , 'i..', c_BOOL)
+    OldImage        = MAttribute(MUIA_Image_OldImage        , 'i..', c_APTR)
+    Spec            = MAttribute(MUIA_Image_Spec            , 'i..', c_ImageSpec)
+    State           = MAttribute(MUIA_Image_State           , 'is.', c_LONG)
 
     @classmethod
     def CheckMark(cl, selected=False, key=None):
@@ -848,37 +1284,33 @@ class Image(Area):
 
 CheckMark = Image.CheckMark
 
+#===============================================================================
 
 class Bitmap(Area):
     CLASSID = MUIC_Bitmap
-    ATTRIBUTES = {
-        MUIA_Bitmap_Alpha:          ('Alpha',           'I', 'isg'),
-        MUIA_Bitmap_Bitmap:         ('Bitmap',          'p', 'isg'),
-        MUIA_Bitmap_Height:         ('Height',          'i', 'isg'),
-        MUIA_Bitmap_MappingTable:   ('MappingTable',    'p', 'isg'),
-        MUIA_Bitmap_Precision:      ('Precision',       'i', 'isg'),
-        MUIA_Bitmap_RemappedBitmap: ('RemappedBitmap',  'p', '..g'),
-        MUIA_Bitmap_SourceColors:   ('SourceColors',    'p', 'isg'),
-        MUIA_Bitmap_Transparent:    ('Transparent',     'i', 'isg'),
-        MUIA_Bitmap_UseFriend:      ('UseFriend',       'b', 'i..'),
-        MUIA_Bitmap_Width:          ('Width',           'i', 'isg'),
-        }
+    # TODO
 
+#===============================================================================
+
+class Bodychunk(Bitmap):
+    CLASSID = MUIC_Bodychunk
+    # TODO
+
+#===============================================================================
 
 class Text(Area):
     CLASSID = MUIC_Text
-    ATTRIBUTES = {
-        MUIA_Text_Contents:    ('Contents',       's', 'isg'),
-        MUIA_Text_ControlChar: ('TextControlChar','c', 'isg'),
-        MUIA_Text_Copy:        ('MUIA_Text_Copy', 'b', 'isg'),
-        MUIA_Text_HiChar:      ('HiChar',         'c', 'isg'),
-        MUIA_Text_PreParse:    ('PreParse',       's', 'i..'),
-        MUIA_Text_SetMax:      ('SetMax',         'b', 'i..'),
-        MUIA_Text_SetMin:      ('SetMin',         'b', 'i..'),
-        MUIA_Text_SetVMax:     ('SetVMax',        'b', 'is.'),
-        MUIA_Text_Shorten:     ('Shorten',        'I', 'isg'),
-        MUIA_Text_Shortened:   ('Shortened',      'b', '..g'),
-        }
+
+    Contents        = MAttribute(MUIA_Text_Contents,    'isg', c_STRPTR)
+    ControlChar     = MAttribute(MUIA_Text_ControlChar, 'isg', c_CHAR)
+    Copy            = MAttribute(MUIA_Text_Copy,        'isg', c_BOOL)
+    HiChar          = MAttribute(MUIA_Text_HiChar,      'isg', c_CHAR)
+    PreParse        = MAttribute(MUIA_Text_PreParse,    'i..', c_STRPTR)
+    SetMax          = MAttribute(MUIA_Text_SetMax,      'i..', c_BOOL)
+    SetMin          = MAttribute(MUIA_Text_SetMin,      'i..', c_BOOL)
+    SetVMax         = MAttribute(MUIA_Text_SetVMax,     'is.', c_BOOL)
+    Shorten         = MAttribute(MUIA_Text_Shorten,     'isg', c_LONG)
+    Shortened       = MAttribute(MUIA_Text_Shortened,   '..g', c_BOOL)
 
     def __init__(self, Contents='', **kwds):
         super(Text, self).__init__(Contents=Contents, **kwds)
@@ -907,9 +1339,8 @@ class Text(Area):
     @classmethod
     def FreeLabel(cl, label, align='r'):
         return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'))
- 
 
-KeyButton = Text.KeyButton            
+KeyButton = Text.KeyButton
 SimpleButton = functools.partial(Text.KeyButton, key=None)
 Label = Text.Label
 LLabel = functools.partial(Label, align='l')
@@ -918,32 +1349,32 @@ FreeLabel = Text.FreeLabel
 LFreeLabel = functools.partial(FreeLabel, align='l')
 CFreeLabel = functools.partial(FreeLabel, align='c')
 
+#===============================================================================
 
 class Gadget(Area):
     CLASSID = MUIC_Gadget
-    ATTRIBUTES = {
-        MUIA_Gadget_Gadget: ('Gadget',   'p', '..g'),
-    }
+    
+    Gadget = MAttribute(MUIA_Gadget_Gadget, '..g', c_APTR),
 
+#===============================================================================
 
 class String(Area):
     CLASSID = MUIC_String
-    ATTRIBUTES = {
-        MUIA_String_Accept:         ('Accept',          'z', 'isg'),
-        MUIA_String_Acknowledge:    ('Acknowledge',     's', '..g'),
-        MUIA_String_AdvanceOnCR:    ('AdvanceOnCR',     'p', 'isg'),
-        MUIA_String_AttachedList:   ('AttachedList',    'M', 'isg'),
-        MUIA_String_BufferPos:      ('BufferPos',       'i', '.sg'),
-        MUIA_String_Contents:       ('Contents',        'z', 'isg'),
-        MUIA_String_DisplayPos:     ('DisplayPos',      'i', '.sg'),
-        MUIA_String_EditHook:       ('EditHook',        'p', 'isg'),
-        MUIA_String_Format:         ('Format',          'i', 'i.g'),
-        MUIA_String_Integer:        ('Integer',         'I', 'isg'),
-        MUIA_String_LonelyEditHook: ('LonelyEditHook',  'p', 'isg'),
-        MUIA_String_MaxLen:         ('MaxLen',          'i', 'i.g'),
-        MUIA_String_Reject:         ('Reject',          'z', 'isg'),
-        MUIA_String_Secret:         ('Secret',          'b', 'i.g'),
-    }
+
+    Accept         = MAttribute(MUIA_String_Accept         , 'isg', c_STRPTR)
+    Acknowledge    = MAttribute(MUIA_String_Acknowledge    , '..g', c_STRPTR)
+    AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR    , 'isg', c_BOOL)
+    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_pObject)
+    BufferPos      = MAttribute(MUIA_String_BufferPos      , '.sg', c_LONG)
+    Contents       = MAttribute(MUIA_String_Contents       , 'isg', c_STRPTR)
+    DisplayPos     = MAttribute(MUIA_String_DisplayPos     , '.sg', c_LONG)
+    EditHook       = MAttribute(MUIA_String_EditHook       , 'isg', c_APTR)
+    Format         = MAttribute(MUIA_String_Format         , 'i.g', c_LONG)
+    Integer        = MAttribute(MUIA_String_Integer        , 'isg', c_ULONG)
+    LonelyEditHook = MAttribute(MUIA_String_LonelyEditHook , 'isg', c_BOOL)
+    MaxLen         = MAttribute(MUIA_String_MaxLen         , 'i.g', c_LONG)
+    Reject         = MAttribute(MUIA_String_Reject         , 'isg', c_STRPTR)
+    Secret         = MAttribute(MUIA_String_Secret         , 'i.g', c_BOOL)
 
     ALIGN_MAP = {'r': MUIV_String_Format_Right, 'l': MUIV_String_Format_Left, 'c': MUIV_String_Format_Center}
 
@@ -955,59 +1386,138 @@ class String(Area):
             kwds['Contents'] = Contents
         super(String, self).__init__(**kwds)
 
+#===============================================================================
+
+class Boopsi(String):
+    CLASSID = MUIC_Boopsi
+    # TODO
+
+#===============================================================================
+
+class Gauge(Area):
+    CLASSID = MUIC_Gauge
+    # TODO
+
+#===============================================================================
+
+class Scale(Area):
+    CLASSID = MUIC_Scale
+    # TODO
+
+#===============================================================================
+
+class Colorfield(Area):
+    CLASSID = MUIC_Colorfield
+    # TODO
+
+#===============================================================================
 
 class Numeric(Area):
-    CLASSID = "Numeric.mui"
-    ATTRIBUTES = {
-        MUIA_Numeric_CheckAllSizes: ('CheckAllSizes', 'b', 'isg'),
-        MUIA_Numeric_Default:       ('Default'      , 'i', 'isg'),
-        MUIA_Numeric_Format:        ('Format'       , 's', 'isg'),
-        MUIA_Numeric_Max:           ('Max'          , 'i', 'isg'),
-        MUIA_Numeric_Min:           ('Min'          , 'i', 'isg'),
-        MUIA_Numeric_Reverse:       ('Reverse'      , 'b', 'isg'),
-        MUIA_Numeric_RevLeftRight:  ('RevLeftRight' , 'b', 'isg'),
-        MUIA_Numeric_RevUpDown:     ('RevUpDown'    , 'b', 'isg'),
-        MUIA_Numeric_Value:         ('Value'        , 'i', 'isg'),
-        }
+    CLASSID = MUIC_Numeric
 
+    CheckAllSizes = MAttribute(MUIA_Numeric_CheckAllSizes , 'isg', c_BOOL)
+    Default       = MAttribute(MUIA_Numeric_Default       , 'isg', c_LONG)
+    Format        = MAttribute(MUIA_Numeric_Format        , 'isg', c_STRPTR)
+    Max           = MAttribute(MUIA_Numeric_Max           , 'isg', c_LONG)
+    Min           = MAttribute(MUIA_Numeric_Min           , 'isg', c_LONG)
+    Reverse       = MAttribute(MUIA_Numeric_Reverse       , 'isg', c_BOOL)
+    RevLeftRight  = MAttribute(MUIA_Numeric_RevLeftRight  , 'isg', c_BOOL)
+    RevUpDown     = MAttribute(MUIA_Numeric_RevUpDown     , 'isg', c_BOOL)
+    Value         = MAttribute(MUIA_Numeric_Value         , 'isg', c_LONG)
+
+#===============================================================================
 
 class Knob(Numeric):
-    CLASSID = "Knob.mui"
+    CLASSID = MUIC_Knob
 
+#===============================================================================
 
 class Levelmeter(Numeric):
-    CLASSID = "Levelmeter.mui"
-    ATTRIBUTES = {
-        MUIA_Levelmeter_Label: ('Label', 's', 'isg'),
-        }
- 
+    CLASSID = MUIC_Levelmeter
+    # TODO
+
+#===============================================================================
+
+class Numericbutton(Numeric):
+    CLASSID = MUIC_Numericbutton
+
+#===============================================================================
 
 class Slider(Numeric):
-    CLASSID = "Slider.mui"
-    ATTRIBUTES = {
-        MUIA_Slider_Horiz: ('Horiz', 'b', 'isg'),
-        MUIA_Slider_Quiet: ('Quiet', 'b', 'i..'),
-        }
+    CLASSID = MUIC_Slider
 
+    Horiz = MAttribute(MUIA_Slider_Horiz, 'isg', c_BOOL)
+    Quiet = MAttribute(MUIA_Slider_Quiet, 'i..', c_BOOL)
+
+#===============================================================================
+
+class Prop(Slider):
+    CLASSID = MUIC_Prop
+    # TODO
+
+#===============================================================================
+
+class Frimagedisplay(Area):
+    CLASSID = MUIC_Frimagedisplay
+
+#===============================================================================
+
+class Framedisplay(Frimagedisplay):
+    CLASSID = MUIC_Framedisplay
+
+#===============================================================================
+
+class Imagedisplay(Frimagedisplay):
+    CLASSID = MUIC_Imagedisplay
+
+#===============================================================================
+
+class Popimage(Imagedisplay):
+    CLASSID = MUIC_Popimage
+
+#===============================================================================
+
+class Popframe(Framedisplay):
+    CLASSID = MUIC_Popframe
+
+#===============================================================================
+
+class Popfrimage(Frimagedisplay):
+    CLASSID = MUIC_Popfrimage
+
+#===============================================================================
+
+class Pendisplay(Area):
+    CLASSID = MUIC_Pendisplay
+    # TODO
+
+#===============================================================================
+
+class Poppen(Pendisplay):
+    CLASSID = MUIC_Poppen
+
+#===============================================================================
 
 class Group(Area):
     CLASSID = MUIC_Group
-    ATTRIBUTES = {
-        MUIA_Group_ActivePage:   ('ActivePage',   'i', 'isg'),
-        MUIA_Group_Child:        ('Child',        'M', 'i..'),
-        MUIA_Group_ChildList:    ('ChildList',    'p', '..g'),
-        MUIA_Group_Columns:      ('Columns',      'i', 'is.'),
-        MUIA_Group_Horiz:        ('Horiz',        'b', 'i..'),
-        MUIA_Group_HorizSpacing: ('HorizSpacing', 'i', 'isg'),
-        MUIA_Group_LayoutHook:   ('LayoutHook',   'p', 'i..'),
-        MUIA_Group_PageMode:     ('PageMode',     'b', 'i..'),
-        MUIA_Group_Rows:         ('Rows',         'i', 'is.'),
-        MUIA_Group_SameHeight:   ('SameHeight',   'b', 'i..'),
-        MUIA_Group_SameSize:     ('SameSize',     'b', 'i..'),
-        MUIA_Group_SameWidth:    ('SameWidth',    'b', 'i..'),
-        MUIA_Group_Spacing:      ('Spacing',      'i', 'is.'),
-        MUIA_Group_VertSpacing:  ('VertSpacing',  'i', 'isg'),
-        }
+
+    ActivePage   = MAttribute(MUIA_Group_ActivePage   , 'isg', c_LONG)
+    Child        = MAttribute(MUIA_Group_Child        , 'i..', c_pObject)
+    ChildList    = MAttribute(MUIA_Group_ChildList    , '..g', c_pList)
+    Columns      = MAttribute(MUIA_Group_Columns      , 'is.', c_LONG)
+    Horiz        = MAttribute(MUIA_Group_Horiz        , 'i..', c_BOOL)
+    HorizSpacing = MAttribute(MUIA_Group_HorizSpacing , 'isg', c_LONG)
+    LayoutHook   = MAttribute(MUIA_Group_LayoutHook   , 'i..', c_APTR)
+    PageMode     = MAttribute(MUIA_Group_PageMode     , 'i..', c_BOOL)
+    Rows         = MAttribute(MUIA_Group_Rows         , 'is.', c_LONG)
+    SameHeight   = MAttribute(MUIA_Group_SameHeight   , 'i..', c_BOOL)
+    SameSize     = MAttribute(MUIA_Group_SameSize     , 'i..', c_BOOL)
+    SameWidth    = MAttribute(MUIA_Group_SameWidth    , 'i..', c_BOOL)
+    Spacing      = MAttribute(MUIA_Group_Spacing      , 'is.', c_LONG)
+    VertSpacing  = MAttribute(MUIA_Group_VertSpacing  , 'isg', c_LONG)
+
+    InitChange   = MMethod(MUIM_Group_InitChange)
+    ExitChange   = MMethod(MUIM_Group_ExitChange)
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
@@ -1029,25 +1539,23 @@ class Group(Area):
             else:
                 self.AddChild(child)
 
-    def __add_child(self, child, lock):
-        if child not in self._children:
-            self._add(child, lock)
-            self._children.append(child)
-
-    def __rem_child(self, child, lock):
-        if child in self._children:
-            self._rem(child, lock)
-            self._children.remove(child)
-            
     def AddChild(self, *children, **kwds):
         lock = kwds.get('lock', False)
-        for o in children:
-            self.__add_child(o, lock)
+        if lock: self.InitChange()
+        try:
+            for o in children:
+                super(Group, self).AddChild(o)
+        finally:
+            if lock: self.ExitChange()
 
     def RemChild(self, *children, **kwds):
         lock = kwds.get('lock', False)
-        for o in children:
-            self.__rem_child(o, lock)
+        if lock: self.InitChange()
+        try:
+            for o in children:
+                super(Group, self).RemChild(o)
+        finally:
+            if lock: self.ExitChange()
 
     # Factory class methods
 
@@ -1081,17 +1589,96 @@ VGroup = Group.VGroup
 ColGroup = Group.ColGroup
 RowGroup = Group.RowGroup
 PageGroup = Group.PageGroup
- 
+
+#===============================================================================
+
+class List(Group):
+    CLASSID = MUIC_List
+    # TODO
+
+#===============================================================================
+
+class Floattext(List):
+    CLASSID = MUIC_Floattext
+    # TODO
+
+#===============================================================================
+class Volumelist(List):
+    CLASSID = MUIC_Volumelist
+    # TODO
+
+#===============================================================================
+
+class Dirlist(List):
+    CLASSID = MUIC_Dirlist
+    # TODO
+
+#===============================================================================
+
+class Selectgroup(Group):
+    CLASSID = MUIC_Selectgroup
+
+#===============================================================================
+
+class Argstring(Group):
+    CLASSID = MUIC_Argstring
+    # TODO
+
+#===============================================================================
+
+class Menudisplay(Group):
+    CLASSID = MUIC_Menudisplay
+
+#===============================================================================
+
+class Mccprefs(Group):
+    CLASSID = MUIC_Mccprefs
+    # TODO
+
+#===============================================================================
+
+class Register(Group):
+    CLASSID = MUIC_Register
+    # TODO
+
+#===============================================================================
+
+class Backgroundadjust(Area):
+    CLASSID = MUIC_Backgroundadjust
+    # TODO
+
+#===============================================================================
+
+class Penadjust(Backgroundadjust):
+    CLASSID = MUIC_Penadjust
+    # TODO
+
+#===============================================================================
+
+class Settingsgroup(Mccprefs):
+    CLASSID = MUIC_Settingsgroup
+    # TODO
+
+#===============================================================================
+
+class Settings(Group):
+    CLASSID = MUIC_Settings
+
+#===============================================================================
+
+class Frameadjust(Group):
+    CLASSID = MUIC_Frameadjust
+
+#===============================================================================
 
 class Virtgroup(Group):
     CLASSID = MUIC_Virtgroup
-    ATTRIBUTES = {
-        MUIA_Virtgroup_Height: ('Height', 'i', '..g'),
-        MUIA_Virtgroup_Input:  ('Input',  'b', 'i..'),
-        MUIA_Virtgroup_Left:   ('Left',   'i', 'isg'),
-        MUIA_Virtgroup_Top:    ('Top',    'i', 'isg'),
-        MUIA_Virtgroup_Width:  ('Width',  'i', '..g'),
-    }
+
+    Height = MAttribute(MUIA_Virtgroup_Height , '..g' , c_LONG)
+    Input  = MAttribute(MUIA_Virtgroup_Input  , 'i..' , c_BOOL)
+    Left   = MAttribute(MUIA_Virtgroup_Left   , 'isg' , c_LONG)
+    Top    = MAttribute(MUIA_Virtgroup_Top    , 'isg' , c_LONG)
+    Width  = MAttribute(MUIA_Virtgroup_Width  , '..g' , c_LONG)
 
     # Factory class methods
 
@@ -1126,207 +1713,191 @@ ColGroupV = Virtgroup.ColGroup
 RowGroupV = Virtgroup.RowGroup
 PageGroupV = Virtgroup.PageGroup
 
+#===============================================================================
+
+class Scrollgroup(Group):
+    CLASSID = MUIC_Scrollgroup
+
+#===============================================================================
+
+class Scrollbar(Group):
+    CLASSID = MUIC_Scrollbar
+    # TODO
+
+#===============================================================================
+
+class Listview(Group):
+    CLASSID = MUIC_Listview
+    # TODO
+
+#===============================================================================
+
+class Radio(Group):
+    CLASSID = MUIC_Radio
+    # TODO
+
+#===============================================================================
 
 class Cycle(Group):
     CLASSID = MUIC_Cycle
-    ATTRIBUTES = {
-        MUIA_Cycle_Active:  ('Active', 'i', 'isg'),
-        MUIA_Cycle_Entries: ('Entries', '0s', 'i..',
-                             lambda x: ArrayOfString(x),
-                             None),
-        }
+
+    Active  = MAttribute(MUIA_Cycle_Active  , 'isg', c_LONG)
+    Entries = MAttribute(MUIA_Cycle_Entries , 'i..', c_pSTRPTR)
 
     def __init__(self, Entries, **kwds):
         super(Cycle, self).__init__(Entries=Entries, **kwds)
 
+#===============================================================================
 
 class Coloradjust(Group):
     CLASSID = MUIC_Coloradjust
-    ATTRIBUTES = {
-        MUIA_Coloradjust_Blue:   ('Blue',   'I', 'isg'),
-        MUIA_Coloradjust_Green:  ('Green',  'I', 'isg'),
-        MUIA_Coloradjust_ModeID: ('ModeID', 'I', 'isg'),
-        MUIA_Coloradjust_Red:    ('Red',    'I', 'isg'),
-        MUIA_Coloradjust_RGB:    ('RGB',    '3I', 'isg',
-                                  lambda x: array.array('L', x),
-                                  lambda x: array.array('L', str(x)).tolist()),
-        }
+    
+    Blue   = MAttribute(MUIA_Coloradjust_Blue   , 'isg', c_ULONG)
+    Green  = MAttribute(MUIA_Coloradjust_Green  , 'isg', c_ULONG)
+    ModeID = MAttribute(MUIA_Coloradjust_ModeID , 'isg', c_ULONG)
+    Red    = MAttribute(MUIA_Coloradjust_Red    , 'isg', c_ULONG)
+    RGB    = MAttribute(MUIA_Coloradjust_RGB    , 'isg', c_ULONG.mkarray(3))
 
+#===============================================================================
+
+class Palette(Group):
+    CLASSID = MUIC_Palette
+    # TODO
+
+#===============================================================================
 
 class Popstring(Group):
     CLASSID = MUIC_Popstring
-    ATTRIBUTES = {
-        MUIA_Popstring_Button:    ('Button', 'M', 'i.g'),
-        MUIA_Popstring_CloseHook: ('CloseHook', 'p', 'isg'),
-        MUIA_Popstring_OpenHook:  ('OpenHook', 'p', 'isg'),
-        MUIA_Popstring_String:    ('String', 'M', 'i.g'),
-        MUIA_Popstring_Toggle:    ('Toggle', 'b', 'isg'),
-        }
+    # TODO
 
+#===============================================================================
+
+class Pubscreenadjust(Group):
+    CLASSID = MUIC_Pubscreenadjust
+
+#===============================================================================
+
+class Pubscreenpanel(Group):
+    CLASSID = MUIC_Pubscreenpanel
+
+#===============================================================================
+
+class Pubscreenlist(Group):
+    CLASSID = MUIC_Pubscreenlist
+    # TODO
+
+#===============================================================================
 
 class Popobject(Popstring):
     CLASSID = MUIC_Popobject
-    ATTRIBUTES = {}
+    # TODO
 
+#===============================================================================
 
-class List(Group):
-    CLASSID = MUIC_List
-    ATTRIBUTES = {
-        MUIA_List_Active:       ('Active',      'i', 'isg'),
-        MUIA_List_DoubleClick:  ('DoubleClick', 'b', 'i.g'),
-    }
+class Poplist(Popobject):
+    CLASSID = MUIC_Poplist
+    # TODO
 
+#===============================================================================
 
-class DirList(List):
-    CLASSID = MUIC_Dirlist
-    ATTRIBUTES = {
-        MUIA_Dirlist_AcceptPattern: ('AcceptPattern',   's', 'is.'),
-        MUIA_Dirlist_Directory:     ('Directory',       's', 'isg'),
-        MUIA_Dirlist_DrawersOnly:   ('DrawersOnly',     'b', 'is.'),
-        MUIA_Dirlist_ExAllType:     ('ExAllType',       'I', 'i.g'),
-        MUIA_Dirlist_FilesOnly:     ('FilesOnly',       'b', 'is.'),
-        MUIA_Dirlist_FilterDrawers: ('FilterDrawers',   'b', 'is.'),
-        #MUIA_Dirlist_FilterHook:    ('FilterHook',      'p', 'is.'),
-        MUIA_Dirlist_MultiSelDirs:  ('MultiSelDirs',    'b', 'is.'),
-        MUIA_Dirlist_NumBytes:      ('NumBytes',        'i', '..g'),
-        MUIA_Dirlist_NumDrawers:    ('NumDrawers',      'i', '..g'),
-        MUIA_Dirlist_NumFiles:      ('NumFiles',        'i', '..g'),
-        MUIA_Dirlist_Path:          ('Path',            's', '..g'),
-        MUIA_Dirlist_RejectIcons:   ('RejectIcons',     'b', 'is.'),
-        MUIA_Dirlist_RejectPattern: ('RejectPattern',   's', 'is.'),
-        MUIA_Dirlist_SortDirs:      ('SortDirs',        'i', 'is.'),
-        MUIA_Dirlist_SortHighLow:   ('SortHighLow',     'b', 'is.'),
-        MUIA_Dirlist_SortType:      ('SortType',        'i', 'is.'),
-        MUIA_Dirlist_Status:        ('Status',          'i', '..g'),
-    }
+class Popscreen(Popobject):
+    CLASSID = MUIC_Popscreen
 
+#===============================================================================
 
-#################################################################################
+class Popasl(Popstring):
+    CLASSID = MUIC_Popasl
+    # TODO
 
+#===============================================================================
 
-if __name__ == "__main__":
-    # Unit testing section
+class Semaphore(rootclass):
+    CLASSID = MUIC_Semaphore
+    # TODO
 
-    # instance
-    print "\n=> a = Notify(HelpNode='An object') <="
-    a = Notify(HelpNode='An object')
-    print a
+#===============================================================================
 
-    print "\n=> b = Text(Contents='test') <="
-    b = Text(Contents='test')
-    print b
+class Applist(Semaphore):
+    CLASSID = MUIC_Applist
 
-    # Get
-    print "\n=> a.Get(MUIA_Version) <="
-    print a.Get(MUIA_Version)
-    
-    print "\n=> a.Get('Version') <="
-    print a.Get('Version')
+#===============================================================================
 
-    print "\n=> a.Get(-1) <="
-    try:
-        print a.Get(-1)
-    except ValueError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+class Cclist(Semaphore):
+    CLASSID = MUIC_Cclist
 
-    print "\n=> a.Get('') <="
-    try:
-        print a.Get('')
-    except ValueError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+#===============================================================================
 
-    print "\n=> a.Get('Contents') <="
-    try:
-        print a.Get('Contents')
-    except ValueError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+class Dataspace(Semaphore):
+    CLASSID = MUIC_Dataspace
+    # TODO
 
-    # Get - indirect
-    print "\n=> b.Get(MUIA_Version) <="
-    print b.Get(MUIA_Version)
-    
-    print "\n=> b.Get('Version') <="
-    print b.Get('Version')
+#===============================================================================
 
-    print "\n=> b.Get('Contents') <="
-    print b.Get('Contents')
+class Configdata(Dataspace):
+    CLASSID = MUIC_Configdata
 
-    # Set
-    print "\n=> a.Set(MUIA_ObjectID, 42) <="
-    a.Set(MUIA_ObjectID, 42)
-    
-    print "\n=> a.Set('ObjectID', 33) <="
-    a.Set('ObjectID', 33)
+#===============================================================================
 
-    print "\n=> a.Set(MUIA_HelpNode, None) <="
-    print a.Set(MUIA_HelpNode, None) # shall not work if _muimaster exists
+class Screenspace(Dataspace):
+    CLASSID = MUIC_Screenspace
 
-    print "\n=> a.Set('', 0) <="
-    try:
-        a.Set('', 0)
-    except ValueError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+#===============================================================================
 
-    print "\n=> a.Set(MUIA_Parent, None) <="
-    try:
-        a.Set(MUIA_Parent, None)
-    except SyntaxError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+class Rootgrp(Group):
+    CLASSID = MUIC_Rootgrp
 
-    # Keep
-    print "\n=> a.Set(MUIA_ObjectID, 42) <="
-    a.Set(MUIA_ObjectID, 42)
+#===============================================================================
 
-    # Property
-    assert type(Window.Open) != property
-    assert type(Text.Version) == property
-    
-    print "\n=> b.Version <="
-    print b.Version
+class Popmenu(Notify):
+    CLASSID = MUIC_Popmenu
 
-    # Del
-    print "\n=> del a, b <="
-    del a
+#===============================================================================
 
-    # DoMethod
-    print "\n=> a = Application() <="
-    a = Application()
-    print "\n=> a.Quit() <="
-    a.Quit()
+class Panel(Group):
+    CLASSID = MUIC_Panel
 
-    # Test factory
-    print "\n=> Rectangle.HCenter(b) <="
-    print Rectangle.HCenter(b)
-    
-    print "\n=> Text.Button('Ok') <="
-    print Text.Button('Ok')
+#===============================================================================
 
-    # Test Window KillApp methode
-    print "\n=> w = Window().KillApp() <="
-    w = Window("Test")
-    
-    print "\n=> w.KillApp() <="
-    try:
-        w.KillApp()
-    except RuntimeError:
-        print "[OK]"
-    else:
-        raise RuntimeError()
+class Filepanel(Panel):
+    CLASSID = MUIC_Panel
 
-    # Following tests need a valid _muimaster module
-    if globals().has_key('BUILD_DATE'):
-        print "\n=> a.AddWindow(w) <="
-        a.AddWindow(w)
-    
-        print "\n=> w.KillApp() <="
-        w.KillApp()
+#===============================================================================
+
+class Fontpanel(Panel):
+    CLASSID = MUIC_Fontpanel
+
+#===============================================================================
+
+class Screenmodepanel(Panel):
+    CLASSID = MUIC_Screenmodepanel
+
+#===============================================================================
+
+class Keyadjust(Group):
+    CLASSID = MUIC_Keyadjust
+    # TODO
+
+#===============================================================================
+
+class Imagebrowser(Group):
+    CLASSID = MUIC_Imagebrowser
+
+#===============================================================================
+
+class Colorring(Group):
+    CLASSID = MUIC_Colorring
+
+#===============================================================================
+
+class Process(Semaphore):
+    CLASSID = MUIC_Process
+    # TODO
+
+#===============================================================================
+
+class Aboutpage(Mccprefs):
+    CLASSID = MUIC_Aboutpage
+
+################################################################################
+#################################  END OF FILE  ################################
+################################################################################

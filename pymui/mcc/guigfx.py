@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Area
+from pymui import Area, c_ULONG, c_APTR, c_STRPTR, MAttribute
 
 MUIC_Guigfx = "Guigfx.mcc"
 NEWIMAGE_TAGBASE = 0xfec20000
@@ -84,14 +84,13 @@ MUIV_Guigfx_CurrentPalette = (-5)   # Current screen's palette.
 
 class Guigfx(Area):
     CLASSID = MUIC_Guigfx
-    ATTRIBUTES = {
-        MUIA_Guigfx_Picture:            ('Picture',          'p', 'isg'),
-        MUIA_Guigfx_FileName:           ('FileName',         's', 'is.'),
-        MUIA_Guigfx_BitmapInfo:         ('BitmapInfo',       'p', 'is.'),
-        MUIA_Guigfx_ImageInfo:          ('ImageInfo',        'p', 'is.'),
-        MUIA_Guigfx_Transparency:       ('Transparency',     'I', 'isg'),
-        MUIA_Guigfx_TransparentColor:   ('TransparentColor', 'I', 'isg'),
-        MUIA_Guigfx_Quality:            ('Quality',          'I', 'isg'),
-        MUIA_Guigfx_ScaleMode:          ('ScaleMode',        'I', 'isg'),
-        MUIA_Guigfx_ShowRect:           ('ShowRect',         'p', 'isg'),
-        }
+
+    Picture          = MAttribute(MUIA_Guigfx_Picture          , 'isg', c_APTR)
+    FileName         = MAttribute(MUIA_Guigfx_FileName         , 'is.', c_STRPTR)
+    BitmapInfo       = MAttribute(MUIA_Guigfx_BitmapInfo       , 'is.', c_APTR)
+    ImageInfo        = MAttribute(MUIA_Guigfx_ImageInfo        , 'is.', c_APTR)
+    Transparency     = MAttribute(MUIA_Guigfx_Transparency     , 'isg', c_ULONG)
+    TransparentColor = MAttribute(MUIA_Guigfx_TransparentColor , 'isg', c_ULONG)
+    Quality          = MAttribute(MUIA_Guigfx_Quality          , 'isg', c_ULONG)
+    ScaleMode        = MAttribute(MUIA_Guigfx_ScaleMode        , 'isg', c_ULONG)
+    ShowRect         = MAttribute(MUIA_Guigfx_ShowRect         , 'isg', c_APTR)

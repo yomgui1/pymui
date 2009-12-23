@@ -23,23 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Area, c_LONG, c_BOOL, MAttribute
+from pymui import *
+from sys import getrefcount as rc
 
-MUIC_Busy            = "Busy.mcc"
-
-MUIM_Busy_Move       = 0x80020001
-
-MUIA_Busy_ShowHideIH = 0x800200a9
-MUIA_Busy_Speed      = 0x80020049
-
-MUIV_Busy_Speed_Off  = 0
-MUIV_Busy_Speed_User = -1
-
-class Busy(Area):
-    CLASSID = MUIC_Busy
-
-    ShowHideIH = MAttribute(MUIA_Busy_ShowHideIH , 'i..', c_BOOL)
-    Speed      = MAttribute(MUIA_Busy_Speed      , 'isg', c_LONG)
-
-    def __init__(self, Speed=MUIV_Busy_Speed_User, **kwds):
-        super(Busy, self).__init__(Speed=Speed, **kwds)
+o = Cycle(['toto', 'titi'])
