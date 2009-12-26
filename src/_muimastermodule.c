@@ -99,14 +99,6 @@ extern void dprintf(char*fmt, ...);
 #define PYTHON_BASE_NAME PythonBase
 #endif /* !PYTHON_BASE_NAME */
 
-#define PyObject_CallMethod(__p0, __p1, ...) \
-    ({ \
-        PyObject * __t__p0 = __p0;\
-        char * __t__p1 = __p1;\
-        long __base = (long)(PYTHON_BASE_NAME);\
-        (((PyObject * (*)(PyObject *, char *, char *, ...))*(void**)(__base - 2170))(__t__p0, __t__p1, __VA_ARGS__,({__asm volatile("mr 12,%0": :"r"(__base):"r12");0L;})));\
-    })
-
 
 /*
 ** Private Macros and Definitions
@@ -366,6 +358,8 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
                attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
 
         res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, value, ~value); /* NR */
+
+        DPRINT("PyObject_CallMethod() resulted  with value %p (err=%d)\n", res, PyErr_Occurred());
         if (NULL != PyErr_Occurred())
             PyErr_Print();
 
@@ -687,7 +681,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     }
 
     /* Make a copy of data */
-    ehn_obj->imsg = *msg->imsg;
+    CopyMem(msg->imsg, &ehn_obj->imsg, sizeof(ehn_obj->imsg));
     ehn_obj->muikey = msg->muikey;
     ehn_obj->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
     ehn_obj->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
@@ -703,7 +697,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
             return 0;
 
         while (NULL != (tag = NextTagItem(&tags))) {
-            PyObject *item = Py_BuildValue("(II)", tag->ti_Tag, tag->ti_Data); /* NR */
+            PyObject *item = Py_BuildValue("II", tag->ti_Tag, tag->ti_Data); /* NR */
 
             if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
                 Py_XDECREF(item);
@@ -724,7 +718,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
             Py_DECREF(dict);
             return 0;
         }
-        
+
         ehn_obj->TabletTagsList = dict;
         ehn_obj->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
     } else
@@ -746,6 +740,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     Py_DECREF(pyo);
     Py_DECREF(ehn_obj);
 
+    DPRINT("result: %u\n", result);
     return result;
 }
 //-

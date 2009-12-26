@@ -91,8 +91,9 @@ class AsCInteger(PyMUICType):
     
     @classmethod
     def tomui(cl, o):
-        if not hasattr(o, 'value'): o = cl(o)
-        return None, o.value
+        if not hasattr(o, 'value'):
+            return o, cl(o) # return keep value shall be the source object and not the converted here!
+        return o, o.value
 
     @classmethod
     def asobj(cl, i):
@@ -168,6 +169,25 @@ class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
 
+# Only used for array
+class c_DOUBLE(ctypes.c_double, AsCInteger):
+    def __long__(self):
+        raise SystemError("c_DOUBLE can't be used as C type in PyMUI")
+
+class c_pDOUBLE(ctypes.POINTER(ctypes.c_double), AsCPointer):
+    keep = False
+    _type_ = ctypes.c_double
+
+    def __new__(cl, x):
+        if not isinstance(x, cl._type_):
+            x = cl._type_(x)
+        return super(c_pDOUBLE, cl).__new__(cl, x)
+
+    def __init__(self, x):
+        if not isinstance(x, self._type_):
+            x = self._type_(x)
+        super(c_pDOUBLE, self).__init__(x)
+
 class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
     _type_ = c_STRPTR # XXX: bad! how to change that?
 
@@ -189,7 +209,7 @@ class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
     @classmethod
     def tomui(cl, o):
         if not isinstance(o, cl): o = cl(o)
-        return o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
+        return o, o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
 
 class c_pObject(c_APTR):
     keep = True
@@ -262,7 +282,7 @@ class MAttribute(property):
         if 'i' in isg:
             def init(obj, v):
                 v, x = ctype.tomui(v)
-                if keep and v is not None: obj._keep_dict[id] = v
+                if keep: obj._keep_dict[id] = v
                 return long(x)
         else:
             def init(v):
@@ -274,7 +294,7 @@ class MAttribute(property):
             def _setter(obj, v):
                 v, x = ctype.tomui(v)
                 obj._set(id, x)
-                if keep and v is not None: obj._keep_dict[id] = v
+                if keep: obj._keep_dict[id] = v
         else:
             _setter = None
 
@@ -895,8 +915,9 @@ class Window(Notify):
         if self._children:
             self._children.pop()._parent = None
             self._children.clear()
-        o._parent = self
-        self._children.add(o)
+        if o is not None:
+            o._parent = self
+            self._children.add(o)
 
     def __checkForApp(self, attr, o):
         if not self.ApplicationObject:
