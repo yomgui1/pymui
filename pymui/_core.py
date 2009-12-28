@@ -162,9 +162,17 @@ class c_SHORT(ctypes.c_short, AsCInteger): pass
 class c_USHORT(ctypes.c_ushort, AsCInteger): pass
 class c_LONG(ctypes.c_long, AsCInteger): pass
 class c_ULONG(ctypes.c_ulong, AsCInteger): pass
-class c_APTR(ctypes.c_void_p, AsCInteger): pass # yes! as we use the 'value' method and we don't keep reference.
 class c_STRPTR(AsCString): pass
 class c_BOOL(c_ULONG): pass
+
+class c_APTR(ctypes.c_void_p, AsCInteger):
+    keep = False
+
+    def __long__(self):
+        if self.value is None:
+            return 0
+        return self.value
+
 class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
@@ -280,15 +288,13 @@ class MAttribute(property):
         self.__keep = keep
 
         if 'i' in isg:
-            def init(obj, v):
+            def _init(obj, v):
                 v, x = ctype.tomui(v)
                 if keep: obj._keep_dict[id] = v
                 return long(x)
         else:
-            def init(v):
+            def _init(v):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
-
-        self.init = init
 
         if 's' in isg:
             def _setter(obj, v):
@@ -310,15 +316,28 @@ class MAttribute(property):
             def setter(obj, v):
                 _setter(obj, preSet(obj, self, v))
                 postSet(obj, self, v)
+            def init(obj, v):
+                x = _init(obj, preSet(obj, self, v))
+                postSet(obj, self, v)
+                return x
         elif preSet:
             def setter(obj, v):
                 _setter(obj, preSet(obj, self, v))
+            def init(obj, v):
+                return _init(obj, preSet(obj, self, v))
         elif postSet:
             def setter(obj, v):
                 _setter(obj, v)
                 postSet(obj, self, v)
+            def init(obj, v):
+                x = _init(obj, v)
+                postSet(obj, self, v)
+                return x
         else:
             setter = _setter
+            init = _init
+
+        self.init = init
 
         preGet = kwds.get('preGet')
         postGet = kwds.get('postGet')
@@ -637,22 +656,13 @@ class rootclass(PyMUIObject, BOOPSIMixed):
         self._create(self._mclassid, ctypes.addressof(init_tags), self.__class__.isMCC)
 
     def AddChild(self, o):
-        if getattr(o, '_parent', None) != None:
-            raise RuntimeError("already attached")
         self._add(o)
-        self._children.add(o) # incref the child object to not lost it during next GC
-
-        # incref also the parent object to be sure that the MUI object remains valid
-        # if the parent is disposed.
-        # When the child will be deallocated, the PyMUI is decref this parent.
-        o._parent = self
+        self._cadd(o) # incref the child object to not lost it during next GC
 
     def RemChild(self, o):
-        if o not in self._children:
-            raise RuntimeError("not attached yet")
-        self._rem(o)
-        self._children.remove(o)
-        self._parent = None
+        if self._cin(o):
+            self._rem(o)
+            self._crem(o)
 
 #===============================================================================
 
@@ -717,32 +727,28 @@ class Family(Notify):
         assert isinstance(o, (Family, c_pObject))
         x = self._do1(MUIM_Family_AddHead, long(c_pObject(o)))
         if isinstance(o, Family):
-            self._children.add(o)
-            o._parent = self
+            self._cadd(o)
         return x
 
     def AddTail(self, o):
         assert isinstance(o, (Family, c_pObject))
         x = self._do1(MUIM_Family_AddTail, long(c_pObject(o)))
         if isinstance(o, Family):
-            self._children.add(o)
-            o._parent = self
+            self._cadd(o)
         return x
 
     def Insert(self, o, p):
-        assert p in self._children
+        assert self._cin(p)
         assert isinstance(o, (Family, c_pObject))
         x = self._do(MUIM_Family_Insert, (long(c_pObject(o)), long(c_pObject(p))))
         if isinstance(o, Family):
-            self._children.add(o)
-            o._parent = self
+            self._cadd(o)
         return x
 
     def Remove(self, o):
-        assert o in self._children
+        assert self._cin(o)
         x = self._do1(MUIM_Family_Remove, long(c_pObject(o)))
-        self._children.remove(o)
-        o._parent = None
+        self._crem(o)
         return x
 
     def Sort(self, *args):
@@ -753,10 +759,9 @@ class Family(Notify):
     def Transfer(self, f):
         if isinstance(f, Family):
             x = self._do1(MUIM_Family_Transfer, long(c_pObject(o)))
-            f._children.update(self._children)
             for o in self._children:
-                o._parent = f
-            del self._children
+                f._cadd(o)
+            self._cclear
         elif isinstance(f, c_pObject):
             x = self._do1(MUIM_Family_Transfer, long(o))
         else:
@@ -834,6 +839,9 @@ class Menuitem(Family):
 class Application(Notify):
     CLASSID = MUIC_Application
 
+    def __postSetMenuStrip(self, attr, o):
+        self._cadd(o)
+
     Active         = MAttribute(MUIA_Application_Active         , 'isg', c_BOOL)
     Author         = MAttribute(MUIA_Application_Author         , 'i.g', c_STRPTR)
     Base           = MAttribute(MUIA_Application_Base           , 'i.g', c_STRPTR)
@@ -852,7 +860,7 @@ class Application(Notify):
     Iconified      = MAttribute(MUIA_Application_Iconified      , '.sg', c_BOOL)
     MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
-    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_pObject)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_pObject, postSet=__postSetMenuStrip)
     RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_APTR)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
     RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
@@ -911,13 +919,12 @@ class Application(Notify):
 class Window(Notify):
     CLASSID = MUIC_Window
     
+    def __preSetRootObject(self, attr, o):
+        assert o is not None
+        return o
+
     def __postSetRootObject(self, attr, o):
-        if self._children:
-            self._children.pop()._parent = None
-            self._children.clear()
-        if o is not None:
-            o._parent = self
-            self._children.add(o)
+        self._cadd(o)
 
     def __checkForApp(self, attr, o):
         if not self.ApplicationObject:
@@ -955,7 +962,7 @@ class Window(Notify):
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
     RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_pObject)
     RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_pObject,
-                                         postSet=__postSetRootObject)
+                                         preSet=__preSetRootObject, postSet=__postSetRootObject)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
@@ -1105,9 +1112,6 @@ class Window(Notify):
         autoclose = kwds.pop('CloseOnReq', False)
 
         super(Window, self).__init__(**kwds)
-        ro = self.RootObject
-        self._children.add(ro)
-        ro._parent = self
 
         if autoclose:
             self.Notify('CloseRequest', True, lambda e: self.CloseWindow())

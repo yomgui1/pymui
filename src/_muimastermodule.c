@@ -166,6 +166,9 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
     #define SAVEDS __saveds
 #endif
 
+#define CONF_MUI    (1<<0)
+#define CONF_ZOMBIE (1<<1)
+
 #define PyCPointer_ASVOIDPTR(o) (((PyCPointer *)(o))->ptr)
 #define PyCPointer_Check(op) PyObject_TypeCheck(op, &PyCPointer_Type)
 #define PyCPointer_CheckExact(op) ((op)->ob_type == &PyCPointer_Type)
@@ -177,9 +180,21 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyMUIObject_CheckExact(op) ((op)->ob_type == &PyMUIObject_Type)
 
 #define PyBOOPSIObject_GET_OBJECT(o) (((PyBOOPSIObject *)(o))->node->n_Object)
+#define PyBOOPSIObject_SET_OBJECT(o, x) (((PyBOOPSIObject *)(o))->node->n_Object = (x))
+#define PyBOOPSIObject_ISMUI(o) (CONF_MUI == (((PyBOOPSIObject *)(o))->node->n_Flags & CONF_MUI))
+#define PyMUIObject_GET_MCC(o) (((PyBOOPSIObject *)(o))->node->n_MCC)
 
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
+
+/* !! Folowing code works only if 'o' is a valid readable memory pointer (use TypeOfMem) !! */
+#define PyBOOPSIObject_CheckHash(o) ({ \
+    PyBOOPSIObject *_o = (PyBOOPSIObject *)(o); \
+    _o->hash == (((ULONG)_o) ^ ((ULONG)_o->node)); })
+
+#define PyBOOPSIObject_IsValid(op) ({ \
+    PyBOOPSIObject *_op = (PyBOOPSIObject *)(op); \
+    (TypeOfMem(_op) != 0) && PyBOOPSIObject_CheckHash(_op); })
 
 
 /*
@@ -198,9 +213,6 @@ typedef struct CreatedObjectNode_STRUCT {
     struct MUI_CustomClass * n_MCC;
 } CreatedObjectNode;
 
-#define CONF_MUI    (1<<0)
-#define CONF_ZOMBIE (1<<1)
-
 typedef struct CreatedMCCNode_STRUCT {
     struct MinNode           n_Node;
     struct MUI_CustomClass * n_MCC;
@@ -215,6 +227,12 @@ typedef struct PyRasterObject_STRUCT {
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
 
+    ULONG               hash;   /* As I use MUI UserData to link a MUI object to a Python object,
+                                 * I check this value to be sure that the returned UserData value
+                                 * is really a PyMUI object. If this UserData value is a valid memory
+                                 * location (checked by TypeOfMem) and if this hash code is correct.
+                                 * the UserData represents a PyMUI object.
+                                 */
     CreatedObjectNode * node;    /* Allocated structure because the Python object
                                   * may have been deallocated when the BOOPSI garbadge process is run.
                                   */
@@ -222,7 +240,14 @@ typedef struct PyBOOPSIObject_STRUCT {
 
 typedef struct PyMUIObject_STRUCT {
     PyBOOPSIObject           base;
-    PyObject *               children;
+    PyObject *               children; /* List of children BOOPSI objects attached to this MUI object.
+                                        * this list has the special purpose to be used when the MUI object is destroyed.
+                                        * At this time children in this list are forced to be destroyed (only at the BOOPSI side,
+                                        * letting the Python side with a dead objet).
+                                        * This is due to the fact that children members of a MUI object are always deallocated
+                                        * automatically by MUI when the parent is deallocated.
+                                        * This code doesn't put or remove children byitself, the user is responsible to handle that.
+                                        */
     PyObject *               parent;
     PyRasterObject *         raster; /* cached value, /!\ not always valid */
 } PyMUIObject;
@@ -230,8 +255,10 @@ typedef struct PyMUIObject_STRUCT {
 typedef struct PyEventHandlerObject_STRUCT {
     PyObject_HEAD         
 
-    struct MUI_EventHandlerNode * handler;
-    PyObject *                    win_pyo;
+    PyObject *                    self; /* used to found the Python object in mHandleEvent() */
+    struct MUI_EventHandlerNode   handler;
+    PyObject *                    window;
+    PyObject *                    target;
     PyObject *                    TabletTagsList; /* a dict of tablet tags {Tag: Data} */
     LONG                          muikey; /* copied from MUIP_HandleEvent msg */
     struct IntuiMessage           imsg;   /* copied from MUIP_HandleEvent->imsg */
@@ -241,9 +268,9 @@ typedef struct PyEventHandlerObject_STRUCT {
 } PyEventHandlerObject;
 
 typedef struct MCCData_STRUCT {
-    PyObject *  PythonObject;
-    BOOL        Clip;
-    APTR        ClipHandle;
+    PyObject *          PythonObject;
+    BOOL                Clip;
+    APTR                ClipHandle;
 } MCCData;
 
 typedef struct PyCPointer_STRUCT {
@@ -287,6 +314,89 @@ for more information on calls.");
 ** Private Functions
 */
 
+//+ PyMUIObject_ClearChildren
+static void
+PyMUIObject_ClearChildren(PyMUIObject *self)
+{
+    PyObject *iter;
+
+    if (NULL == self->children)
+        return;
+
+    DPRINT("self: %p '%s'\n", self, OBJ_TNAME(self));
+
+    /* The MUI object will be destroyed and MUI will dispose children automatically.
+     * So we're going to unlink the MUI side of all children Python objects before.
+     */
+
+    iter = PyObject_GetIter(self->children);
+    if (NULL != iter) {
+        PyObject *child;
+
+        while (NULL != (child = PyIter_Next(iter))) /* NR */ {
+            /* As the list is not publicly exposed, all objects are normally PyBOOPSIObject */
+            if (PyBOOPSIObject_ISMUI(child)) {
+                Object *mo;
+
+                PyMUIObject_ClearChildren((PyMUIObject *)child);
+
+                mo = PyBOOPSIObject_GET_OBJECT(child);
+                if (NULL != mo) {
+                    struct MUI_CustomClass *mcc = PyMUIObject_GET_MCC(child);
+
+                    muiUserData(mo) = 0;
+                    if (NULL != mcc)
+                        ((MCCData *)INST_DATA(mcc->mcc_Class, mo))->PythonObject = NULL;
+                }
+            }
+
+            PyBOOPSIObject_SET_OBJECT(child, NULL);
+            REMOVE(((PyBOOPSIObject *)child)->node);
+
+            Py_DECREF(child);
+        }
+
+        Py_DECREF(iter);
+    }
+
+    PyErr_Clear();
+    PySet_Clear(self->children);
+
+    DPRINT("self: %p '%s' [done]\n", self, OBJ_TNAME(self));
+}
+//-
+//+ Generic_DisposeObject
+static VOID
+Generic_DisposeObject(PyBOOPSIObject *self)
+{
+    Object *obj = PyBOOPSIObject_GET_OBJECT(self);
+
+    /* Note #1: possible issue here if the MUI object has been referenced outside of this module.
+     * It's to the user to take care of this!
+     *
+     * Note #2: abitrary Python code may be called during the disposing!
+     */
+
+    if (NULL != obj) {
+        if (PyBOOPSIObject_ISMUI(self))
+            PyMUIObject_ClearChildren((PyMUIObject *)self);
+
+        /* Due to the Note #2 upper, we unlink the BOOPSI side now */
+        PyBOOPSIObject_SET_OBJECT(self, NULL);
+        free(REMOVE(self->node));
+
+        if (PyBOOPSIObject_ISMUI(self)) {
+            DPRINT("Before MUI_DisposeObject(%p)\n", obj);
+            MUI_DisposeObject(obj);
+            DPRINT("After MUI_DisposeObject(%p)\n", obj);
+        } else {
+            DPRINT("before DisposeObject(%p)\n", obj);
+            DisposeObject(obj);
+            DPRINT("after DisposeObject(%p)\n", obj);
+        }
+    }
+}
+//-
 //+ PyBOOPSIObject_GetObject
 static inline Object *
 PyBOOPSIObject_GetObject(PyObject *pyo)
@@ -327,23 +437,25 @@ PyBOOPSIObject_Initialize(PyObject *self, Object *mo, struct MUI_CustomClass *mc
     node->n_Flags = flags;
 
     bo->node = node;
+
+    /* Object hash code */
+    bo->hash = ((ULONG)self) ^ ((ULONG)node); /* simple but enough for the purpose */
+
     return TRUE;
 }
 //-
 //+ OnAttrChanged
 static void
 OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
-    PyObject *pyo;
-    ULONG attr = args[0];
-    ULONG value = args[1];
+    PyObject *pyo = (PyObject *)args[0];
+    ULONG attr = args[1];
+    ULONG value = args[2];
 
     /* Closing application during the module cleanup may lead to call to this function
      * for Open attribute on window, for example
      * We need to detect that and prevent it.
      */
-    if (!gClosingModule)
-        pyo = (APTR) muiUserData(mo);
-    else
+    if (gClosingModule)
         pyo = NULL;
 
     /* In case of the Python object die before the MUI object */
@@ -489,7 +601,7 @@ py2long(PyObject *obj, LONG *value)
 static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *msg)
 {
     MCCData *data = INST_DATA(cl, obj);  
-    PyObject *pyo, *res, *args;
+    PyObject *pyo, *res;
     WORD minw, defw, maxw, minh, defh, maxh;
     
     DoSuperMethodA(cl, obj, msg);
@@ -499,34 +611,30 @@ static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *m
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_AskMinMax"))
         return 0;
 
-    args = Py_BuildValue("hhhhhh",
-                         msg->MinMaxInfo->MinWidth,
-                         msg->MinMaxInfo->DefWidth,
-                         msg->MinMaxInfo->MaxWidth,
-                         msg->MinMaxInfo->MinHeight,
-                         msg->MinMaxInfo->DefHeight,
-                         msg->MinMaxInfo->MaxHeight); /* NR */
-    if (NULL != args) {
-        Py_INCREF(pyo);
-        res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "O", args);
-        Py_DECREF(pyo); 
-        Py_DECREF(args);
-        
-        if (NULL != res) {
-            int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
+    Py_INCREF(pyo);
+    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "hhhhhh",
+        msg->MinMaxInfo->MinWidth,
+        msg->MinMaxInfo->DefWidth,
+        msg->MinMaxInfo->MaxWidth,
+        msg->MinMaxInfo->MinHeight,
+        msg->MinMaxInfo->DefHeight,
+        msg->MinMaxInfo->MaxHeight); /* NR */
+    Py_DECREF(pyo); 
+    
+    if (NULL != res) {
+        int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
 
-            Py_DECREF(res); 
-            if (!result)
-                return 0;
-        }
-
-        msg->MinMaxInfo->MinWidth  = minw;
-        msg->MinMaxInfo->DefWidth  = defw;
-        msg->MinMaxInfo->MaxWidth  = maxw;
-        msg->MinMaxInfo->MinHeight = minh;
-        msg->MinMaxInfo->DefHeight = defh;
-        msg->MinMaxInfo->MaxHeight = maxh;
+        Py_DECREF(res); 
+        if (!result)
+            return 0;
     }
+
+    msg->MinMaxInfo->MinWidth  = minw;
+    msg->MinMaxInfo->DefWidth  = defw;
+    msg->MinMaxInfo->MaxWidth  = maxw;
+    msg->MinMaxInfo->MinHeight = minh;
+    msg->MinMaxInfo->DefHeight = defh;
+    msg->MinMaxInfo->MaxHeight = maxh;
 
     return 0;
 }
@@ -571,7 +679,7 @@ static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
     PyObject *pyo, *res;
 
     pyo = data->PythonObject;
-    DPRINT("%s: obj=%p, pyo=%p\n", __FUNCTION__, obj, pyo);
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Cleanup")) {
         Py_INCREF(pyo);
         res = PyObject_CallMethod((PyObject *)pyo, "MCC_Cleanup", NULL); /* NR */
@@ -593,7 +701,7 @@ static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
         return FALSE;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p\n", pyo);
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
         return TRUE;
 
@@ -616,7 +724,7 @@ static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
     PyObject *pyo, *res;
 
     pyo = data->PythonObject;
-    DPRINT("obj=%p, pyo=%p\n", obj, pyo);
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
         Py_INCREF(pyo);
         res = PyObject_CallMethod((PyObject *)pyo, "MCC_Hide", NULL); /* NR */
@@ -639,7 +747,7 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
         data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p\n", pyo);
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
         return 0;
 
@@ -665,17 +773,17 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     DPRINT("obj: %p, ehn: %p\n", obj, msg->ehn);
 
     pyo = data->PythonObject;
-    DPRINT("pyo: %p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_HandleEvent"))
         return 0;
 
-    ehn_obj = *(PyEventHandlerObject **)(&msg->ehn[1]);
+    ehn_obj = *(((PyEventHandlerObject **)msg->ehn) - 1);
     if (NULL == ehn_obj)
         return 0;
 
     DPRINT("ehn_obj=%p-%s\n", ehn_obj, OBJ_TNAME_SAFE(ehn_obj));
 
-    if (ehn_obj->handler != msg->ehn) {
+    if (&ehn_obj->handler != msg->ehn) {
         PyErr_SetString(PyExc_TypeError, "mHandlerEvent called with inconsistant event handler!");
         return 0;
     }
@@ -748,8 +856,8 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
 DISPATCHER(mcc)
 {
     MCCData *data = INST_DATA(cl, obj);
-    ULONG result;
     PyGILState_STATE gstate = 0;
+    ULONG result;
 
     if (gClosingModule && (NULL != data->PythonObject)) {
         dprintf("Warning: closing _muimaster module, but PythonObject not NULL (%p-%s)\n",
@@ -759,7 +867,7 @@ DISPATCHER(mcc)
 
     if (NULL != data->PythonObject)
         gstate = PyGILState_Ensure();
-    
+
     switch (msg->MethodID) {
         case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
         case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
@@ -771,11 +879,11 @@ DISPATCHER(mcc)
         default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    if (gstate) {
+    if (NULL != data->PythonObject) {
         if (NULL != PyErr_Occurred())
             PyErr_Print();
 
-        PyGILState_Release(gstate);     
+        PyGILState_Release(gstate);
     }
 
     return result;
@@ -820,22 +928,9 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
-    Object *obj;
-
     DPRINT("self=%p, node=%p\n", self, self->node);
 
-    obj = PyBOOPSIObject_GET_OBJECT(self);
-    if (NULL != obj) {
-        free(REMOVE(self->node));
-
-        DPRINT("before DisposeObject(%p)\n", obj);
-        /* XXX: possible issue here if the MUI object has been referenced outside of this module.
-         * It's to the user to take care of this!
-         */
-        DisposeObject(obj);
-        DPRINT("after DisposeObject(%p)\n", obj);
-    }
-
+    Generic_DisposeObject(self);
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
 //-
@@ -881,6 +976,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     UBYTE *classid;
     Object *obj;
     LONG isMCC = FALSE;
+    BOOL isMUI;
     struct MUI_CustomClass *mcc = NULL;
     struct TagItem *tags;
 
@@ -889,8 +985,10 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
     DPRINT("ClassID: '%s', tags: %p, isMCC: %d\n", classid, tags, isMCC);
 
+    isMUI = PyBOOPSIObject_ISMUI(self);
+
     /* Need to create a new MCC or a simple MUI object instance ? */
-    if (isMCC && (self->node->n_Flags & CONF_MUI)) {
+    if (isMUI && isMCC) {
         CreatedMCCNode *node = NULL, *next;
         DPRINT("Search for MCC based on: '%s'\n", classid);
         
@@ -942,14 +1040,14 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         }
 #endif
 
-        if (self->node->n_Flags & CONF_MUI) {
+        if (isMUI) {
             if (NULL != mcc)
                 obj = NewObjectA(mcc->mcc_Class, NULL, tags);
             else
                 obj = MUI_NewObjectA(classid, tags);
         } else
             obj = NewObjectA(NULL, classid, tags);
-    } else if (self->node->n_Flags & CONF_MUI) {
+    } else if (isMUI) {
         if (NULL != mcc)
             obj = NewObject(mcc->mcc_Class, NULL, TAG_DONE);
         else
@@ -961,12 +1059,13 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         DPRINT("New %s object @ %p (self=%p, node=%p, mcc=%p)\n", classid, obj, self, self->node, mcc);
 
         ADDTAIL(&gCreatedObjectList, self->node);
-        PyBOOPSIObject_GET_OBJECT(self) = obj;
+        PyBOOPSIObject_SET_OBJECT(self, obj);
 
         /* Link MUI / Python together */
-        if (self->node->n_Flags & CONF_MUI) {
-            muiUserData(obj) = (ULONG)self;
+        if (isMUI) {
             self->node->n_MCC = mcc;
+            muiUserData(obj) = (ULONG)self; /* used for _BOOPSI2Python */
+            /* XXX: mega-hack! shall be changed for a setattr() asap ! */
             if (NULL != mcc)
                 ((MCCData *)INST_DATA(mcc->mcc_Class, obj))->PythonObject = (APTR)self;
         }
@@ -1152,11 +1251,10 @@ boopsi__add(PyBOOPSIObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "O!|i", &PyBOOPSIObject_Type, &pychild, &lock)) /* BR */
         return NULL;
 
+    /* Warning: no reference kept on arg object after return! */
     child = PyBOOPSIObject_GetObject((PyObject *)pychild);
     if (NULL == child)
         return NULL;
-
-    /* Warning: no reference kept on arg object after return ! */
 
     if (lock) {
         DPRINT("Lock\n");    
@@ -1202,8 +1300,6 @@ boopsi__rem(PyBOOPSIObject *self, PyObject *args) {
         return NULL;
 
     DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);
-
-    /* Warning: no reference kept on arg object after return ! */
 
     if (lock) {
         DPRINT("lock\n");
@@ -1308,8 +1404,8 @@ static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->parent);
-    Py_VISIT(self->children);
     Py_VISIT(self->raster);
+    Py_VISIT(self->children);
     return 0;
 }
 //-
@@ -1317,9 +1413,15 @@ muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 static int
 muiobject_clear(PyMUIObject *self)
 {
+    DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
+
     Py_CLEAR(self->parent);
-    Py_CLEAR(self->children);
     Py_CLEAR(self->raster);
+
+    PyMUIObject_ClearChildren(self);
+
+    /* Safe to clear the children list now */
+    Py_CLEAR(self->children);
     return 0;
 }
 //-
@@ -1327,54 +1429,77 @@ muiobject_clear(PyMUIObject *self)
 static void
 muiobject_dealloc(PyMUIObject *self)
 {
-    Object *mo, *app, *parent;
-    CreatedObjectNode *node;
-    
-    mo = PyBOOPSIObject_GET_OBJECT(self);
-    node = ((PyBOOPSIObject *)self)->node;
-
-    DPRINT("Clearing PyMUIObject: %p [%s] (Object: %p, node: %p)\n", self, OBJ_TNAME(self), mo, node);
-
     muiobject_clear(self);
+    Generic_DisposeObject((PyBOOPSIObject *)self);
+    ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
+}
+//-
+//+ muiobject__cclear
+static PyObject *
+muiobject__cclear(PyMUIObject *self)
+{
+    PySet_Clear(self->children);
 
-    if (NULL != mo) {
-        /* Obtain the application and parent objects (maybe NULL) */
-        if (!get(mo, MUIA_ApplicationObject, &app) || !get(mo, MUIA_Parent, &parent)) {
-            DPRINT("GetAttr() failed on Object at %p!\n", mo);
-            goto end;
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject__cadd
+static PyObject *
+muiobject__cadd(PyMUIObject *self, PyObject *args)
+{
+    PyObject *child;
+    Object *child_obj;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyBOOPSIObject_Type, &child))
+        return NULL;
+
+    child_obj = PyBOOPSIObject_GET_OBJECT(child);
+    if (NULL != child_obj) {
+        /* Protection against adding itself */
+        if (child_obj == PyBOOPSIObject_GET_OBJECT(self)) {
+            PyErr_SetString(PyExc_TypeError, "cannot add an object its own children list!");
+            return NULL;
         }
 
-        DPRINT("Object %p: App=%p, Parent=%p\n", mo, app, parent);
-        
-        if (NULL == parent)
-            parent = app;
-
-        /* Application object and objects without parent can be safely destroyed.
-         * Let parent's object destroying their children themself.
-         */
-        if (   (mo   == app)    /* is the application ? */
-            || (NULL == parent) /* is not linked to any parent ? */ ) {
-            DPRINT("Before MUI_DisposeObject(%p)\n", mo);
-            MUI_DisposeObject(mo);
-            DPRINT("After MUI_DisposeObject(%p)\n", mo);
-
-            /* remove the entry in the created object list */
-            free(REMOVE(node));
-        } else {
-            DPRINT("  => not disposed (has parent)\n");
-
-            /* But as the Python object is going to be destroyed, unlink the Object */
-            muiUserData(mo) = NULL;
-            if (NULL != node->n_MCC)
-                ((MCCData *)INST_DATA(OCLASS(mo), mo))->PythonObject = NULL;
-
-            /* We keep the node, but we mark the object as ZOMBIE */
-            node->n_Flags |= CONF_ZOMBIE;
-        }
+        if (PySet_Add(self->children, child) < 0)
+            return NULL;
     }
 
-end:
-    ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject__crem
+/* Note: success even if the object is not a children */
+static PyObject *
+muiobject__crem(PyMUIObject *self, PyObject *args)
+{
+    PyObject *child;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &child))
+        return NULL;
+
+    if (PySet_Discard(self->children, child) < 0)
+        return NULL;
+
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject__cin
+static PyObject *
+muiobject__cin(PyMUIObject *self, PyObject *args)
+{
+    PyObject *child;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &child))
+        return NULL;
+
+    switch (PySet_Contains(self->children, child)) {
+        case -1: return NULL;
+        case 0: Py_RETURN_FALSE;
+        case 1: Py_RETURN_TRUE;
+    }
+
+    Py_RETURN_NONE;
 }
 //-
 //+ muiobject__nnset
@@ -1436,15 +1561,9 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
     else
         value = trigvalue;
 
-    /* If the object is already linked, take this link as the self object */
-    if (0 != muiUserData(mo))
-        self = (PyMUIObject *)muiUserData(mo);
-    else
-        muiUserData(mo) = (ULONG)self;
-
     DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
-             MUIV_Notify_Self, 4,
-             MUIM_CallHook, (ULONG)&OnAttrChangedHook, trigattr, value);
+             MUIV_Notify_Self, 5,
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG)self, trigattr, value);
 
     DPRINT("done\n");
 
@@ -1620,27 +1739,6 @@ muiobject_get__superid(PyObject *self, void *closure)
     Py_RETURN_NONE;
 }
 //-
-//+ muiobject_get__children
-static PyObject *
-muiobject_get__children(PyMUIObject *self, void *closure)
-{
-    Py_INCREF(self->children);
-    return self->children;
-}
-//-
-//+ muiobject_set__children
-static int
-muiobject_set__children(PyMUIObject *self, PyObject *value, void *closure)
-{
-    if (NULL != value) {
-        PyErr_SetString(PyExc_TypeError, "This attribute can't be set");
-        return -1;
-    }
-
-    PySet_Clear(self->children);
-    return 0;
-}
-//-
 //+ muiobject_get_rp
 static PyObject *
 muiobject_get_rp(PyMUIObject *self, void *closure)
@@ -1655,6 +1753,19 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
     Py_INCREF((PyObject *)self->raster);
 
     return (PyObject *)self->raster;
+}
+//-
+//+ muiobject_get__children
+static PyObject *
+muiobject_get__children(PyMUIObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    return PyObject_GetIter(self->children);
 }
 //-
 
@@ -1672,19 +1783,18 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "Object RastPort", NULL},
     {"_superid", (getter)muiobject_get__superid, NULL, "MUI SuperID", NULL},
-    {"_children", (getter)muiobject_get__children, (setter)muiobject_set__children, "PRIVATE, DON'T TOUCH!", NULL},
-    {NULL} /* sentinel */
-};
-
-static PyMemberDef muiobject_members[] = {
-    {"_parent", T_OBJECT_EX, offsetof(PyMUIObject, parent), 0, "PRIVATE, DON'T TOUCH!"},
+    {"_children", (getter)muiobject_get__children, NULL, "Iterator on object's children", NULL},
     {NULL} /* sentinel */
 };
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_nnset",  (PyCFunction) muiobject__nnset,      METH_VARARGS, muiobject__nnset_doc},
-    {"_notify", (PyCFunction) muiobject__notify,     METH_VARARGS, muiobject__notify_doc},
-    {"Redraw",  (PyCFunction) muiobject_redraw,      METH_VARARGS, muiobject_redraw_doc},
+    {"_cclear", (PyCFunction) muiobject__cclear,  METH_NOARGS, NULL},
+    {"_cadd",   (PyCFunction) muiobject__cadd,    METH_VARARGS, NULL},
+    {"_crem",   (PyCFunction) muiobject__crem,    METH_VARARGS, NULL},
+    {"_cin",    (PyCFunction) muiobject__cin,     METH_VARARGS, NULL},
+    {"_nnset",  (PyCFunction) muiobject__nnset,   METH_VARARGS, muiobject__nnset_doc},
+    {"_notify", (PyCFunction) muiobject__notify,  METH_VARARGS, muiobject__notify_doc},
+    {"Redraw",  (PyCFunction) muiobject_redraw,   METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
 
@@ -1704,7 +1814,6 @@ static PyTypeObject PyMUIObject_Type = {
     
     tp_methods      : muiobject_methods,
     tp_getset       : muiobject_getseters,
-    tp_members      : muiobject_members,
 };
 
 
@@ -1871,13 +1980,8 @@ evthandler_new(PyTypeObject *type, PyObject *args)
 
     self = (PyEventHandlerObject *)type->tp_alloc(type, 0); /* NR */
     if (NULL != self) {
-        self->handler = PyMem_Malloc(sizeof(*self->handler) + sizeof(APTR));
-        if (NULL != self->handler) {
-            *(PyEventHandlerObject **)(&self->handler[1]) = self;
-            return (PyObject *)self;
-        }
-
-        Py_DECREF((PyObject *)self);
+        self->self = (PyObject *)self;
+        return (PyObject *)self;
     }
 
     return NULL;
@@ -1888,7 +1992,8 @@ static int
 evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->TabletTagsList);
-    Py_VISIT(self->win_pyo);
+    Py_VISIT(self->window);
+    Py_VISIT(self->target);
     return 0;
 }
 //-
@@ -1896,16 +2001,18 @@ evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
 static int
 evthandler_clear(PyEventHandlerObject *self)
 {
-    if (NULL != self->win_pyo) {
-        Object *mo = PyBOOPSIObject_GET_OBJECT(self->win_pyo);
+    if (NULL != self->window) {
+        Object *mo = PyBOOPSIObject_GET_OBJECT(self->window);
 
-        DPRINT("%s: mo=%p\n", __FUNCTION__, mo);
+        DPRINT("%s: win=%p\n", __FUNCTION__, mo);
         if (NULL != mo)
-            DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)self->handler);
+            DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
+
     }
  
     Py_CLEAR(self->TabletTagsList);
-    Py_CLEAR(self->win_pyo);
+    Py_CLEAR(self->window);
+    Py_CLEAR(self->target);
     return 0;
 }
 //-
@@ -1914,9 +2021,6 @@ static void
 evthandler_dealloc(PyEventHandlerObject *self)
 {
     evthandler_clear(self);
-    
-    PyMem_Free(self->handler);
-    
     self->ob_type->tp_free((PyObject *)self);
 }
 //-
@@ -1924,59 +2028,54 @@ evthandler_dealloc(PyEventHandlerObject *self)
 static PyObject *
 evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
 {
-    PyObject *pyo;
-    static CONST_STRPTR kwlist[] = {"object", "idcmp", "flags", "prio", NULL};
-    Object *mo, *win;
+    PyObject *pyo_win, *pyo_tgt;
+    static CONST_STRPTR kwlist[] = {"target", "idcmp", "flags", "prio", NULL};
+    Object *win, *target;
 
-    if (NULL != self->win_pyo) {
-        PyErr_SetString(PyExc_TypeError, "Already installed handler, remove it before!");
+    if (NULL != self->window) {
+        PyErr_SetString(PyExc_TypeError, "Already installed handler, remove it before");
         return NULL;
     }
 
-    self->handler->ehn_Flags = 0;
-    self->handler->ehn_Priority = 0;
+    self->handler.ehn_Flags = 0;
+    self->handler.ehn_Priority = 0;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!I|Hb", (char **)kwlist,
-            &PyMUIObject_Type, &pyo,
-            &self->handler->ehn_Events,
-            &self->handler->ehn_Flags,
-            &self->handler->ehn_Priority)) /* BR */
+            &PyMUIObject_Type, &pyo_tgt,
+            &self->handler.ehn_Events,
+            &self->handler.ehn_Flags,
+            &self->handler.ehn_Priority)) /* BR */
         return NULL;
 
-    mo = PyBOOPSIObject_GetObject((PyObject *)pyo);
-    if (NULL == mo)
+    target = PyBOOPSIObject_GetObject(pyo_tgt);
+    if (NULL == target)
         return NULL;
 
-    win = _win(mo);
+    win = _win(target);
     if (NULL == win) {
-        PyErr_SetString(PyExc_TypeError, "No Window MUI object found!");
+        PyErr_SetString(PyExc_SystemError, "no window found");
         return NULL;
     }
 
-    pyo = (PyObject *)muiUserData(win);
-    if (NULL == pyo) {
-        PyErr_SetString(PyExc_TypeError, "No Python object found for the attached MUI window");
+    pyo_win = (PyObject *)muiUserData(win); DPRINT("window py object: %p\n", pyo_win);
+    if (!PyBOOPSIObject_IsValid(pyo_win)) {
+       PyErr_SetString(PyExc_TypeError, "events handler object must be installed on MUI Window object only");
         return NULL;
     }
 
-#if 0 /* XXX: unneeded code ... */
-    win = PyBOOPSIObject_GetObject((PyObject *)pyo);
-    if (NULL == win)
-        return NULL;
-#endif
+    self->window = pyo_win; Py_INCREF(pyo_win);
+    self->target = pyo_tgt; Py_INCREF(pyo_tgt);
 
-    /* XXX: maybe it could be good to incref the destination object also */
-    self->handler->ehn_Object = mo;
-    self->handler->ehn_Class = OCLASS(mo);
+    self->handler.ehn_Object = target;
+    self->handler.ehn_Class = OCLASS(target);
 
-    DPRINT("install handler  %p on win %p: idcmp=0x%lx, flags=%u, prio=%d\n", self->handler, win,
-        self->handler->ehn_Events,
-        self->handler->ehn_Flags,
-        self->handler->ehn_Priority);
-
-    Py_INCREF(pyo);
-    self->win_pyo = pyo;
-    DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)self->handler);
+    DPRINT("install handler  %p on win %p: target=%p idcmp=%p, flags=%u, prio=%d\n",
+        &self->handler, win, target,
+        self->handler.ehn_Events,
+        self->handler.ehn_Flags,
+        self->handler.ehn_Priority);
+    
+    DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)&self->handler);
 
     Py_RETURN_NONE;
 }
@@ -1985,34 +2084,24 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
 static PyObject *
 evthandler_uninstall(PyEventHandlerObject *self)
 {
-    PyObject *obj;
     Object *win;
 
-    if (NULL == self->win_pyo) {
+    if (NULL == self->window) {
         PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
         return NULL;
     }
 
-    obj = self->win_pyo;
-    self->win_pyo = NULL;
-
-    win = PyBOOPSIObject_GetObject(obj);
-    Py_DECREF(obj);
-    
+    win = PyBOOPSIObject_GetObject(self->window);
     if (NULL == win)
         return NULL;
 
-    DPRINT("uninstall handler %p on win %p\n", self->handler, win);
-    DoMethod(win, MUIM_Window_RemEventHandler, (ULONG)self->handler);
+    DPRINT("uninstall handler %p on win %p\n", &self->handler, win);
+    DoMethod(win, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
+
+    Py_CLEAR(self->window);
+    Py_CLEAR(self->target);
 
     Py_RETURN_NONE;
-}
-//-
-//+ evthandler_get_idcmp
-static PyObject *
-evthandler_get_idcmp(PyEventHandlerObject *self, void *closure)
-{
-    return PyLong_FromUnsignedLong(self->handler->ehn_Events);
 }
 //-
 //+ evthandler_get_normtablet
@@ -2041,7 +2130,6 @@ evthandler_get_key(PyEventHandlerObject *self, void *closure)
 //-
 
 static PyGetSetDef evthandler_getseters[] = {
-    {"idcmp", (getter)evthandler_get_idcmp, NULL, "IDCMP value", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
     {"Key", (getter)evthandler_get_key, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
@@ -2050,6 +2138,7 @@ static PyGetSetDef evthandler_getseters[] = {
 };
 
 static PyMemberDef evthandler_members[] = {
+    {"idcmp",        T_ULONG, offsetof(PyEventHandlerObject, handler.ehn_Events), RO, "IDCMP value"},
     {"muikey",       T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
     {"Class",        T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
     {"Code",         T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
@@ -2232,16 +2321,19 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
 static PyObject *
 _muimaster_boopsitopython(PyObject *self, PyObject *args)
 {
+    ULONG value;
     Object *obj;
     PyObject *pyo;
 
-    if (!PyArg_ParseTuple(args, "I", &obj))
+    if (!PyArg_ParseTuple(args, "I", &value))
         return NULL;
 
+    obj = (Object *)value;
+
     if (NULL != obj) {
-        /* Check if the object doesn't contain a PyMUI object */
-        pyo = NULL;
-        if (GetAttr(MUIA_UserData, obj, (ULONG *)&pyo)) {
+        /* Check if the object doesn't contain a valid PyMUI object */
+        pyo = (PyObject *)muiUserData(obj); DPRINT("pyo: %p\n", pyo);
+        if (PyBOOPSIObject_IsValid(pyo)) {
             Py_INCREF(pyo);
             return pyo;
         }
@@ -2296,10 +2388,10 @@ PyMorphOS_CloseModule(void) {
                 DPRINT("Forgotten object [%p, node: %p, MCC: %p]\n", obj, node, node->n_MCC);
 
                 /* Python is not perfect, PyMUI not also and user design even less :-P
-                * So an object can be here if for any reasons its dealloc function has not been called.
-                * Normally in this case, MUI should not have deleted the object and it remains valid.
-                * But...
-                */
+                 * So an object can be here if for any reasons its dealloc function has not been called.
+                 * Normally in this case, MUI should not have deleted the object and it remains valid.
+                 * But...
+                 */
                 if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
                     DPRINT("[%p] app=%p, parent=%p\n", obj, app, parent);
 
@@ -2338,7 +2430,7 @@ PyMorphOS_CloseModule(void) {
 
         DPRINT("[%p] Disposing application...\n", obj);
         MUI_DisposeObject(obj);
-        DPRINT("[%p] Disposed\n", obj);
+        DPRINT("[%p] Application disposed\n", obj);
 
         free(node);
     }
