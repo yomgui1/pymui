@@ -24,6 +24,7 @@
 ###############################################################################
 
 import sys, functools, array, ctypes, weakref
+from ctypes import sizeof
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -80,20 +81,40 @@ class PyMUICType:
 
     @classmethod
     def mkarray(cl, c):
+        if isinstance(c, (tuple, list)):
+            inst = c
+            c = len(c)
+        else:
+            inst = None
+
         n = cl.__name__ + '_Array_%u' % c
-        if n in cl.__pt_cache: return cl.__pt_cache[n]
-        ncl = type(n, (ctypes.Array, AsCArray), {'_length_': c, '_type_': cl})
-        cl.__pt_cache[n] = ncl
-        return ncl
+        if n in cl.__pt_cache:
+            ncl = cl.__pt_cache[n]
+        else:
+            ncl = type(n, (ctypes.Array, AsCArray), {'_length_': c, '_type_': cl})
+            cl.__pt_cache[n] = ncl
+
+        if inst is None:
+            return ncl
+
+        o = ncl()
+        for i in xrange(c):
+            o[i].contents = inst[i]
+        return o
+
 
 class AsCInteger(PyMUICType):
     keep = False
     
     @classmethod
     def tomui(cl, o):
-        if not hasattr(o, 'value'):
+        if hasattr(o, 'value'):
+            return o, o.value
+
+        try:
             return o, cl(o) # return keep value shall be the source object and not the converted here!
-        return o, o.value
+        except:
+            return o, long(o)
 
     @classmethod
     def asobj(cl, i):
@@ -152,7 +173,10 @@ class AsCString(ctypes.c_char_p, PyMUICType):
         return None
 
     def __long__(self):
-        return ctypes.cast(self, ctypes.c_void_p).value
+        return ctypes.cast(self, ctypes.c_void_p).value or 0
+
+    def __hash__(self):
+        return hash(long(self))
 
 # Some AmigaOS types
 class c_CHAR(ctypes.c_char, AsCInteger): pass
@@ -167,6 +191,10 @@ class c_BOOL(c_ULONG): pass
 
 class c_APTR(ctypes.c_void_p, AsCInteger):
     keep = False
+
+    @classmethod
+    def asobj(cl, i):
+        return cl(i)
 
     def __long__(self):
         if self.value is None:
@@ -196,6 +224,21 @@ class c_pDOUBLE(ctypes.POINTER(ctypes.c_double), AsCPointer):
             x = self._type_(x)
         super(c_pDOUBLE, self).__init__(x)
 
+class Iterator_c_pSTRPTR:
+    def __init__(self, o):
+        self.__o = o
+        self.__i = 0
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        v = self.__o[self.__i]
+        if v.value is None:
+            raise StopIteration()
+        self.__i += 1
+        return v
+
 class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
     _type_ = c_STRPTR # XXX: bad! how to change that?
 
@@ -219,6 +262,16 @@ class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
         if not isinstance(o, cl): o = cl(o)
         return o, o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
 
+    def __iter__(self):
+        return Iterator_c_pSTRPTR(self)
+
+    def __len__(self):
+        c = 0
+        for x in self:
+            if x.value is None:
+                return c
+            c += 1
+
 class c_pObject(c_APTR):
     keep = True
 
@@ -236,6 +289,28 @@ class c_pObject(c_APTR):
     @classmethod
     def asobj(cl, i):
         return _muimaster._BOOPSI2Python(i) # 0 is accepted
+
+class c_PyObject(c_APTR):
+    keep = True
+
+    def __new__(cl, x):
+        return c_APTR.__new__(cl)
+
+    def __init__(self, x):
+        c_APTR.__init__(self)
+        self.value = x
+
+    @classmethod
+    def asobj(cl, i):
+        return _muimaster._APTR2Python(i) # 0 is accepted
+
+    def _set_value(self, x):
+        if not isinstance(x, (int, long)):
+            self._obj = x
+            x = id(x)
+        c_APTR.value.__set__(self, x)
+
+    value = property(fget=c_APTR.value.__get__, fset=_set_value)
 
 class c_TagItem(ctypes.Structure):
     _fields_ = [('ti_Tag', c_ULONG),
@@ -269,8 +344,37 @@ class c_MenuitemTitle(c_STRPTR):
         if i == NM_BARLABEL: return i
         return c_STRPTR.asobj(i)
 
-def HOOKTYPE(a2_ctypes, a1_ctypes):
-    return CFUNCTYPE(c_APTR, a2_ctypes, a1_ctypes)
+class c_ListTitle(c_STRPTR):
+    @classmethod
+    def tomui(cl, o):
+        if o is True: return None, 1
+        return c_STRPTR.tomui(o)
+
+    @classmethod
+    def asobj(cl, i):
+        if i == -1: return True
+        return c_STRPTR.asobj(i)
+
+class c_Hook(c_APTR):
+    keep = True
+
+    def __new__(cl, x, format='II'):
+        self = c_APTR.__new__(cl)
+        self._chook = _muimaster._CHook(x, format) # x can be a CHook pointer value or a callable
+        return self
+
+    def __init__(self, x, *args):
+        c_APTR.__init__(self)
+        self.value = self._chook.address
+
+    @classmethod
+    def tomui(cl, o):
+        if not isinstance(o, c_Hook): o = cl(o)
+        return o, o
+
+    @classmethod
+    def asobj(cl, i):
+        return cl(i)
 
 
 ################################################################################
@@ -293,7 +397,7 @@ class MAttribute(property):
                 if keep: obj._keep_dict[id] = v
                 return long(x)
         else:
-            def _init(v):
+            def _init(*args):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
 
         if 's' in isg:
@@ -384,17 +488,13 @@ class MMethod(property):
         if argstypes:
             if not isinstance(argstypes, (tuple, list)):
                 assert issubclass(argstypes, PyMUICType)
-                assert not varargs
                 self.__argstp = argstypes
-                cb = self.call1
+                cb = (self.call1va if varargs else self.call1)
             else:
                 assert any(issubclass(tp, PyMUICType) for tp in argstypes)
                 self.__argstp = tuple(argstypes)
                 self.__varargs = varargs
-                if varargs:
-                    cb = self.callva
-                else:
-                    cb = self.call
+                cb = (self.callva if varargs else self.call)
         else:
             self.__argstp = None
             self.__varargs = False
@@ -429,6 +529,17 @@ class MMethod(property):
        
         return self.__retconv(obj._do(self.__id, tuple(data)))
 
+    def call1va(self, obj, data, *args):
+        o, x = self.__argstp.tomui(data)
+
+        data = [x]
+        keep = [o]
+        for v in args:
+            data.append(long(v))
+            keep.append(v)
+       
+        return self.__retconv(obj._do(self.__id, tuple(data)))
+
     def call(self, obj, *args):
         if len(args) != len(self.__argstp):
             raise AttributeError("method accepts only %u argument(s), get %u"
@@ -438,7 +549,7 @@ class MMethod(property):
         for tp, v in zip(self.__argstp, args):
             o, a = tp.tomui(v)
             data.append(a)
-            if o is not Non: keep.append(o)
+            if o is not None: keep.append(o)
 
         return self.__retconv(obj._do(self.__id, tuple(data)))
             
@@ -456,7 +567,7 @@ class MMethod(property):
 
 class Event(object):
     def __init__(self, source):
-        self.source = source
+        self.Source = source
 
     @staticmethod
     def noevent(func):
@@ -681,6 +792,8 @@ class Notify(rootclass):
     # forbidden: MUIA_UserData (intern usage)
     Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
 
+    CallHook = MMethod(MUIM_CallHook, c_Hook, varargs=True)
+
     def NNSet(self, attr, v):
         attr = self._getMA(attr)
         v, x = attr.ctype.tomui(v)
@@ -708,6 +821,10 @@ class Notify(rootclass):
 
     def KillApp(self):
         self.ApplicationObject.Quit()
+
+    @CallHook.alias
+    def CallHook(self, meth, hook, arg0, *args):
+        return meth(self, hook, *((arg0,)+args))
 
 #===============================================================================
 
@@ -846,7 +963,7 @@ class Application(Notify):
     Author         = MAttribute(MUIA_Application_Author         , 'i.g', c_STRPTR)
     Base           = MAttribute(MUIA_Application_Base           , 'i.g', c_STRPTR)
     Broker         = MAttribute(MUIA_Application_Broker         , '..g', c_APTR)
-    BrokerHook     = MAttribute(MUIA_Application_BrokerHook     , 'isg', c_APTR)
+    BrokerHook     = MAttribute(MUIA_Application_BrokerHook     , 'isg', c_Hook)
     BrokerPort     = MAttribute(MUIA_Application_BrokerPort     , '..g', c_APTR)
     BrokerPri      = MAttribute(MUIA_Application_BrokerPri      , 'i.g', c_LONG)
     Commands       = MAttribute(MUIA_Application_Commands       , 'isg', c_APTR)
@@ -861,7 +978,7 @@ class Application(Notify):
     MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
     Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_pObject, postSet=__postSetMenuStrip)
-    RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_APTR)
+    RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_Hook)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
     RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
     SingleTask     = MAttribute(MUIA_Application_SingleTask     , 'i..', c_BOOL)
@@ -1393,7 +1510,7 @@ class String(Area):
     BufferPos      = MAttribute(MUIA_String_BufferPos      , '.sg', c_LONG)
     Contents       = MAttribute(MUIA_String_Contents       , 'isg', c_STRPTR)
     DisplayPos     = MAttribute(MUIA_String_DisplayPos     , '.sg', c_LONG)
-    EditHook       = MAttribute(MUIA_String_EditHook       , 'isg', c_APTR)
+    EditHook       = MAttribute(MUIA_String_EditHook       , 'isg', c_Hook)
     Format         = MAttribute(MUIA_String_Format         , 'i.g', c_LONG)
     Integer        = MAttribute(MUIA_String_Integer        , 'isg', c_ULONG)
     LonelyEditHook = MAttribute(MUIA_String_LonelyEditHook , 'isg', c_BOOL)
@@ -1532,7 +1649,7 @@ class Group(Area):
     Columns      = MAttribute(MUIA_Group_Columns      , 'is.', c_LONG)
     Horiz        = MAttribute(MUIA_Group_Horiz        , 'i..', c_BOOL)
     HorizSpacing = MAttribute(MUIA_Group_HorizSpacing , 'isg', c_LONG)
-    LayoutHook   = MAttribute(MUIA_Group_LayoutHook   , 'i..', c_APTR)
+    LayoutHook   = MAttribute(MUIA_Group_LayoutHook   , 'i..', c_Hook)
     PageMode     = MAttribute(MUIA_Group_PageMode     , 'i..', c_BOOL)
     Rows         = MAttribute(MUIA_Group_Rows         , 'is.', c_LONG)
     SameHeight   = MAttribute(MUIA_Group_SameHeight   , 'i..', c_BOOL)
@@ -1547,9 +1664,10 @@ class Group(Area):
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
         
-        x = kwds.pop('Title', None)
-        if x:
-            kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
+        if self.__class__ is Group:
+            x = kwds.pop('Title', None)
+            if x:
+                kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
 
         x = kwds.pop('InnerSpacing', None)
         if x:
@@ -1619,7 +1737,50 @@ PageGroup = Group.PageGroup
 
 class List(Group):
     CLASSID = MUIC_List
-    # TODO
+
+    Active = MAttribute(MUIA_List_Active,                   'isg', c_LONG)
+    AdjustHeight = MAttribute(MUIA_List_AdjustHeight,       'i..', c_BOOL)
+    AdjustWidth = MAttribute(MUIA_List_AdjustWidth,         'i..', c_BOOL)
+    AgainClick = MAttribute(MUIA_List_AgainClick,           'i.g', c_BOOL)
+    AutoVisible = MAttribute(MUIA_List_AutoVisible,         'isg', c_BOOL)
+    ClickColumn = MAttribute(MUIA_List_ClickColumn,         '..g', c_LONG)
+    CompareHook = MAttribute(MUIA_List_CompareHook,         'is.', c_Hook)
+    ConstructHook = MAttribute(MUIA_List_ConstructHook,     'is.', c_Hook)
+    DefClickColumn = MAttribute(MUIA_List_DefClickColumn,   'isg', c_LONG)
+    DestructHook = MAttribute(MUIA_List_DestructHook,       'is.', c_Hook)
+    DisplayHook = MAttribute(MUIA_List_DisplayHook,         'is.', c_Hook)
+    DoubleClick = MAttribute(MUIA_List_DoubleClick,         'i.g', c_BOOL)
+    DragSortable = MAttribute(MUIA_List_DragSortable,       'isg', c_BOOL)
+    DragType = MAttribute(MUIA_List_DragType,               'isg', c_LONG)
+    DropMark = MAttribute(MUIA_List_DropMark,               '..g', c_LONG)
+    Entries = MAttribute(MUIA_List_Entries,                 '..g', c_LONG)
+    First = MAttribute(MUIA_List_First,                     '..g', c_LONG)
+    Format = MAttribute(MUIA_List_Format,                   'isg', c_STRPTR)
+    Input = MAttribute(MUIA_List_Input,                     'i..', c_BOOL)
+    InsertPosition = MAttribute(MUIA_List_InsertPosition,   '..g', c_LONG)
+    MinLineHeight = MAttribute(MUIA_List_MinLineHeight,     'i..', c_LONG)
+    MultiSelect = MAttribute(MUIA_List_MultiSelect,         'i..', c_LONG)
+    MultiTestHook = MAttribute(MUIA_List_MultiTestHook,     'is.', c_Hook)
+    # Pool = MAttribute(MUIA_List_Pool,                       'i.g', c_APTR)
+    # PoolPuddleSize = MAttribute(MUIA_List_PoolPuddleSize,   'i..', c_ULONG)
+    # PoolThreshSize = MAttribute(MUIA_List_PoolThreshSize,   'i..', c_ULONG)
+    Quiet = MAttribute(MUIA_List_Quiet,                     '.s.', c_BOOL)
+    ScrollerPos = MAttribute(MUIA_List_ScrollerPos,         'i..', c_BOOL)
+    SelectChange = MAttribute(MUIA_List_SelectChange,       '..g', c_BOOL)
+    ShowDropMarks = MAttribute(MUIA_List_ShowDropMarks,     'isg', c_BOOL)
+    SourceArray = MAttribute(MUIA_List_SourceArray,         'i..', c_APTR)
+    Title = MAttribute(MUIA_List_Title,                     'isg', c_ListTitle)
+    TitleClick = MAttribute(MUIA_List_TitleClick,           '..g', c_LONG)
+    Visible = MAttribute(MUIA_List_Visible,                 '..g', c_LONG)
+
+    Clear = MMethod(MUIM_List_Clear)
+    Insert = MMethod(MUIM_List_Insert, (c_APTR, c_LONG, c_LONG))
+    InsertSingle = MMethod(MUIM_List_InsertSingle, (c_APTR, c_LONG))
+    InsertSingleString = MMethod(MUIM_List_InsertSingle, (c_STRPTR, c_LONG))
+    Sort = MMethod(MUIM_List_Sort)
+    GetEntry = MMethod(MUIM_List_GetEntry, (c_LONG, c_APTR))
+
+    cols = property(fget=lambda self: self.Format.count(',')+1)
 
 #===============================================================================
 

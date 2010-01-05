@@ -273,11 +273,14 @@ typedef struct MCCData_STRUCT {
     APTR                ClipHandle;
 } MCCData;
 
-typedef struct PyCPointer_STRUCT {
+typedef struct CHookObject_STRUCT {
     PyObject_HEAD
 
-    APTR ptr;
-} PyCPointer;
+    struct Hook * hook;
+    struct Hook   _hook;
+    PyObject *    callable;
+    char          format[3];
+} CHookObject;
 
 
 /*
@@ -293,6 +296,7 @@ static PyTypeObject PyRasterObject_Type;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static PyTypeObject PyEventHandlerObject_Type;
+static PyTypeObject CHookObject_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
 static BOOL gClosingModule = FALSE;
@@ -459,7 +463,7 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
         pyo = NULL;
 
     /* In case of the Python object die before the MUI object */
-    if (NULL != pyo){
+    if (NULL != pyo) {
         PyObject *res;
         PyGILState_STATE gstate;
 
@@ -580,7 +584,7 @@ py2long(PyObject *obj, LONG *value)
 
         *value = (LONG)(*(APTR *)buf); /* handle buffer as a pointer on a pointer value */
     } else if (PyNumber_Check(obj)) {
-        *value = PyLong_AsUnsignedLong(obj);
+        *value = PyLong_AsUnsignedLongMask(obj);
         if (PyErr_Occurred())
             return -1;
     } else {
@@ -589,6 +593,52 @@ py2long(PyObject *obj, LONG *value)
     }
 
     return 0;
+}
+//-
+//+ callpython
+static ULONG
+callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
+{
+    CHookObject *self = hook->h_Data;
+    PyGILState_STATE gstate;
+    PyThreadState *_save;
+    PyObject *r;
+    ULONG result;
+
+    DPRINT("hook: %p, self: %p\n", hook, self);
+
+    if (gClosingModule) {
+        dprintf("Warning: PyMUI CHookObject called during PyMUI closing.");
+        return 0;
+    }
+
+    if ((NULL == self) || (NULL == self->callable)) {
+        dprintf("Warning: Bad PyMUI call: NULL hook or callable (CHook=%p)\n", self);
+        return 0;
+    }
+
+    gstate = PyGILState_Ensure();
+
+    Py_INCREF(self);
+    DPRINT("Callable: %p, format: %s, values: [%x, %x]\n", self->callable, self->format, a2_value, a1_value);
+    r = PyObject_CallFunction(self->callable, self->format, a2_value, a1_value); /* NR */
+    if (NULL != r) {
+        if (py2long(r, &result)) {
+            PyErr_Format(PyExc_TypeError, "Hook shall return a long, not %s", OBJ_TNAME(r));
+            result = 0;
+        }
+
+        Py_DECREF(r);
+    } else
+        result = 0;
+    Py_DECREF(self);
+
+    if (PyErr_Occurred())
+        PyErr_Print();
+
+    PyGILState_Release(gstate);
+
+    return result;
 }
 //-
 
@@ -2183,6 +2233,112 @@ static PyTypeObject PyEventHandlerObject_Type = {
     tp_methods      : evthandler_methods,
     tp_getset       : evthandler_getseters,
 };
+
+
+/*******************************************************************************************
+** CHookObject_Type
+*/
+
+//+ chook_new
+static PyObject *
+chook_new(PyTypeObject *type, PyObject *args)
+{
+    CHookObject *self;
+    PyObject *v;
+    char *f = NULL;
+
+    self = (CHookObject *)type->tp_alloc(type, 0); /* NR */
+    if (NULL != self) {
+        if (PyArg_ParseTuple(args, "O|s", &v, &f)) {
+            DPRINT("v: %p-'%s', callable: %s, f: '%s'\n", v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no", NULL==f?"<NULL>":f);
+            if (PyCallable_Check(v)) {
+                if (NULL != f) {
+                    if (strlen(f) != 2) {
+                        PyErr_SetString(PyExc_ValueError, "given format shall be 2 characters length");
+                        Py_CLEAR(self);
+                        return NULL;
+                    }
+
+                    self->format[0] = f[0];
+                    self->format[1] = f[1];
+                    self->format[2] = '\0';
+                } else {
+                    self->format[0] = 'I';
+                    self->format[1] = 'I';
+                    self->format[2] = '\0';
+                }
+
+                self->hook = &self->_hook;
+                INIT_HOOK(self->hook, callpython);
+                self->callable = v; Py_INCREF(v);
+                self->_hook.h_Data = self;
+            } else {
+                ULONG x;
+
+                if (py2long(v, &x)) {
+                    Py_CLEAR(self);
+                    return NULL;
+                }
+
+                self->hook = (APTR)x;
+            }
+
+            DPRINT("Hook: %p, callable: %p\n", self->hook, self->callable);
+            return (PyObject *)self;
+        }
+
+        Py_CLEAR(self);
+    }
+
+    return NULL;
+}
+//-
+//+ chook_traverse
+static int
+chook_traverse(CHookObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->callable);
+    return 0;
+}
+//-
+//+ chook_clear
+static int
+chook_clear(CHookObject *self)
+{
+    Py_CLEAR(self->callable);
+    return 0;
+}
+//-
+//+ chook_dealloc
+static void
+chook_dealloc(CHookObject *self)
+{
+    DPRINT("hook: %p\n", self);
+    chook_clear(self);
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+
+static PyMemberDef chook_members[] = {
+    {"address", T_ULONG, offsetof(CHookObject, hook), RO, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject CHookObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster._CHook",
+    tp_basicsize    : sizeof(CHookObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    tp_doc          : "_CHook Objects",
+
+    tp_new          : (newfunc)chook_new,
+    tp_traverse     : (traverseproc)chook_traverse,
+    tp_clear        : (inquiry)chook_clear,
+    tp_dealloc      : (destructor)chook_dealloc,
+
+    tp_members      : chook_members,
+};
  
 
 /*******************************************************************************************
@@ -2224,11 +2380,11 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     DPRINT("Goes into mainloop...\n");
     for (;;) {
         ULONG id;
-        PyThreadState *py_thread_state; 
-        
-        py_thread_state = PyEval_SaveThread();
+        PyThreadState *_save;
+
+        Py_UNBLOCK_THREADS;
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
-        PyEval_RestoreThread(py_thread_state);
+        Py_BLOCK_THREADS;
 
         if (MUIV_Application_ReturnID_Quit == id)
             break;
@@ -2238,9 +2394,9 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
             PyErr_Print();
 
         if (sigs) {
-            py_thread_state = PyEval_SaveThread();
+            Py_UNBLOCK_THREADS;
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
-            PyEval_RestoreThread(py_thread_state);  
+            Py_BLOCK_THREADS;
         } else
             sigs = SetSignal(0, 0);
 
@@ -2274,7 +2430,7 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     STRPTR init_pat = NULL;
     UBYTE save = FALSE;
 
-    if (!PyArg_ParseTuple(args, "O!s|zzb:mainloop", &PyMUIObject_Type, &pyo, &title, &init_drawer, &init_pat, &save))
+    if (!PyArg_ParseTuple(args, "O!s|zzb:getfilename", &PyMUIObject_Type, &pyo, &title, &init_drawer, &init_pat, &save))
         return NULL;
 
     mo = PyBOOPSIObject_GetObject((PyObject *)pyo);
@@ -2348,6 +2504,29 @@ _muimaster_boopsitopython(PyObject *self, PyObject *args)
     return pyo;
 }
 //-
+//+ _muimaster_aptr2python
+static PyObject *
+_muimaster_aptr2python(PyObject *self, PyObject *args)
+{
+    ULONG value;
+    PyObject *pyo;
+
+    if (!PyArg_ParseTuple(args, "I", &value))
+        return NULL;
+
+    pyo = (PyObject *)value;
+    DPRINT("pyo = %p\n", pyo);
+    if (NULL == pyo)
+        Py_RETURN_NONE;
+
+    /* Small check */
+    if (!TypeOfMem(pyo))
+        return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pyo);
+
+    Py_INCREF(pyo);
+    return pyo;
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
@@ -2355,6 +2534,7 @@ static PyMethodDef _muimaster_methods[] = {
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {"_setwinpointer", _muimaster_setwinpointer, METH_VARARGS, NULL},
     {"_BOOPSI2Python", _muimaster_boopsitopython, METH_VARARGS, NULL},
+    {"_APTR2Python", _muimaster_aptr2python, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -2506,6 +2686,7 @@ INITFUNC(void) {
     if (PyType_Ready(&PyBOOPSIObject_Type) < 0) return;
     if (PyType_Ready(&PyMUIObject_Type) < 0) return;
     if (PyType_Ready(&PyEventHandlerObject_Type) < 0) return;
+    if (PyType_Ready(&CHookObject_Type) < 0) return;
 
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
@@ -2514,6 +2695,7 @@ INITFUNC(void) {
     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
+    ADD_TYPE(m, "_CHook", &CHookObject_Type);
 }
 //-
 
