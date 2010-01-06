@@ -24,21 +24,15 @@
 ###############################################################################
 
 from pymui import *
-from sys import getrefcount
 
 t1 = 'MainWindow'
-
-rc1 = getrefcount(t1)
 win = Window(t1)
-rc2 = getrefcount(t1)
-try:
-    assert rc2 == (rc1+1)
-except:
-    print rc1, rc2
-    raise
+
+assert isinstance(win.Title, c_STRPTR)
+assert win.Title.value == t1
 
 def onclose(evt, win):
-    print "Received 'CloseRequest' from Window:", evt.source
+    print "Received 'CloseRequest' from Window:", evt.Source
     win.KillApp()
 
 win.Notify('CloseRequest', True, onclose, win)

@@ -24,6 +24,5 @@
 ###############################################################################
 
 from pymui import *
-from sys import getrefcount as rc
 
 o = Cycle(['toto', 'titi'])

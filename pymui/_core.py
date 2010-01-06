@@ -24,7 +24,7 @@
 ###############################################################################
 
 import sys, functools, array, ctypes, weakref
-from ctypes import sizeof
+import ctypes as _ct
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -65,164 +65,190 @@ TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 #### PyMUI C types
 ################################################################################
 
-class PyMUICType:
-    __pt_cache = {}
+class PyMUICType(object):
+    """PyMUICType: base class for all values types accepted by MUI API.
+    
+    MUI accepts only 32bit integer value type, signed or unsigned.
+    So any data shall be have this representation to be given to MUI.
+    """
+
+    _iskept = False
+
+    def __long__(self):
+        """Should return a 32bit integer value usable for MUI.
+
+        Subclass shall implement it.
+        """
+        raise AssertionError("Shall be implemented by subclasses")
+
+    @classmethod
+    def _asobj(cl, v):
+        """Given 32bit integer value is converted into suitable Python object.
         
-    @classmethod
-    def pointertype(cl):
-        n = 'LP_' + cl.__name__
-        if n in cl.__pt_cache: return cl.__pt_cache[n]
-        ptr = type(n, (ctypes._Pointer, AsCPointer), {'_type_': cl})
-        cl.__pt_cache[n] = ptr
-        return ptr
+        This function is for PyMUI internal usage only!
+        
+        Subclass shall implement it.
+        """
+        raise AssertionError("Shall be implemented by subclasses")
 
-    def pointer(self):
-        return self.pointertype()(self)
+    @property
+    def contents(self):
+        """Returns the logical contents as a Python object.
 
-    @classmethod
-    def mkarray(cl, c):
-        if isinstance(c, (tuple, list)):
-            inst = c
-            c = len(c)
-        else:
-            inst = None
+        Subclass may implement it (default is the object itself).
+        """
+        return self
 
-        n = cl.__name__ + '_Array_%u' % c
-        if n in cl.__pt_cache:
-            ncl = cl.__pt_cache[n]
-        else:
-            ncl = type(n, (ctypes.Array, AsCArray), {'_length_': c, '_type_': cl})
-            cl.__pt_cache[n] = ncl
-
-        if inst is None:
-            return ncl
-
-        o = ncl()
-        for i in xrange(c):
-            o[i].contents = inst[i]
-        return o
-
-
-class AsCInteger(PyMUICType):
-    keep = False
+    __pt_cache = {}
     
     @classmethod
-    def tomui(cl, o):
-        if hasattr(o, 'value'):
-            return o, o.value
+    def _PointerType(cl):
+        name = 'PT_'+cl.__name__
+        x = cl.__pt_cache.get(name)
+        if x is None:
+            x = type(name, (_ct.POINTER(cl), CPointer), {'_type_': cl})
+            cl.__pt_cache[name] = x
+        return x
 
-        try:
-            return o, cl(o) # return keep value shall be the source object and not the converted here!
-        except:
-            return o, long(o)
+    @property
+    def _pointer(self):
+        return self._PointerType()(self)
 
     @classmethod
-    def asobj(cl, i):
-        return cl(i).value
+    def arrayof(cl, n):
+        return type('%s_Array_%u' % (cl.__name__, n), (cl*n, CArray), {'_type_': cl, '_length_': n})
 
+    @classmethod
+    def c_size(cl):
+        return _ct.sizeof(cl)
+
+
+class CSimpleValue(PyMUICType):
     def __long__(self):
         return self.value
 
-class AsCArray(PyMUICType):
-    keep = True
-
     @classmethod
-    def tomui(cl, o):
-        if o is None: return None, 0
-        if isinstance(o, cl): return o, ctypes.addressof(o)
-        x=cl()
-        x[:] = o
-        return x, ctypes.addressof(x)
+    def _asobj(cl, v):
+        return cl(v)
 
-    @classmethod
-    def asobj(cl, i):
-        if i: return cl.from_address(i)
-        return None
-
-    def __long__(self):
-        return ctypes.addressof(self)
-
-class AsCPointer(PyMUICType):
-    keep = True
-    
-    @classmethod
-    def tomui(cl, o):
-        if not isinstance(o, cl): o = cl(cl._type_(o))
-        return o, o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
-
-    @classmethod
-    def asobj(cl, i):
-        if i == 0: cl() # no arguments => NULL pointer
-        return cl(cl._type_.from_address(i)) # !!! DANGER !!!
-
-    def __long__(self):
-        return ctypes.cast(self, ctypes.c_void_p).value
-
-class AsCString(ctypes.c_char_p, PyMUICType):
-    keep = True
-
-    @classmethod
-    def tomui(cl, o):
-        if o is None: return None, 0
-        if not isinstance(o, cl): o = cl(o)
-        return o, o
-
-    @classmethod
-    def asobj(cl, i):
-        if i: return ctypes.string_at(i) # !!! DANGER !!!
-        return None
-
-    def __long__(self):
-        return ctypes.cast(self, ctypes.c_void_p).value or 0
-
-    def __hash__(self):
-        return hash(long(self))
-
-# Some AmigaOS types
-class c_CHAR(ctypes.c_char, AsCInteger): pass
-class c_BYTE(ctypes.c_byte, AsCInteger): pass
-class c_UBYTE(ctypes.c_ubyte, AsCInteger): pass
-class c_SHORT(ctypes.c_short, AsCInteger): pass
-class c_USHORT(ctypes.c_ushort, AsCInteger): pass
-class c_LONG(ctypes.c_long, AsCInteger): pass
-class c_ULONG(ctypes.c_ulong, AsCInteger): pass
-class c_STRPTR(AsCString): pass
-class c_BOOL(c_ULONG): pass
-
-class c_APTR(ctypes.c_void_p, AsCInteger):
-    keep = False
-
-    @classmethod
-    def asobj(cl, i):
-        return cl(i)
-
-    def __long__(self):
-        if self.value is None:
-            return 0
+    @property
+    def contents(self):
         return self.value
 
-class c_pTextFont(c_APTR): pass
-class c_pList(c_APTR): pass
-class c_pMinList(c_APTR): pass
 
-# Only used for array
-class c_DOUBLE(ctypes.c_double, AsCInteger):
+# Common base class for CStructure, CArray and CPointer classes.
+class CComplexBase(PyMUICType):
+    _iskept = True
+    
     def __long__(self):
-        raise SystemError("c_DOUBLE can't be used as C type in PyMUI")
+        return _ct.cast(self, _ct.c_void_p).value or 0
 
-class c_pDOUBLE(ctypes.POINTER(ctypes.c_double), AsCPointer):
-    keep = False
-    _type_ = ctypes.c_double
+    @classmethod
+    def _asobj(cl, v):
+        return cl.from_address(v)
 
-    def __new__(cl, x):
-        if not isinstance(x, cl._type_):
-            x = cl._type_(x)
-        return super(c_pDOUBLE, cl).__new__(cl, x)
 
+class CPointer(CComplexBase):
+    @classmethod
+    def _asobj(cl, v):
+        return cl(v)
+
+    
+class CStructure(_ct.Structure, CComplexBase):
+    def __long__(self):
+        return _ct.addressof(self)
+
+    @property
+    def contents(self):
+        return self
+
+
+class CArray(CPointer):
+    def __len__(self):
+        return len(self.contents)
+    
+    @property
+    def contents(self):
+        return self[:]
+
+
+### All MUI acceptable base types
+# Simples
+class c_BYTE(_ct.c_byte, CSimpleValue): pass
+class c_UBYTE(_ct.c_ubyte, CSimpleValue): pass
+class c_SHORT(_ct.c_short, CSimpleValue): pass
+class c_USHORT(_ct.c_ushort, CSimpleValue): pass
+class c_LONG(_ct.c_long, CSimpleValue): pass
+class c_ULONG(_ct.c_ulong, CSimpleValue): pass
+
+class c_APTR(_ct.c_void_p, CSimpleValue): # Only pointer type that is not a CPointer subclass
     def __init__(self, x):
-        if not isinstance(x, self._type_):
-            x = self._type_(x)
-        super(c_pDOUBLE, self).__init__(x)
+        _ct.c_void_p.__init__(self, long(x))
+
+
+# Special cases
+class c_CHAR(_ct.c_char, PyMUICType):
+    def __long__(self):
+        return ord(self.value)
+
+    @classmethod
+    def _asobj(cl, v):
+        return cl(chr(v))
+
+
+class c_BOOL(c_LONG):
+    @property
+    def contents(self):
+        return bool(self.value)
+
+
+class c_STRPTR(_ct.c_char_p, CPointer):
+    def __len__(self):
+        return len(self.value)
+
+    @property
+    def contents(self):
+        return self.value
+
+    def __getitem__(self, index):
+        return self.value[index]
+
+
+# Usefull types
+class c_PyObject(_ct.py_object, CPointer):
+    def __long__(self):
+        x = self.value
+        return (0 if x is None else id(x))
+
+    @property
+    def contents(self):
+        return self.value
+
+    @classmethod
+    def _asobj(cl, v):
+        return cl(_muimaster._APTR2Python(v))
+
+
+class c_BoopsiObject(_ct.py_object, CPointer):
+    def __init__(self, x):
+        _ct.py_object.__init__(self, x)
+
+    def __long__(self):
+        return self.value and self.value._object or 0
+
+    @property
+    def contents(self):
+        return self.value
+
+    @classmethod
+    def _asobj(cl, v):
+        return cl(_muimaster._BOOPSI2Python(v))
+
+
+class c_MUIObject(c_BoopsiObject):
+    def __init__(self, x):
+        c_BoopsiObject.__init__(self, x)
+
 
 class Iterator_c_pSTRPTR:
     def __init__(self, o):
@@ -239,142 +265,100 @@ class Iterator_c_pSTRPTR:
         self.__i += 1
         return v
 
-class c_pSTRPTR(ctypes.POINTER(c_STRPTR), AsCPointer):
-    _type_ = c_STRPTR # XXX: bad! how to change that?
-
-    def __new__(cl, x):
-        if isinstance(x, (tuple, list)):
-            a = (c_STRPTR*(len(x)+1))()
-            a[:-1] = x
-            o = super(c_pSTRPTR, cl).__new__(cl)
-            o.contents = a[0]
-            return o
-        return super(c_pSTRPTR, cl).__new__(cl, x)
+class c_pSTRPTR(c_STRPTR._PointerType()):
+    _type_ = c_STRPTR
 
     def __init__(self, x):
-        if isinstance(x, (tuple, list)):
-            super(c_pSTRPTR, self).__init__()
+        if isinstance(x, (list, tuple)):
+            o = c_STRPTR.arrayof(len(x)+1)(*x)
+            x = o[0]
+        elif isinstance(x, (long, int)):
+            x = c_STRPTR.from_address(x)
         else:
-            super(c_pSTRPTR, self).__init__(x)
+            x = c_STRPTR(x)
+        super(c_pSTRPTR, self).__init__(x)
 
-    @classmethod
-    def tomui(cl, o):
-        if not isinstance(o, cl): o = cl(o)
-        return o, o # handled as buffer object by _muimaster, XXX: is it really better? need to be check.
+    @property
+    def contents(self):
+        i = 0
+        while True:
+            o = self[i]
+            if not o: break
+            yield o
+            i += 1
 
     def __iter__(self):
         return Iterator_c_pSTRPTR(self)
 
-    def __len__(self):
-        c = 0
-        for x in self:
-            if x.value is None:
-                return c
-            c += 1
 
-class c_pObject(c_APTR):
-    keep = True
-
-    def __new__(cl, x):
-        if isinstance(x, PyBOOPSIObject):
-            return ctypes.c_void_p.__new__(cl, x._object)
-        return ctypes.c_void_p.__new__(cl, x)
+class c_pFLOAT(_ct.POINTER(_ct.c_float), CPointer):
+    _type_ = _ct.c_float
 
     def __init__(self, x):
-        if isinstance(x, PyBOOPSIObject):
-            ctypes.c_void_p.__init__(self, x._object)
-        else:
-            ctypes.c_void_p.__init__(self, x)
+        if not isinstance(x, _ct.c_float): x = _ct.c_float(x)
+        super(c_pFLOAT, self).__init__(x)
 
-    @classmethod
-    def asobj(cl, i):
-        return _muimaster._BOOPSI2Python(i) # 0 is accepted
 
-class c_PyObject(c_APTR):
-    keep = True
-
-    def __new__(cl, x):
-        return c_APTR.__new__(cl)
+class c_pDOUBLE(_ct.POINTER(_ct.c_double), CPointer):
+    _type_ = _ct.c_double
 
     def __init__(self, x):
-        c_APTR.__init__(self)
-        self.value = x
+        if not isinstance(x, _ct.c_double): x = _ct.c_double(x)
+        super(c_pDOUBLE, self).__init__(x)
 
-    @classmethod
-    def asobj(cl, i):
-        return _muimaster._APTR2Python(i) # 0 is accepted
 
-    def _set_value(self, x):
-        if not isinstance(x, (int, long)):
-            self._obj = x
-            x = id(x)
-        c_APTR.value.__set__(self, x)
+class c_pTextFont(c_APTR): pass
+class c_pList(c_APTR): pass
+class c_pMinList(c_APTR): pass
 
-    value = property(fget=c_APTR.value.__get__, fset=_set_value)
 
-class c_TagItem(ctypes.Structure):
+class c_TagItem(CStructure):
     _fields_ = [('ti_Tag', c_ULONG),
                 ('ti_Data', c_ULONG)]
-class c_pTagItem(ctypes.POINTER(c_TagItem), AsCPointer): pass
 
-class c_ImageSpec(c_STRPTR):
-    """Image specification can be a string or an integer.
-    MUI pre-defines some integer values: 'MUII_xxx' defines.
-    But this class accept also string specification by its address.
-    In this case the class knows the difference between an address string
-    and a plain integer by compare the given value to 0x10000000.
-    If stricly below, it's an plain integer.
-    If equals or upper, it's a string address.
-    0x10000000 has been choosen because MorphOS map the public memory
-    after this value.
-    """
-
-    @classmethod
-    def asobj(cl, i): # _muimaster always returns a ULONG for i
-        if i < _ADDRESS_MIN: return i
-        return c_STRPTR.asobj(i)
+c_pTagItem = c_TagItem._PointerType()
 
 class c_MenuitemTitle(c_STRPTR):
     """Menuitem title accepts string address and some special integer values.
     Currently only NM_BARLABEL is accepted.
     """
 
-    @classmethod
-    def asobj(cl, i):
-        if i == NM_BARLABEL: return i
-        return c_STRPTR.asobj(i)
+    def __init__(self, x):
+        c_STRPTR.__init__(self, x)
+        self._iskept = long(x) != NM_BARLABEL
+
+    def __long__(self):
+        return c_LONG(c_STRPTR.__long__(self)).value
+
 
 class c_ListTitle(c_STRPTR):
-    @classmethod
-    def tomui(cl, o):
-        if o is True: return None, 1
-        return c_STRPTR.tomui(o)
+    def __init__(self, x):
+        c_STRPTR.__init__(self, x)
+        self._iskept = long(x) > 1
+        
+    @property
+    def contents(self):
+        x = long(self)
+        return (self.value if x > 1 else bool(x))
+
+
+class c_Hook(c_PyObject):
+    def __new__(cl, *args):
+        return c_PyObject.__new__(cl)
+
+    def __init__(self, x, format='II'):
+        if isinstance(x, c_Hook):
+            x = x.value
+        else:
+            x = _muimaster._CHook(x, format)
+        c_PyObject.__init__(self, x)
 
     @classmethod
-    def asobj(cl, i):
-        if i == -1: return True
-        return c_STRPTR.asobj(i)
+    def _asobj(cl, v):
+        return cl(_muimaster._CHook(v))
 
-class c_Hook(c_APTR):
-    keep = True
-
-    def __new__(cl, x, format='II'):
-        self = c_APTR.__new__(cl)
-        self._chook = _muimaster._CHook(x, format) # x can be a CHook pointer value or a callable
-        return self
-
-    def __init__(self, x, *args):
-        c_APTR.__init__(self)
-        self.value = self._chook.address
-
-    @classmethod
-    def tomui(cl, o):
-        if not isinstance(o, c_Hook): o = cl(o)
-        return o, o
-
-    @classmethod
-    def asobj(cl, i):
-        return cl(i)
+    def __long__(self):
+        return self.value.address
 
 
 ################################################################################
@@ -388,50 +372,52 @@ class MAttribute(property):
         assert issubclass(ctype, PyMUICType)
         self.__ctype = ctype
 
-        keep = (ctype.keep if keep is None else keep)
-        self.__keep = keep
-
         if 'i' in isg:
             def _init(obj, v):
-                v, x = ctype.tomui(v)
-                if keep: obj._keep_dict[id] = v
-                return long(x)
+                v = v if isinstance(v, ctype) else ctype(v)
+                if (keep is None and v._iskept) or keep is True:
+                    obj._keep_dict[id] = v
+                return long(v)
         else:
             def _init(*args):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
 
         if 's' in isg:
-            def _setter(obj, v):
-                v, x = ctype.tomui(v)
-                obj._set(id, x)
-                if keep: obj._keep_dict[id] = v
+            def _setter(obj, v, nn=False):
+                v = v if isinstance(v, ctype) else ctype(v)
+                if (keep is None and v._iskept) or keep is True:
+                    obj._keep_dict[id] = v
+                if nn:
+                    obj._nset(id, v)
+                else:
+                    obj._set(id, v)
         else:
             _setter = None
 
         if 'g' in isg:
             def _getter(obj):
-                return ctype.asobj(obj._get(id))
+                return ctype._asobj(obj._get(id))
         else:
             _getter = None
 
         preSet = kwds.get('preSet')
         postSet = kwds.get('postSet')
         if preSet and postSet:
-            def setter(obj, v):
-                _setter(obj, preSet(obj, self, v))
+            def setter(obj, v, nn=False):
+                _setter(obj, preSet(obj, self, v), nn)
                 postSet(obj, self, v)
             def init(obj, v):
                 x = _init(obj, preSet(obj, self, v))
                 postSet(obj, self, v)
                 return x
         elif preSet:
-            def setter(obj, v):
-                _setter(obj, preSet(obj, self, v))
+            def setter(obj, v, nn=False):
+                _setter(obj, preSet(obj, self, v), nn)
             def init(obj, v):
                 return _init(obj, preSet(obj, self, v))
         elif postSet:
-            def setter(obj, v):
-                _setter(obj, v)
+            def setter(obj, v, nn=False):
+                _setter(obj, v, nn)
                 postSet(obj, self, v)
             def init(obj, v):
                 x = _init(obj, v)
@@ -459,6 +445,7 @@ class MAttribute(property):
         else:
             getter = _getter
 
+        self.setter = setter
         property.__init__(self, fget=getter, fset=setter, doc=doc)
 
     @property
@@ -469,9 +456,7 @@ class MAttribute(property):
     
     @property
     def ctype(self): return self.__ctype
-    
-    @property
-    def keep(self): return self.__keep
+
 
 #===============================================================================
 
@@ -483,7 +468,7 @@ class MMethod(property):
         if rettype is None:
             self.__retconv = lambda x: None
         else:
-            self.__retconv = rettype.asobj
+            self.__retconv = rettype._asobj
         
         if argstypes:
             if not isinstance(argstypes, (tuple, list)):
@@ -492,12 +477,10 @@ class MMethod(property):
                 cb = (self.call1va if varargs else self.call1)
             else:
                 assert any(issubclass(tp, PyMUICType) for tp in argstypes)
-                self.__argstp = tuple(argstypes)
-                self.__varargs = varargs
+                self.__argstp = argstypes
                 cb = (self.callva if varargs else self.call)
         else:
             self.__argstp = None
-            self.__varargs = False
             cb = self.call0
 
         self.__cb = cb
@@ -517,51 +500,33 @@ class MMethod(property):
         if len(self.__argstp) > len(args):
             raise AttributeError("method accepts only %u argument(s), get %u"
                                  % (len(self.__argstp), len(args)))
-        data = []
-        keep = []
-        for tp, v in zip(self.__argstp, args):
-            o, a = tp.tomui(v)
-            data.append(a)
-            if o is not None: keep.append(o)
-        for v in args[len(self.__argstp):]:
-            data.append(long(v))
-            keep.append(v)
-       
-        return self.__retconv(obj._do(self.__id, tuple(data)))
-
+        data = [ tp(v) for tp, v in zip(self.__argstp, args) ]
+        data += [ long(v) for v in args[len(self.__argstp):] ]
+        return self.__retconv(obj._do(self.__id, data))
+    
     def call1va(self, obj, data, *args):
-        o, x = self.__argstp.tomui(data)
-
-        data = [x]
-        keep = [o]
-        for v in args:
-            data.append(long(v))
-            keep.append(v)
-       
-        return self.__retconv(obj._do(self.__id, tuple(data)))
+        data = [ self.__argstp(data) ]
+        data += [ long(v) for v in args ]
+        return self.__retconv(obj._do(self.__id, data))
 
     def call(self, obj, *args):
         if len(args) != len(self.__argstp):
             raise AttributeError("method accepts only %u argument(s), get %u"
                                  % (len(self.__argstp), len(args)))
-        data = []
-        keep = []
-        for tp, v in zip(self.__argstp, args):
-            o, a = tp.tomui(v)
-            data.append(a)
-            if o is not None: keep.append(o)
-
-        return self.__retconv(obj._do(self.__id, tuple(data)))
+        data = [ tp(v) for tp, v in zip(self.__argstp, args) ]
+        return self.__retconv(obj._do(self.__id, data))
             
     def call0(self, obj):
         return self.__retconv(obj._do(self.__id))
 
     def call1(self, obj, data):
-        o, x = self.__argstp.tomui(data)
+        x = self.__argstp(data)
         return self.__retconv(obj._do1(self.__id, long(x)))
 
     @property
-    def id(self): return self.__id
+    def id(self):
+        return self.__id
+
 
 #===============================================================================
 
@@ -593,7 +558,7 @@ class AttributeNotify(object):
     def __init__(self, trigvalue, cb, args):
         self.cb = cb
         self.args = args
-        self.trigvalue = trigvalue
+        self.trigvalue = long(trigvalue)
 
     def __call__(self, e):
         return self.cb(e, *self.args)
@@ -639,6 +604,7 @@ class MUIMetaClass(type):
            dct[name+'_'+k] = v
 
         return type.__new__(metacl, name, bases, dct)
+
 
 #===============================================================================
 
@@ -780,14 +746,14 @@ class rootclass(PyMUIObject, BOOPSIMixed):
 class Notify(rootclass):
     CLASSID = MUIC_Notify
 
-    ApplicationObject = MAttribute(MUIA_ApplicationObject , '..g', c_pObject)
+    ApplicationObject = MAttribute(MUIA_ApplicationObject , '..g', c_MUIObject)
     AppMessage        = MAttribute(MUIA_AppMessage        , '..g', c_APTR)
     HelpLine          = MAttribute(MUIA_HelpLine          , 'isg', c_LONG)
     HelpNode          = MAttribute(MUIA_HelpNode          , 'isg', c_STRPTR)
     NoNotify          = MAttribute(MUIA_NoNotify          , '.s.', c_BOOL)
     NoNotifyMethod    = MAttribute(MUIA_NoNotifyMethod    , '.s.', c_ULONG)
     ObjectID          = MAttribute(MUIA_ObjectID          , 'isg', c_ULONG)
-    Parent            = MAttribute(MUIA_Parent            , '..g', c_pObject)
+    Parent            = MAttribute(MUIA_Parent            , '..g', c_MUIObject)
     Revision          = MAttribute(MUIA_Revision          , '..g', c_LONG)
     # forbidden: MUIA_UserData (intern usage)
     Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
@@ -795,17 +761,14 @@ class Notify(rootclass):
     CallHook = MMethod(MUIM_CallHook, c_Hook, varargs=True)
 
     def NNSet(self, attr, v):
-        attr = self._getMA(attr)
-        v, x = attr.ctype.tomui(v)
-        self._nnset(attr.id, x)
-        if attr.keep and v is not None: self._keep_dict[attr.id] = v
+        self._getMA(attr).setter(self, v, True)
 
     def _notify_cb(self, a, v, nv):
         attr = self._getMAByID(a)
-        v = attr.ctype.asobj(v)
+        v = attr.ctype(v)
         e = AttributeEvent(self, v, nv)
         for o in self._notify_cbdict[a]:
-            if o.trigvalue == MUIV_EveryTime or o.trigvalue == v:
+            if o.trigvalue == MUIV_EveryTime or o.trigvalue == long(v):
                 if o(e): return
 
     def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *_args, **kwds):
@@ -820,18 +783,15 @@ class Notify(rootclass):
             self._notify_cbdict[attr.id] = [ event ]
 
     def KillApp(self):
-        self.ApplicationObject.Quit()
+        self.ApplicationObject.contents.Quit()
 
-    @CallHook.alias
-    def CallHook(self, meth, hook, arg0, *args):
-        return meth(self, hook, *((arg0,)+args))
 
 #===============================================================================
 
 class Family(Notify):
     CLASSID = MUIC_Family
     
-    Child = MAttribute(MUIA_Family_Child, 'i..', c_pObject)
+    Child = MAttribute(MUIA_Family_Child, 'i..', c_MUIObject)
     List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
 
     def __init__(self, **kwds):
@@ -841,48 +801,47 @@ class Family(Notify):
             self.AddTail(child)
 
     def AddHead(self, o):
-        assert isinstance(o, (Family, c_pObject))
-        x = self._do1(MUIM_Family_AddHead, long(c_pObject(o)))
-        if isinstance(o, Family):
-            self._cadd(o)
+        if isinstance(o, c_MUIObject): o = o.value
+        assert isinstance(o, Family)
+        x = self._do1(MUIM_Family_AddHead, o)
+        self._cadd(o)
         return x
 
     def AddTail(self, o):
-        assert isinstance(o, (Family, c_pObject))
-        x = self._do1(MUIM_Family_AddTail, long(c_pObject(o)))
-        if isinstance(o, Family):
-            self._cadd(o)
+        if isinstance(o, c_MUIObject): o = o.value
+        assert isinstance(o, Family)
+        x = self._do1(MUIM_Family_AddTail, o)
+        self._cadd(o)
         return x
 
     def Insert(self, o, p):
+        if isinstance(o, c_MUIObject): o = o.value
+        if isinstance(p, c_MUIObject): p = p.value
+        isinstance(o, Family) and isinstance(p, Family)
         assert self._cin(p)
-        assert isinstance(o, (Family, c_pObject))
-        x = self._do(MUIM_Family_Insert, (long(c_pObject(o)), long(c_pObject(p))))
-        if isinstance(o, Family):
-            self._cadd(o)
+        x = self._do(MUIM_Family_Insert, (o, p))
+        self._cadd(o)
         return x
 
     def Remove(self, o):
+        if isinstance(o, c_MUIObject): o = o.value
         assert self._cin(o)
-        x = self._do1(MUIM_Family_Remove, long(c_pObject(o)))
+        x = self._do1(MUIM_Family_Remove, o)
         self._crem(o)
         return x
 
     def Sort(self, *args):
-        a = (c_pObject * (len(args)+1))() # transitive object, not needed to be keep
+        a = c_MUIObject.arrayof(len(args)+1)() # transitive object, not needed to be keep
         a[:] = args
-        return self._do1(MUIM_Family_Sort, ctypes.addressof(a))
+        return self._do1(MUIM_Family_Sort, a)
 
     def Transfer(self, f):
-        if isinstance(f, Family):
-            x = self._do1(MUIM_Family_Transfer, long(c_pObject(o)))
-            for o in self._children:
-                f._cadd(o)
-            self._cclear
-        elif isinstance(f, c_pObject):
-            x = self._do1(MUIM_Family_Transfer, long(o))
-        else:
-            raise TypeError("Family or c_pObject instance waited as argument, not %s" % type(f))
+        if isinstance(f, c_MUIObject): f = f.value
+        assert isinstance(f, Family)
+        x = self._do1(MUIM_Family_Transfer, f)
+        for o in self._children:
+            f._cadd(o)
+        self._cclear()
         return x
 
 #===============================================================================
@@ -894,7 +853,7 @@ class Menustrip(Family):
 
     InitChange = MMethod(MUIM_Menustrip_InitChange)
     ExitChange = MMethod(MUIM_Menustrip_ExitChange)
-    Popup      = MMethod(MUIM_Menustrip_Popup, (c_pObject, c_ULONG, c_LONG, c_LONG))
+    Popup      = MMethod(MUIM_Menustrip_Popup, (c_MUIObject, c_ULONG, c_LONG, c_LONG))
 
     def __init__(self, items=None, **kwds):
         super(Menustrip, self).__init__(**kwds)
@@ -949,7 +908,7 @@ class Menuitem(Family):
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
     def Bind(self, callback, *args):
-        self.Notify('Trigger', callback=lambda x: callback(), args=args)
+        self.Notify('Trigger', callback=lambda e: callback(), args=args)
 
 #===============================================================================
 
@@ -971,13 +930,13 @@ class Application(Notify):
     Description    = MAttribute(MUIA_Application_Description    , 'i.g', c_STRPTR)
     DiskObject     = MAttribute(MUIA_Application_DiskObject     , 'isg', c_APTR)
     DoubleStart    = MAttribute(MUIA_Application_DoubleStart    , '..g', c_BOOL)
-    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_pObject)
+    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_MUIObject)
     ForceQuit      = MAttribute(MUIA_Application_ForceQuit      , '..g', c_BOOL)
     HelpFile       = MAttribute(MUIA_Application_HelpFile       , 'isg', c_STRPTR)
     Iconified      = MAttribute(MUIA_Application_Iconified      , '.sg', c_BOOL)
     MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
-    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_pObject, postSet=__postSetMenuStrip)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_MUIObject, postSet=__postSetMenuStrip)
     RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_Hook)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
     RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
@@ -988,23 +947,23 @@ class Application(Notify):
     UsedClasses    = MAttribute(MUIA_Application_UsedClasses    , 'isg', c_pSTRPTR)
     UseRexx        = MAttribute(MUIA_Application_UseRexx        , 'i..', c_BOOL)
     Version        = MAttribute(MUIA_Application_Version        , 'i.g', c_STRPTR)
-    Window         = MAttribute(MUIA_Application_Window         , 'i..', c_pObject)
+    Window         = MAttribute(MUIA_Application_Window         , 'i..', c_MUIObject)
     WindowList     = MAttribute(MUIA_Application_WindowList     , '..g', c_pList)
 
-    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , c_pObject)
+    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , c_MUIObject)
     #AddInputHandler
     #BuildSettingsPanel
     CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
     #DefaultConfigItem
     InputBuffered    = MMethod(MUIM_Application_InputBuffered)
     Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
-    NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG.pointertype(), rettype=c_ULONG)
+    NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType(), rettype=c_ULONG)
     OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
-    PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_pObject, c_LONG), varargs=True)
+    PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_MUIObject, c_LONG), varargs=True)
     #RemInputHandler
     ReturnID         = MMethod(MUIM_Application_ReturnID         , c_ULONG)
     Save             = MMethod(MUIM_Application_Save             , c_STRPTR)
-    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , (c_pObject, c_STRPTR, c_STRPTR, c_LONG))
+    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , (c_MUIObject, c_STRPTR, c_STRPTR, c_LONG))
 
     def __init__(self, **kwds):
         win = kwds.pop('Window', None)
@@ -1044,12 +1003,12 @@ class Window(Notify):
         self._cadd(o)
 
     def __checkForApp(self, attr, o):
-        if not self.ApplicationObject:
+        if not self.ApplicationObject.contents:
             raise AttributeError("Window not linked to an application yet")
         return o
 
     Activate                = MAttribute(MUIA_Window_Activate                , 'isg', c_BOOL)
-    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_pObject)
+    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_MUIObject)
     AltHeight               = MAttribute(MUIA_Window_AltHeight               , 'i.g', c_LONG)
     AltLeftEdge             = MAttribute(MUIA_Window_AltLeftEdge             , 'i.g', c_LONG)
     AltTopEdge              = MAttribute(MUIA_Window_AltTopEdge              , 'i.g', c_LONG)
@@ -1059,7 +1018,7 @@ class Window(Notify):
     Borderless              = MAttribute(MUIA_Window_Borderless              , 'i..', c_BOOL)
     CloseGadget             = MAttribute(MUIA_Window_CloseGadget             , 'i..', c_BOOL)
     CloseRequest            = MAttribute(MUIA_Window_CloseRequest            , '..g', c_BOOL)
-    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_pObject)
+    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_MUIObject)
     DepthGadget             = MAttribute(MUIA_Window_DepthGadget             , 'i..', c_BOOL)
     DisableKeys             = MAttribute(MUIA_Window_DisableKeys             , 'isg', c_LONG)
     DragBar                 = MAttribute(MUIA_Window_DragBar                 , 'i..', c_BOOL)
@@ -1070,15 +1029,15 @@ class Window(Notify):
     IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
     LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
     MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
-    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_pObject)
-    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_pObject)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject)
+    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_MUIObject)
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL,
                                          preSet=__checkForApp)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
-    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_pObject)
-    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_pObject,
+    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject,
                                          preSet=__preSetRootObject, postSet=__postSetRootObject)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
@@ -1108,7 +1067,7 @@ class Window(Notify):
 
     @classmethod
     def __new_ID(cl, i=-1):
-        if isinstance(i, basestring):
+        if isinstance(i, str):
             i = -1 # XXX: ID bugged when id is string
         if i == -1:
             for i in xrange(1<<10):
@@ -1118,10 +1077,10 @@ class Window(Notify):
             raise RuntimeError("No more availables IDs")
         else:
             # use address of string as ID integer, but store the string
-            if isinstance(i, basestring):
+            if isinstance(i, str):
                 s = i
-                i = ctypes.addressof(c_STRPTR(i))
-            if i in cl.__idset:
+                i = long(c_STRPTR(i))
+            if s in cl.__idset:
                 raise RuntimeError("ID %u already taken" % i)
             if s:
                 cl.__idset.add(s)
@@ -1246,7 +1205,7 @@ class Window(Notify):
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
 
-    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_pObject)
+    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject)
 
     def __init__(self, app, **kwds):
         super(AboutMUI, self).__init__(Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
@@ -1257,10 +1216,10 @@ class AboutMUI(Window):
 class Area(Notify):
     CLASSID = MUIC_Area
 
-    Background         = MAttribute(MUIA_Background         , 'is.', c_ImageSpec)
+    Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
-    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_pObject)
-    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_pObject)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject)
+    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
     ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
     Disabled           = MAttribute(MUIA_Disabled           , 'isg', c_BOOL)
@@ -1302,7 +1261,7 @@ class Area(Notify):
     Weight             = MAttribute(MUIA_Weight             , 'i..', c_LONG)
     Width              = MAttribute(MUIA_Width              , '..g', c_LONG)
     Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
-    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_pObject)
+    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
@@ -1406,7 +1365,7 @@ class Image(Area):
     FreeHoriz       = MAttribute(MUIA_Image_FreeHoriz       , 'i..', c_BOOL)
     FreeVert        = MAttribute(MUIA_Image_FreeVert        , 'i..', c_BOOL)
     OldImage        = MAttribute(MUIA_Image_OldImage        , 'i..', c_APTR)
-    Spec            = MAttribute(MUIA_Image_Spec            , 'i..', c_ImageSpec)
+    Spec            = MAttribute(MUIA_Image_Spec            , 'i..', c_STRPTR)
     State           = MAttribute(MUIA_Image_State           , 'is.', c_LONG)
 
     @classmethod
@@ -1506,7 +1465,7 @@ class String(Area):
     Accept         = MAttribute(MUIA_String_Accept         , 'isg', c_STRPTR)
     Acknowledge    = MAttribute(MUIA_String_Acknowledge    , '..g', c_STRPTR)
     AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR    , 'isg', c_BOOL)
-    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_pObject)
+    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_MUIObject)
     BufferPos      = MAttribute(MUIA_String_BufferPos      , '.sg', c_LONG)
     Contents       = MAttribute(MUIA_String_Contents       , 'isg', c_STRPTR)
     DisplayPos     = MAttribute(MUIA_String_DisplayPos     , '.sg', c_LONG)
@@ -1644,7 +1603,7 @@ class Group(Area):
     CLASSID = MUIC_Group
 
     ActivePage   = MAttribute(MUIA_Group_ActivePage   , 'isg', c_LONG)
-    Child        = MAttribute(MUIA_Group_Child        , 'i..', c_pObject)
+    Child        = MAttribute(MUIA_Group_Child        , 'i..', c_MUIObject)
     ChildList    = MAttribute(MUIA_Group_ChildList    , '..g', c_pList)
     Columns      = MAttribute(MUIA_Group_Columns      , 'is.', c_LONG)
     Horiz        = MAttribute(MUIA_Group_Horiz        , 'i..', c_BOOL)
@@ -1664,10 +1623,9 @@ class Group(Area):
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
         
-        if self.__class__ is Group:
-            x = kwds.pop('Title', None)
-            if x:
-                kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
+        x = kwds.pop('GroupTitle', None)
+        if x:
+            kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
 
         x = kwds.pop('InnerSpacing', None)
         if x:
@@ -1942,7 +1900,7 @@ class Coloradjust(Group):
     Green  = MAttribute(MUIA_Coloradjust_Green  , 'isg', c_ULONG)
     ModeID = MAttribute(MUIA_Coloradjust_ModeID , 'isg', c_ULONG)
     Red    = MAttribute(MUIA_Coloradjust_Red    , 'isg', c_ULONG)
-    RGB    = MAttribute(MUIA_Coloradjust_RGB    , 'isg', c_ULONG.mkarray(3))
+    RGB    = MAttribute(MUIA_Coloradjust_RGB    , 'isg', c_ULONG.arrayof(3))
 
 #===============================================================================
 

@@ -575,22 +575,19 @@ py2long(PyObject *obj, LONG *value)
 {
     if (obj == Py_None)
         *value = 0;
-    else if (PyObject_CheckReadBuffer(obj)) {
-        const void *buf;
-        Py_ssize_t len; /* not used */
-
-        if (PyObject_AsReadBuffer(obj, &buf, &len))
-            return -1;
-
-        *value = (LONG)(*(APTR *)buf); /* handle buffer as a pointer on a pointer value */
-    } else if (PyNumber_Check(obj)) {
+    else if (PyBOOPSIObject_Check(obj))
+        *value = (LONG)PyBOOPSIObject_GET_OBJECT(obj);
+    else if (PyLong_CheckExact(obj))
         *value = PyLong_AsUnsignedLongMask(obj);
-        if (PyErr_Occurred())
-            return -1;
-    } else {
-        PyErr_SetString(PyExc_TypeError, "value shall support Number or Buffer protocol");
-        return -1;
+    else {
+        PyObject *x = PyNumber_Long(obj); /* NR */
+
+        if (NULL == x) return -1;
+        *value = PyLong_AsUnsignedLongMask(x);
+        Py_DECREF(x);
     }
+
+    DPRINT("obj=%p-'%s', value = 0x%08x\n", obj, OBJ_TNAME_SAFE(obj), *value);
 
     return 0;
 }
@@ -601,7 +598,6 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 {
     CHookObject *self = hook->h_Data;
     PyGILState_STATE gstate;
-    PyThreadState *_save;
     PyObject *r;
     ULONG result;
 
@@ -1209,27 +1205,37 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "I|O!", &meth, &PyTuple_Type, &meth_data)) /* BR */
+    if (!PyArg_ParseTuple(args, "I|O", &meth, &meth_data)) /* BR */
         return NULL;
 
     DPRINT("DoMethod(obj=%p, meth=0x%08x):\n", obj, meth);
 
     if (meth_data) {
-        n = PyTuple_GET_SIZE(meth_data);
-        DPRINT("#  Data size = %d\n", n);
-        msg = (DoMsg *) PyMem_Malloc(sizeof(DoMsg) + sizeof(ULONG) * n);
-        if (NULL == msg)
-            return PyErr_NoMemory();
+        PyObject *fast = PySequence_Fast(meth_data, "Method data should be convertible into tuple or list"); /* NR */
+        PyObject **data;
 
+        if (NULL == fast)
+            return NULL;
+
+        n = PySequence_Fast_GET_SIZE(fast);
+        DPRINT("#  Data size = %d\n", n);
+
+        msg = (DoMsg *) PyMem_Malloc(sizeof(DoMsg) + sizeof(ULONG) * n);
+        if (NULL == msg) {
+            Py_DECREF(fast);
+            return PyErr_NoMemory();
+        }
+
+        data = PySequence_Fast_ITEMS(fast);
         for (i=0; i < n; i++) {
-            PyObject *o = PyTuple_GET_ITEM(meth_data, i);
             LONG *ptr = (ULONG *) &msg->data[i];
 
-            if (py2long(o, ptr))
+            if (py2long(data[i], ptr))
                 break;
-
             DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, *ptr, (ULONG)*ptr, *ptr);
         }
+
+        Py_DECREF(fast);
 
         if (PyErr_Occurred()) {
             PyMem_Free(msg);
@@ -1244,9 +1250,9 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
          */
 
         msg->MethodID = meth;
-        ret = PyInt_FromLong(DoMethodA(obj, (Msg) msg));
+        ret = PyLong_FromUnsignedLong(DoMethodA(obj, (Msg) msg));
     } else
-        ret = PyInt_FromLong(DoMethod(obj, meth));
+        ret = PyLong_FromLong(DoMethod(obj, meth));
 
     DPRINT("DoMethod(%08x), done\n", meth);
     return ret;
