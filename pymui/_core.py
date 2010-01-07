@@ -23,8 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-import sys, functools, array, ctypes, weakref
-import ctypes as _ct
+import sys, functools, array, weakref
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -35,13 +34,17 @@ def debug(x, *args):
     if DEBUG:
         print x % args
 
-import _muimaster
-from _muimaster import *
-from defines import *
+try:
+    import _muimaster
+    from _muimaster import *
+except:
+    class _muimaster:
+        class EventHandler: pass
+        _setwinpointer = None
+    class PyMUIObject(object): pass
 
-# MorphOS maps public memory from this address.
-# Below it's not a valid address and may lead to CPU bus exception.
-_ADDRESS_MIN = 0x10000000
+from .defines import *
+from .types import *
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
@@ -62,255 +65,41 @@ TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 ##
 
 ################################################################################
-#### PyMUI C types
+#### Usefull types
 ################################################################################
 
-class PyMUICType(object):
-    """PyMUICType: base class for all values types accepted by MUI API.
-    
-    MUI accepts only 32bit integer value type, signed or unsigned.
-    So any data shall be have this representation to be given to MUI.
-    """
-
-    _iskept = False
-
-    def __long__(self):
-        """Should return a 32bit integer value usable for MUI.
-
-        Subclass shall implement it.
-        """
-        raise AssertionError("Shall be implemented by subclasses")
-
-    @classmethod
-    def _asobj(cl, v):
-        """Given 32bit integer value is converted into suitable Python object.
-        
-        This function is for PyMUI internal usage only!
-        
-        Subclass shall implement it.
-        """
-        raise AssertionError("Shall be implemented by subclasses")
-
-    @property
-    def contents(self):
-        """Returns the logical contents as a Python object.
-
-        Subclass may implement it (default is the object itself).
-        """
-        return self
-
-    __pt_cache = {}
-    
-    @classmethod
-    def _PointerType(cl):
-        name = 'PT_'+cl.__name__
-        x = cl.__pt_cache.get(name)
-        if x is None:
-            x = type(name, (_ct.POINTER(cl), CPointer), {'_type_': cl})
-            cl.__pt_cache[name] = x
-        return x
-
-    @property
-    def _pointer(self):
-        return self._PointerType()(self)
-
-    @classmethod
-    def arrayof(cl, n):
-        return type('%s_Array_%u' % (cl.__name__, n), (cl*n, CArray), {'_type_': cl, '_length_': n})
-
-    @classmethod
-    def c_size(cl):
-        return _ct.sizeof(cl)
-
-
-class CSimpleValue(PyMUICType):
-    def __long__(self):
-        return self.value
-
-    @classmethod
-    def _asobj(cl, v):
-        return cl(v)
-
-    @property
-    def contents(self):
-        return self.value
-
-
-# Common base class for CStructure, CArray and CPointer classes.
-class CComplexBase(PyMUICType):
-    _iskept = True
-    
-    def __long__(self):
-        return _ct.cast(self, _ct.c_void_p).value or 0
-
-    @classmethod
-    def _asobj(cl, v):
-        return cl.from_address(v)
-
-
-class CPointer(CComplexBase):
-    @classmethod
-    def _asobj(cl, v):
-        return cl(v)
-
-    
-class CStructure(_ct.Structure, CComplexBase):
-    def __long__(self):
-        return _ct.addressof(self)
-
-    @property
-    def contents(self):
-        return self
-
-
-class CArray(CPointer):
-    def __len__(self):
-        return len(self.contents)
-    
-    @property
-    def contents(self):
-        return self[:]
-
-
-### All MUI acceptable base types
-# Simples
-class c_BYTE(_ct.c_byte, CSimpleValue): pass
-class c_UBYTE(_ct.c_ubyte, CSimpleValue): pass
-class c_SHORT(_ct.c_short, CSimpleValue): pass
-class c_USHORT(_ct.c_ushort, CSimpleValue): pass
-class c_LONG(_ct.c_long, CSimpleValue): pass
-class c_ULONG(_ct.c_ulong, CSimpleValue): pass
-
-class c_APTR(_ct.c_void_p, CSimpleValue): # Only pointer type that is not a CPointer subclass
-    def __init__(self, x):
-        _ct.c_void_p.__init__(self, long(x))
-
-
-# Special cases
-class c_CHAR(_ct.c_char, PyMUICType):
-    def __long__(self):
-        return ord(self.value)
-
-    @classmethod
-    def _asobj(cl, v):
-        return cl(chr(v))
-
-
-class c_BOOL(c_LONG):
-    @property
-    def contents(self):
-        return bool(self.value)
-
-
-class c_STRPTR(_ct.c_char_p, CPointer):
-    def __len__(self):
-        return len(self.value)
-
-    @property
-    def contents(self):
-        return self.value
-
-    def __getitem__(self, index):
-        return self.value[index]
-
-
-# Usefull types
-class c_PyObject(_ct.py_object, CPointer):
+class c_BoopsiObject(_ct.py_object, CPointer):
     def __long__(self):
         x = self.value
-        return (0 if x is None else id(x))
-
-    @property
-    def contents(self):
-        return self.value
+        return (0 if x is None else x._object)
 
     @classmethod
-    def _asobj(cl, v):
-        return cl(_muimaster._APTR2Python(v))
-
-
-class c_BoopsiObject(_ct.py_object, CPointer):
-    def __init__(self, x):
-        _ct.py_object.__init__(self, x)
-
-    def __long__(self):
-        return self.value and self.value._object or 0
-
-    @property
-    def contents(self):
-        return self.value
-
-    @classmethod
-    def _asobj(cl, v):
+    def FromLong(cl, v):
         return cl(_muimaster._BOOPSI2Python(v))
 
+class c_MUIObject(c_BoopsiObject): pass
 
-class c_MUIObject(c_BoopsiObject):
-    def __init__(self, x):
-        c_BoopsiObject.__init__(self, x)
+class c_Hook(c_PyObject):
+    def __new__(cl, *args):
+        return c_PyObject.__new__(cl)
 
-
-class Iterator_c_pSTRPTR:
-    def __init__(self, o):
-        self.__o = o
-        self.__i = 0
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        v = self.__o[self.__i]
-        if v.value is None:
-            raise StopIteration()
-        self.__i += 1
-        return v
-
-class c_pSTRPTR(c_STRPTR._PointerType()):
-    _type_ = c_STRPTR
-
-    def __init__(self, x):
-        if isinstance(x, (list, tuple)):
-            o = c_STRPTR.arrayof(len(x)+1)(*x)
-            x = o[0]
-        elif isinstance(x, (long, int)):
-            x = c_STRPTR.from_address(x)
+    def __init__(self, x=None, format='II'):
+        if x:
+            c_PyObject.__init__(self, _muimaster._CHook(x, format))
         else:
-            x = c_STRPTR(x)
-        super(c_pSTRPTR, self).__init__(x)
+            c_PyObject.__init__(self)
 
-    @property
-    def contents(self):
-        i = 0
-        while True:
-            o = self[i]
-            if not o: break
-            yield o
-            i += 1
+    def __long__(self):
+        x = self.value
+        return (0 if x is None else x.address)
 
-    def __iter__(self):
-        return Iterator_c_pSTRPTR(self)
-
-
-class c_pFLOAT(_ct.POINTER(_ct.c_float), CPointer):
-    _type_ = _ct.c_float
-
-    def __init__(self, x):
-        if not isinstance(x, _ct.c_float): x = _ct.c_float(x)
-        super(c_pFLOAT, self).__init__(x)
-
-
-class c_pDOUBLE(_ct.POINTER(_ct.c_double), CPointer):
-    _type_ = _ct.c_double
-
-    def __init__(self, x):
-        if not isinstance(x, _ct.c_double): x = _ct.c_double(x)
-        super(c_pDOUBLE, self).__init__(x)
-
+    @classmethod
+    def FromLong(cl, v):
+        return cl(_muimaster._CHook(v))
 
 class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
-
 
 class c_TagItem(CStructure):
     _fields_ = [('ti_Tag', c_ULONG),
@@ -323,43 +112,17 @@ class c_MenuitemTitle(c_STRPTR):
     Currently only NM_BARLABEL is accepted.
     """
 
-    def __init__(self, x):
-        c_STRPTR.__init__(self, x)
-        self._iskept = long(x) != NM_BARLABEL
-
     def __long__(self):
         return c_LONG(c_STRPTR.__long__(self)).value
 
+    @property
+    def value(self):
+        return (c_STRPTR.value.__get__(self) if long(self) != NM_BARLABEL else NM_BARLABEL)
 
 class c_ListTitle(c_STRPTR):
-    def __init__(self, x):
-        c_STRPTR.__init__(self, x)
-        self._iskept = long(x) > 1
-        
     @property
-    def contents(self):
-        x = long(self)
-        return (self.value if x > 1 else bool(x))
-
-
-class c_Hook(c_PyObject):
-    def __new__(cl, *args):
-        return c_PyObject.__new__(cl)
-
-    def __init__(self, x, format='II'):
-        if isinstance(x, c_Hook):
-            x = x.value
-        else:
-            x = _muimaster._CHook(x, format)
-        c_PyObject.__init__(self, x)
-
-    @classmethod
-    def _asobj(cl, v):
-        return cl(_muimaster._CHook(v))
-
-    def __long__(self):
-        return self.value.address
-
+    def value(self):
+        return (c_STRPTR.value.__get__(self) if long(self) != 1 else True)
 
 ################################################################################
 #### PyMUI internal base classes and routines
@@ -396,7 +159,7 @@ class MAttribute(property):
 
         if 'g' in isg:
             def _getter(obj):
-                return ctype._asobj(obj._get(id))
+                return ctype.FromLong(obj._get(id))
         else:
             _getter = None
 
@@ -468,7 +231,7 @@ class MMethod(property):
         if rettype is None:
             self.__retconv = lambda x: None
         else:
-            self.__retconv = rettype._asobj
+            self.__retconv = rettype.FromLong
         
         if argstypes:
             if not isinstance(argstypes, (tuple, list)):
@@ -500,12 +263,12 @@ class MMethod(property):
         if len(self.__argstp) > len(args):
             raise AttributeError("method accepts only %u argument(s), get %u"
                                  % (len(self.__argstp), len(args)))
-        data = [ tp(v) for tp, v in zip(self.__argstp, args) ]
+        data = [ (v if isinstance(v, tp) else tp(v)) for tp, v in zip(self.__argstp, args) ]
         data += [ long(v) for v in args[len(self.__argstp):] ]
         return self.__retconv(obj._do(self.__id, data))
     
     def call1va(self, obj, data, *args):
-        data = [ self.__argstp(data) ]
+        data = [ (data if isinstance(data, self.__argstp) else self.__argstp(data)) ]
         data += [ long(v) for v in args ]
         return self.__retconv(obj._do(self.__id, data))
 
@@ -513,14 +276,14 @@ class MMethod(property):
         if len(args) != len(self.__argstp):
             raise AttributeError("method accepts only %u argument(s), get %u"
                                  % (len(self.__argstp), len(args)))
-        data = [ tp(v) for tp, v in zip(self.__argstp, args) ]
+        data = [ (v if isinstance(v, tp) else tp(v)) for tp, v in zip(self.__argstp, args) ]
         return self.__retconv(obj._do(self.__id, data))
             
     def call0(self, obj):
         return self.__retconv(obj._do(self.__id))
 
     def call1(self, obj, data):
-        x = self.__argstp(data)
+        x = (data if isinstance(data, self.__argstp) else self.__argstp(data))
         return self.__retconv(obj._do1(self.__id, long(x)))
 
     @property
@@ -765,10 +528,11 @@ class Notify(rootclass):
 
     def _notify_cb(self, a, v, nv):
         attr = self._getMAByID(a)
-        v = attr.ctype(v)
+        v = attr.ctype.FromLong(v)
+        lv = long(v)
         e = AttributeEvent(self, v, nv)
         for o in self._notify_cbdict[a]:
-            if o.trigvalue == MUIV_EveryTime or o.trigvalue == long(v):
+            if o.trigvalue == MUIV_EveryTime or o.trigvalue == lv:
                 if o(e): return
 
     def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *_args, **kwds):
@@ -831,7 +595,7 @@ class Family(Notify):
         return x
 
     def Sort(self, *args):
-        a = c_MUIObject.arrayof(len(args)+1)() # transitive object, not needed to be keep
+        a = c_MUIObject.ArrayOf(len(args)+1)() # transitive object, not needed to be keep
         a[:] = args
         return self._do1(MUIM_Family_Sort, a)
 
@@ -1900,7 +1664,7 @@ class Coloradjust(Group):
     Green  = MAttribute(MUIA_Coloradjust_Green  , 'isg', c_ULONG)
     ModeID = MAttribute(MUIA_Coloradjust_ModeID , 'isg', c_ULONG)
     Red    = MAttribute(MUIA_Coloradjust_Red    , 'isg', c_ULONG)
-    RGB    = MAttribute(MUIA_Coloradjust_RGB    , 'isg', c_ULONG.arrayof(3))
+    RGB    = MAttribute(MUIA_Coloradjust_RGB    , 'isg', c_ULONG.ArrayOf(3))
 
 #===============================================================================
 
