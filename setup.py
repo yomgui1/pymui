@@ -5,7 +5,7 @@ from distutils.core import setup, Extension
 opt = ['-Wall -Wuninitialized -Wstrict-prototypes']
 
 setup(name = 'PyMUI',
-      version = '0.2',
+      version = '0.3',
       author='Guillaume Roguez',
       description = 'Python wrapper for the MUI library',
       url='http://www.yomgui.fr/yiki/doku.php/dev:pymui:start',

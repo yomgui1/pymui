@@ -80,12 +80,40 @@ class c_BoopsiObject(_ct.py_object, CPointer):
 class c_MUIObject(c_BoopsiObject): pass
 
 class c_Hook(c_PyObject):
+    _argtypes_ = (long, long)
+    
     def __new__(cl, *args):
         return c_PyObject.__new__(cl)
 
-    def __init__(self, x=None, format='II'):
+    def __init__(self, x=None, argtypes=None):
         if x:
-            c_PyObject.__init__(self, _muimaster._CHook(x, format))
+            if argtypes is None:
+                argtypes = self._argtypes_
+                
+            if argtypes[0] is None:
+                if argtypes[1] is None:
+                    x = lambda a, b: x()
+                elif argtypes[1] is long:
+                    x = lambda a, b: x(b)
+                else:
+                    x = lambda a, b: x(argtypes[1](b))
+            elif argtypes[1] is None:
+                if argtypes[0] is long:
+                    x = lambda a, b: x(a)
+                else:
+                    x = lambda a, b: x(argtypes[0](a))
+            else:
+                if argtypes[0] is long:
+                    if argtypes[1] is long:
+                        x = lambda a, b: x(a, b)
+                    else:
+                        x = lambda a, b: x(a, argtypes[1](b))
+                elif argtypes[1] is long:
+                    x = lambda a, b: x(argtypes[0](a), b)
+                else:
+                    x = lambda a, b: x(argtypes[0](a), argtypes[1](b))
+                
+            c_PyObject.__init__(self, _muimaster._CHook(x))
         else:
             c_PyObject.__init__(self)
 
@@ -1457,52 +1485,61 @@ PageGroup = Group.PageGroup
 
 #===============================================================================
 
+class c_ListConstructHook(c_Hook): _argtypes_ = (None, long)
+class c_ListDestructHook(c_Hook): _argtypes_ = (None, long)
+class c_ListDisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
+
 class List(Group):
     CLASSID = MUIC_List
 
-    Active = MAttribute(MUIA_List_Active,                   'isg', c_LONG)
-    AdjustHeight = MAttribute(MUIA_List_AdjustHeight,       'i..', c_BOOL)
-    AdjustWidth = MAttribute(MUIA_List_AdjustWidth,         'i..', c_BOOL)
-    AgainClick = MAttribute(MUIA_List_AgainClick,           'i.g', c_BOOL)
-    AutoVisible = MAttribute(MUIA_List_AutoVisible,         'isg', c_BOOL)
-    ClickColumn = MAttribute(MUIA_List_ClickColumn,         '..g', c_LONG)
-    CompareHook = MAttribute(MUIA_List_CompareHook,         'is.', c_Hook)
-    ConstructHook = MAttribute(MUIA_List_ConstructHook,     'is.', c_Hook)
-    DefClickColumn = MAttribute(MUIA_List_DefClickColumn,   'isg', c_LONG)
-    DestructHook = MAttribute(MUIA_List_DestructHook,       'is.', c_Hook)
-    DisplayHook = MAttribute(MUIA_List_DisplayHook,         'is.', c_Hook)
-    DoubleClick = MAttribute(MUIA_List_DoubleClick,         'i.g', c_BOOL)
-    DragSortable = MAttribute(MUIA_List_DragSortable,       'isg', c_BOOL)
-    DragType = MAttribute(MUIA_List_DragType,               'isg', c_LONG)
-    DropMark = MAttribute(MUIA_List_DropMark,               '..g', c_LONG)
-    Entries = MAttribute(MUIA_List_Entries,                 '..g', c_LONG)
-    First = MAttribute(MUIA_List_First,                     '..g', c_LONG)
-    Format = MAttribute(MUIA_List_Format,                   'isg', c_STRPTR)
-    Input = MAttribute(MUIA_List_Input,                     'i..', c_BOOL)
-    InsertPosition = MAttribute(MUIA_List_InsertPosition,   '..g', c_LONG)
-    MinLineHeight = MAttribute(MUIA_List_MinLineHeight,     'i..', c_LONG)
-    MultiSelect = MAttribute(MUIA_List_MultiSelect,         'i..', c_LONG)
-    MultiTestHook = MAttribute(MUIA_List_MultiTestHook,     'is.', c_Hook)
-    # Pool = MAttribute(MUIA_List_Pool,                       'i.g', c_APTR)
-    # PoolPuddleSize = MAttribute(MUIA_List_PoolPuddleSize,   'i..', c_ULONG)
-    # PoolThreshSize = MAttribute(MUIA_List_PoolThreshSize,   'i..', c_ULONG)
-    Quiet = MAttribute(MUIA_List_Quiet,                     '.s.', c_BOOL)
-    ScrollerPos = MAttribute(MUIA_List_ScrollerPos,         'i..', c_BOOL)
-    SelectChange = MAttribute(MUIA_List_SelectChange,       '..g', c_BOOL)
-    ShowDropMarks = MAttribute(MUIA_List_ShowDropMarks,     'isg', c_BOOL)
-    SourceArray = MAttribute(MUIA_List_SourceArray,         'i..', c_APTR)
-    Title = MAttribute(MUIA_List_Title,                     'isg', c_ListTitle)
-    TitleClick = MAttribute(MUIA_List_TitleClick,           '..g', c_LONG)
-    Visible = MAttribute(MUIA_List_Visible,                 '..g', c_LONG)
+    Active           = MAttribute(MUIA_List_Active,         'isg', c_LONG)
+    AdjustHeight     = MAttribute(MUIA_List_AdjustHeight,   'i..', c_BOOL)
+    AdjustWidth      = MAttribute(MUIA_List_AdjustWidth,    'i..', c_BOOL)
+    AgainClick       = MAttribute(MUIA_List_AgainClick,     'i.g', c_BOOL)
+    AutoVisible      = MAttribute(MUIA_List_AutoVisible,    'isg', c_BOOL)
+    ClickColumn      = MAttribute(MUIA_List_ClickColumn,    '..g', c_LONG)
+    CompareHook      = MAttribute(MUIA_List_CompareHook,    'is.', c_Hook)
+    ConstructHook    = MAttribute(MUIA_List_ConstructHook,  'is.', c_ListConstructHook)
+    DefClickColumn   = MAttribute(MUIA_List_DefClickColumn, 'isg', c_LONG)
+    DestructHook     = MAttribute(MUIA_List_DestructHook,   'is.', c_ListDestructHook)
+    DisplayHook      = MAttribute(MUIA_List_DisplayHook,    'is.', c_ListDisplayHook)
+    DoubleClick      = MAttribute(MUIA_List_DoubleClick,    'i.g', c_BOOL)
+    DragSortable     = MAttribute(MUIA_List_DragSortable,   'isg', c_BOOL)
+    DragType         = MAttribute(MUIA_List_DragType,       'isg', c_LONG)
+    DropMark         = MAttribute(MUIA_List_DropMark,       '..g', c_LONG)
+    Entries          = MAttribute(MUIA_List_Entries,        '..g', c_LONG)
+    First            = MAttribute(MUIA_List_First,          '..g', c_LONG)
+    Format           = MAttribute(MUIA_List_Format,         'isg', c_STRPTR)
+    Input            = MAttribute(MUIA_List_Input,          'i..', c_BOOL)
+    InsertPosition   = MAttribute(MUIA_List_InsertPosition, '..g', c_LONG)
+    MinLineHeight    = MAttribute(MUIA_List_MinLineHeight,  'i..', c_LONG)
+    MultiSelect      = MAttribute(MUIA_List_MultiSelect,    'i..', c_LONG)
+    MultiTestHook    = MAttribute(MUIA_List_MultiTestHook,  'is.', c_Hook)
+    # Pool           = MAttribute(MUIA_List_Pool,           'i.g', c_APTR)
+    # PoolPuddleSize = MAttribute(MUIA_List_PoolPuddleSize, 'i..', c_ULONG)
+    # PoolThreshSize = MAttribute(MUIA_List_PoolThreshSize, 'i..', c_ULONG)
+    Quiet            = MAttribute(MUIA_List_Quiet,          '.s.', c_BOOL)
+    ScrollerPos      = MAttribute(MUIA_List_ScrollerPos,    'i..', c_BOOL)
+    SelectChange     = MAttribute(MUIA_List_SelectChange,   '..g', c_BOOL)
+    ShowDropMarks    = MAttribute(MUIA_List_ShowDropMarks,  'isg', c_BOOL)
+    SourceArray      = MAttribute(MUIA_List_SourceArray,    'i..', c_APTR)
+    Title            = MAttribute(MUIA_List_Title,          'isg', c_ListTitle)
+    TitleClick       = MAttribute(MUIA_List_TitleClick,     '..g', c_LONG)
+    Visible          = MAttribute(MUIA_List_Visible,        '..g', c_LONG)
 
-    Clear = MMethod(MUIM_List_Clear)
-    Insert = MMethod(MUIM_List_Insert, (c_APTR, c_LONG, c_LONG))
-    InsertSingle = MMethod(MUIM_List_InsertSingle, (c_APTR, c_LONG))
+    Clear              = MMethod(MUIM_List_Clear)
+    Insert             = MMethod(MUIM_List_Insert,       (c_APTR, c_LONG, c_LONG))
+    InsertSingle       = MMethod(MUIM_List_InsertSingle, (c_APTR, c_LONG))
     InsertSingleString = MMethod(MUIM_List_InsertSingle, (c_STRPTR, c_LONG))
-    Sort = MMethod(MUIM_List_Sort)
-    GetEntry = MMethod(MUIM_List_GetEntry, (c_LONG, c_APTR))
+    Sort               = MMethod(MUIM_List_Sort)
+    GetEntry           = MMethod(MUIM_List_GetEntry,     (c_LONG, c_APTR))
 
-    cols = property(fget=lambda self: self.Format.count(',')+1)
+    @Insert.Alias
+    def Insert(self, meth, objs, pos):
+        n = len(objs)
+        return meth(c_APTR.ArrayOf(n)(*objs), n, pos)
+
+    cols = property(fget=lambda self: self.Format.value.count(',')+1)
 
 #===============================================================================
 

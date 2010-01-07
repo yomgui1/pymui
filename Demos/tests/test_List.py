@@ -83,7 +83,7 @@ class MyList(List):
         self.DestructHook = self.Destructor
         self.DisplayHook = self.Display
 
-    def Constructor(self, pool, entry):
+    def Constructor(self, entry):
         # make a copy of entry string
         v = c_STRPTR(entry).value
 
@@ -96,16 +96,15 @@ class MyList(List):
         # because v is a c_STRPTR it's convertible into long!
         return res
 
-    def Destructor(self, pool, value):
+    def Destructor(self, value):
         try:
             del self.entries[value]
         except:
             pass
 
     def Display(self, str_array, entry):
-        str_array = c_pSTRPTR._asobj(str_array-c_APTR.c_size())
-        str_array[1] = str(long(str_array[0])+1)
-        str_array[2] = entry
+        str_array[0] = str(long(str_array[-1])+1)
+        str_array[1] = entry
 
 mylist = MyList()
 

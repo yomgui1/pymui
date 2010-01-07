@@ -72,14 +72,10 @@ class PyMUICType(object):
         The array prototype is the class of x, if x is an PyMUICType instance,
         of x itself if it's a PyMUICType type.
         """
-        
-        name = '%s_Array_%u' % (cl.__name__, n)
-        x = cl.__tp_cache.get(name)
-        if x is None:
-            x = type(name, (cl*n, _CArray), {'_type_': cl, '_length_': n})
-            cl.__tp_cache[name] = x
-        return x
 
+        # Note: I don't cache the returned type here due to the volatile 'n' factor.
+        return type('%s_Array_%u' % (cl.__name__, n), (cl*n, _CArray), {'_type_': cl, '_length_': n})
+        
 class CSimpleValue(PyMUICType):
     def __long__(self):
         return self.value
@@ -147,7 +143,13 @@ class c_USHORT(_ct.c_ushort, CSimpleValue): pass
 class c_LONG(_ct.c_long, CSimpleValue): pass
 class c_ULONG(_ct.c_ulong, CSimpleValue): pass
 
-class c_APTR(_ct.c_void_p, CSimpleValue): # The only pointer type that is not a CPointer subclass
+class c_APTR(_ct.c_void_p, CSimpleValue): # c_APTR is not subclass of CPointer, the only possible case
+    def __init__(self, x=0):
+        if isinstance(x, (c_APTR, CPointer)):
+            _ct.c_void_p.__init__(self, long(x))
+        else:
+            _ct.c_void_p.__init__(self, x)
+        
     def __long__(self):
         return self.value or 0
 
@@ -229,6 +231,7 @@ class c_DOUBLE(_ct.c_double, CSimpleValue):
 class c_pDOUBLE(c_DOUBLE._PointerType(), CPointer):
     _type_ = _ct.c_double
 
+
 # Unit testing
 if __name__ == '__main__':
     assert c_LONG(-45).value == -45
@@ -237,7 +240,7 @@ if __name__ == '__main__':
     assert o.value is None
     assert long(o) is 0
     assert c_APTR(-45).value == c_ULONG(-45).value
-    
+
     f = c_FLOAT(3.14)
     assert long(f) == 3
 
@@ -273,5 +276,20 @@ if __name__ == '__main__':
     assert o[3].value is None
     assert any(a.value == b.value for a, b in zip(t, o))
     assert long(o[0]) == long(t[0])
+
+    # Auto-casting for c_APTR
+    try:
+        o = c_APTR(c_CHAR('o'))
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("TypeError not raised with casting of non pointer instance into c_APTR")
+
+    x = c_STRPTR('test')
+    o = c_APTR(x)
+    assert o.value == long(x)
+
+    o = c_APTR(c_APTR(42))
+    assert o.value == 42
 
     print "Module OK!"

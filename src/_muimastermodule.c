@@ -279,7 +279,6 @@ typedef struct CHookObject_STRUCT {
     struct Hook * hook;
     struct Hook   _hook;
     PyObject *    callable;
-    char          format[3];
 } CHookObject;
 
 
@@ -616,8 +615,9 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
     gstate = PyGILState_Ensure();
 
     Py_INCREF(self);
-    DPRINT("Callable: %p, format: %s, values: [%x, %x]\n", self->callable, self->format, a2_value, a1_value);
-    r = PyObject_CallFunction(self->callable, self->format, a2_value, a1_value); /* NR */
+    DPRINT("Callable: %p, values: [%x, %x]\n", self->callable, a2_value, a1_value);
+
+    r = PyObject_CallFunction(self->callable, "II", a2_value, a1_value); /* NR */
     if (NULL != r) {
         if (py2long(r, &result)) {
             PyErr_Format(PyExc_TypeError, "Hook shall return a long, not %s", OBJ_TNAME(r));
@@ -2255,25 +2255,10 @@ chook_new(PyTypeObject *type, PyObject *args)
 
     self = (CHookObject *)type->tp_alloc(type, 0); /* NR */
     if (NULL != self) {
-        if (PyArg_ParseTuple(args, "O|s", &v, &f)) {
-            DPRINT("v: %p-'%s', callable: %s, f: '%s'\n", v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no", NULL==f?"<NULL>":f);
+        if (PyArg_ParseTuple(args, "O", &v)) {
+            DPRINT("v: %p-'%s', callable: %s\n", v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no");
+
             if (PyCallable_Check(v)) {
-                if (NULL != f) {
-                    if (strlen(f) != 2) {
-                        PyErr_SetString(PyExc_ValueError, "given format shall be 2 characters length");
-                        Py_CLEAR(self);
-                        return NULL;
-                    }
-
-                    self->format[0] = f[0];
-                    self->format[1] = f[1];
-                    self->format[2] = '\0';
-                } else {
-                    self->format[0] = 'I';
-                    self->format[1] = 'I';
-                    self->format[2] = '\0';
-                }
-
                 self->hook = &self->_hook;
                 INIT_HOOK(self->hook, callpython);
                 self->callable = v; Py_INCREF(v);
