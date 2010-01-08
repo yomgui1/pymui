@@ -196,6 +196,8 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
     PyBOOPSIObject *_op = (PyBOOPSIObject *)(op); \
     (TypeOfMem(_op) != 0) && PyBOOPSIObject_CheckHash(_op); })
 
+#define ID_BREAK 0xABADDEAD
+
 
 /*
 ** Private Types and Structures
@@ -299,6 +301,7 @@ static PyTypeObject CHookObject_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
 static BOOL gClosingModule = FALSE;
+static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 
 
 /*
@@ -473,10 +476,10 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
                attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
 
         res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, value, ~value); /* NR */
-
         DPRINT("PyObject_CallMethod() resulted  with value %p (err=%d)\n", res, PyErr_Occurred());
-        if (NULL != PyErr_Occurred())
-            PyErr_Print();
+
+        if (PyErr_Occurred() && (NULL != gApp))
+            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
 
         Py_XDECREF(res);
         Py_DECREF(pyo);
@@ -597,7 +600,7 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 {
     CHookObject *self = hook->h_Data;
     PyGILState_STATE gstate;
-    PyObject *r;
+    PyObject *res;
     ULONG result;
 
     DPRINT("hook: %p, self: %p\n", hook, self);
@@ -614,23 +617,20 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 
     gstate = PyGILState_Ensure();
 
-    Py_INCREF(self);
     DPRINT("Callable: %p, values: [%x, %x]\n", self->callable, a2_value, a1_value);
 
-    r = PyObject_CallFunction(self->callable, "II", a2_value, a1_value); /* NR */
-    if (NULL != r) {
-        if (py2long(r, &result)) {
-            PyErr_Format(PyExc_TypeError, "Hook shall return a long, not %s", OBJ_TNAME(r));
+    Py_INCREF(self);
+    res = PyObject_CallFunction(self->callable, "kk", a2_value, a1_value); /* NR */
+    if (NULL != res) {
+        if (py2long(res, &result))
             result = 0;
-        }
+        Py_DECREF(res);
+    }
 
-        Py_DECREF(r);
-    } else
-        result = 0;
     Py_DECREF(self);
 
-    if (PyErr_Occurred())
-        PyErr_Print();
+    if (PyErr_Occurred() && (NULL != gApp))
+        DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
 
     PyGILState_Release(gstate);
 
@@ -1196,10 +1196,11 @@ Sorry, Not documented yet :-(");
 
 static PyObject *
 boopsi__do(PyBOOPSIObject *self, PyObject *args) {
-    PyObject *ret, *meth_data=NULL;
+    PyObject *meth_data=NULL;
     Object *obj;
     DoMsg *msg;
     int meth, i, n;
+    ULONG result;
 
     obj = PyBOOPSIObject_GetObject((PyObject *)self);
     if (NULL == obj)
@@ -1237,6 +1238,8 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
 
         Py_DECREF(fast);
 
+        DPRINT("PyErr_Occurred(): %p\n", PyErr_Occurred());
+
         if (PyErr_Occurred()) {
             PyMem_Free(msg);
             return NULL;
@@ -1250,12 +1253,16 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
          */
 
         msg->MethodID = meth;
-        ret = PyLong_FromUnsignedLong(DoMethodA(obj, (Msg) msg));
+        result = DoMethodA(obj, (Msg) msg);
     } else
-        ret = PyLong_FromLong(DoMethod(obj, meth));
+        result = DoMethod(obj, meth);
 
-    DPRINT("DoMethod(%08x), done\n", meth);
-    return ret;
+    DPRINT("DoMethod(%08x) = %lu\n", meth, result);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(result);
 }
 //-
 //+ boopsi__do1
@@ -1266,7 +1273,7 @@ Sorry, Not documented yet :-(");
 
 static PyObject *
 boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
-    PyObject *ret, *v_obj;
+    PyObject *v_obj;
     Object *obj;
     ULONG meth;
     LONG value;
@@ -1282,10 +1289,12 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
         return NULL;
 
     DPRINT("DoMethod(obj=%p, meth=0x%08x, value=0x%08x):\n", obj, meth, value);
-    ret = PyLong_FromUnsignedLong(DoMethod(obj, meth, value));
-    DPRINT("done\n");
+    value = DoMethod(obj, meth, value);
 
-    return ret;
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(value);
 }
 //-
 //+ boopsi__add
@@ -2251,7 +2260,6 @@ chook_new(PyTypeObject *type, PyObject *args)
 {
     CHookObject *self;
     PyObject *v;
-    char *f = NULL;
 
     self = (CHookObject *)type->tp_alloc(type, 0); /* NR */
     if (NULL != self) {
@@ -2369,6 +2377,8 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
      */
 
     DPRINT("Goes into mainloop...\n");
+    gApp = app; Py_INCREF(pyapp);
+
     for (;;) {
         ULONG id;
         PyThreadState *_save;
@@ -2377,12 +2387,9 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
         Py_BLOCK_THREADS;
 
-        if (MUIV_Application_ReturnID_Quit == id)
+        /* Exception occured or quit requested */
+        if ((MUIV_Application_ReturnID_Quit == id) || PyErr_Occurred())
             break;
-
-        /* Exception occured ? */
-        if (PyErr_Occurred())
-            PyErr_Print();
 
         if (sigs) {
             Py_UNBLOCK_THREADS;
@@ -2394,6 +2401,9 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
         if (sigs & SIGBREAKF_CTRL_C)
             break;
     }
+
+    Py_DECREF(pyapp);
+    gApp = NULL;
 
     if (sigs & SIGBREAKF_CTRL_C) {
         PyErr_SetNone(PyExc_KeyboardInterrupt);

@@ -43,8 +43,9 @@ except:
         _setwinpointer = None
     class PyMUIObject(object): pass
 
-from .defines import *
-from .types import *
+from defines import *
+from types import *
+import ctypes as _ct
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
@@ -68,6 +69,15 @@ TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 #### Usefull types
 ################################################################################
 
+class c_PyObject(_ct.py_object, CPointer):
+    def __long__(self):
+        x = self.value
+        return (0 if x is None else id(x))
+
+    @classmethod
+    def FromLong(cl, v):
+        return cl(_muimaster._APTR2Python(v))
+
 class c_BoopsiObject(_ct.py_object, CPointer):
     def __long__(self):
         x = self.value
@@ -82,38 +92,38 @@ class c_MUIObject(c_BoopsiObject): pass
 class c_Hook(c_PyObject):
     _argtypes_ = (long, long)
     
-    def __new__(cl, *args):
+    def __new__(cl, *args, **kwds):
         return c_PyObject.__new__(cl)
 
-    def __init__(self, x=None, argtypes=None):
+    def __init__(self, x=None, argstypes=None):
         if x:
-            if argtypes is None:
-                argtypes = self._argtypes_
+            if argstypes is None:
+                argstypes = self._argtypes_
                 
-            if argtypes[0] is None:
-                if argtypes[1] is None:
-                    x = lambda a, b: x()
-                elif argtypes[1] is long:
-                    x = lambda a, b: x(b)
+            if argstypes[0] is None:
+                if argstypes[1] is None:
+                    f = lambda a, b: x()
+                elif argstypes[1] is long:
+                    f = lambda a, b: x(b)
                 else:
-                    x = lambda a, b: x(argtypes[1](b))
-            elif argtypes[1] is None:
-                if argtypes[0] is long:
-                    x = lambda a, b: x(a)
+                    f = lambda a, b: x(argstypes[1].FromLong(b))
+            elif argstypes[1] is None:
+                if argstypes[0] is long:
+                    f = lambda a, b: x(a)
                 else:
-                    x = lambda a, b: x(argtypes[0](a))
+                    f = lambda a, b: x(argstypes[0].FromLong(a))
             else:
-                if argtypes[0] is long:
-                    if argtypes[1] is long:
-                        x = lambda a, b: x(a, b)
+                if argstypes[0] is long:
+                    if argstypes[1] is long:
+                        f = lambda a, b: x(a, b)
                     else:
-                        x = lambda a, b: x(a, argtypes[1](b))
-                elif argtypes[1] is long:
-                    x = lambda a, b: x(argtypes[0](a), b)
+                        f = lambda a, b: x(a, argstypes[1].FromLong(b))
+                elif argstypes[1] is long:
+                    f = lambda a, b: x(argstypes[0].FromLong(a), b)
                 else:
-                    x = lambda a, b: x(argtypes[0](a), argtypes[1](b))
+                    f = lambda a, b: x(argstypes[0].FromLong(a), argstypes[1].FromLong(b))
                 
-            c_PyObject.__init__(self, _muimaster._CHook(x))
+            c_PyObject.__init__(self, _muimaster._CHook(f))
         else:
             c_PyObject.__init__(self)
 
@@ -521,7 +531,7 @@ class rootclass(PyMUIObject, BOOPSIMixed):
             init_tags[i].ti_Tag = attr.id
             init_tags[i].ti_Data = attr.init(self, kwds[k])
 
-        self._create(self._mclassid, ctypes.addressof(init_tags), self.__class__.isMCC)
+        self._create(self._mclassid, _ct.addressof(init_tags), self.__class__.isMCC)
 
     def AddChild(self, o):
         self._add(o)
@@ -533,6 +543,8 @@ class rootclass(PyMUIObject, BOOPSIMixed):
             self._crem(o)
 
 #===============================================================================
+
+class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR._PointerType())
 
 class Notify(rootclass):
     CLASSID = MUIC_Notify
@@ -549,7 +561,7 @@ class Notify(rootclass):
     # forbidden: MUIA_UserData (intern usage)
     Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
 
-    CallHook = MMethod(MUIM_CallHook, c_Hook, varargs=True)
+    CallHook = MMethod(MUIM_CallHook, c_NotifyHook, varargs=True)
 
     def NNSet(self, attr, v):
         self._getMA(attr).setter(self, v, True)
@@ -575,7 +587,7 @@ class Notify(rootclass):
             self._notify_cbdict[attr.id] = [ event ]
 
     def KillApp(self):
-        self.ApplicationObject.contents.Quit()
+        self.ApplicationObject.value.Quit()
 
 
 #===============================================================================
@@ -795,7 +807,7 @@ class Window(Notify):
         self._cadd(o)
 
     def __checkForApp(self, attr, o):
-        if not self.ApplicationObject.contents:
+        if not self.ApplicationObject.value:
             raise AttributeError("Window not linked to an application yet")
         return o
 
@@ -1534,7 +1546,7 @@ class List(Group):
     Sort               = MMethod(MUIM_List_Sort)
     GetEntry           = MMethod(MUIM_List_GetEntry,     (c_LONG, c_APTR))
 
-    @Insert.Alias
+    @Insert.alias
     def Insert(self, meth, objs, pos):
         n = len(objs)
         return meth(c_APTR.ArrayOf(n)(*objs), n, pos)

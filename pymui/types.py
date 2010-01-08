@@ -131,7 +131,7 @@ class CPointer(PyMUICType):
 
     @classmethod
     def FromLong(cl, v):
-        return cl(cl._type_.from_address(v))
+        return _ct.cast(_ct.c_void_p(v), cl)
 
 
 ### All MUI acceptable base types
@@ -168,6 +168,10 @@ class c_BOOL(c_ULONG): # BOOL ctype is a unsigned long in the MOS SDK.
         return bool(self)
 
 class c_STRPTR(_ct.c_char_p, CPointer):
+    @classmethod
+    def FromLong(cl, v):
+        return cl(v) # Special case where c_char_p accepts pointer on char
+
     def __len__(self):
         return len(self.value)
 
@@ -176,15 +180,6 @@ class c_STRPTR(_ct.c_char_p, CPointer):
 
 
 # Specials
-class c_PyObject(_ct.py_object, CPointer):
-    def __long__(self):
-        x = self.value
-        return (0 if x is None else id(x))
-
-    @classmethod
-    def FromLong(cl, v):
-        return cl(_muimaster._APTR2Python(v))
-
 class Iterator_c_pSTRPTR:
     def __init__(self, o):
         self.__o = o

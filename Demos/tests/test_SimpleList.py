@@ -21,7 +21,7 @@ def selectdir(o, l):
 
 # A string gadget to indicated a pathname
 path = String(Frame='String')
-path.Notify(MUIA_String_Acknowledge, callback=lambda e: path_changed(e.value.contents, simplelist))
+path.Notify(MUIA_String_Acknowledge, callback=lambda e: path_changed(e.value.value, simplelist))
 
 # A button to open a lister where user can select a pathname
 bt = Image(Frame='ImageButton',
