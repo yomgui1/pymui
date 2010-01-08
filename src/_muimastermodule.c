@@ -241,17 +241,18 @@ typedef struct PyBOOPSIObject_STRUCT {
 } PyBOOPSIObject;
 
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject           base;
-    PyObject *               children; /* List of children BOOPSI objects attached to this MUI object.
-                                        * this list has the special purpose to be used when the MUI object is destroyed.
-                                        * At this time children in this list are forced to be destroyed (only at the BOOPSI side,
-                                        * letting the Python side with a dead objet).
-                                        * This is due to the fact that children members of a MUI object are always deallocated
-                                        * automatically by MUI when the parent is deallocated.
-                                        * This code doesn't put or remove children byitself, the user is responsible to handle that.
-                                        */
-    PyObject *               parent;
-    PyRasterObject *         raster; /* cached value, /!\ not always valid */
+    PyBOOPSIObject      base;
+    PyObject *          children; /* List of children BOOPSI objects attached to this MUI object.
+                                   * this list has the special purpose to be used when the MUI object is destroyed.
+                                   * At this time children in this list are forced to be destroyed (only at the BOOPSI side,
+                                   * letting the Python side with a dead objet).
+                                   * This is due to the fact that children members of a MUI object are always deallocated
+                                   * automatically by MUI when the parent is deallocated.
+                                   * This code doesn't put or remove children byitself, the user is responsible to handle that.
+                                   */
+    PyObject *          parent;
+    PyObject *          overloaded_dict; /* Dict of MethodID:callable items for overloaded MUI methods */
+    PyRasterObject *    raster; /* cached value, /!\ not always valid */
 } PyMUIObject;
 
 typedef struct PyEventHandlerObject_STRUCT {
@@ -898,6 +899,40 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     return result;
 }
 //-
+//+ mCheckPython
+static ULONG
+mCheckPython(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyObject *pyo = data->PythonObject;
+    ULONG result = 0;
+
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    if ((NULL != pyo) && (NULL != pyo->overloaded_dict)) {
+        PyObject *key;
+
+        key = PyLong_FromUnsignedLong(msg->MethodID);
+        if (NULL != key) {
+            PyObject *callable = PyDict_GetItem(pyo->overloaded_dict, key);
+
+            Py_DECREF(key);
+
+            if (NULL != callable) {
+                PyObject *o = PyObject_CallFunction(callable, "Ok", pyo, msg);
+
+                if (NULL != o) {
+                    if (py2long(o, &result))
+                        result = 0;
+
+                    Py_DECREF(o);
+                }
+            }
+        }
+    }
+
+    return result;
+}
+//-
 //+ MCC Dispatcher
 DISPATCHER(mcc)
 {
@@ -922,12 +957,13 @@ DISPATCHER(mcc)
         case MUIM_Hide         : result = mHide       (cl, obj, (APTR)msg); break;
         case MUIM_Draw         : result = mDraw       (cl, obj, (APTR)msg); break;
         case MUIM_HandleEvent  : result = mHandleEvent(cl, obj, (APTR)msg); break;
-        default: result = DoSuperMethodA(cl, obj, msg);
+        default: result = mCheckPython(cl, obj, (APTR)msg); break;
+        //default: result = DoSuperMethodA(cl, obj, msg);
     }
 
     if (NULL != data->PythonObject) {
-        if (NULL != PyErr_Occurred())
-            PyErr_Print();
+        if (PyErr_Occurred() && (NULL != gApp))
+            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
 
         PyGILState_Release(gstate);
     }
@@ -1026,16 +1062,28 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     struct MUI_CustomClass *mcc = NULL;
     struct TagItem *tags;
 
+    /* Protect againts doubles */
+    if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
+        PyErr_SetString(PyExc_RuntimeError, "Already created BOOPSI Object");
+        return NULL;
+    }
+
     if (!PyArg_ParseTuple(args, "s|Ii:PyBOOPSIObject", &classid, &tags, &isMCC)) /* BR */
         return NULL;
 
     DPRINT("ClassID: '%s', tags: %p, isMCC: %d\n", classid, tags, isMCC);
 
     isMUI = PyBOOPSIObject_ISMUI(self);
+    if (!isMUI && isMCC) {
+        PyErr_SetString(PyExc_TypeError, "MCC feature requested on a non-MUI object");
+        return NULL;
+    }
 
     /* Need to create a new MCC or a simple MUI object instance ? */
-    if (isMUI && isMCC) {
+    if (isMCC) {
         CreatedMCCNode *node = NULL, *next;
+        PyObject *d;
+
         DPRINT("Search for MCC based on: '%s'\n", classid);
         
         ForeachNode(&gCreatedMCCList, next) {
@@ -1065,6 +1113,17 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             mcc = node->n_MCC;
 
         DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->n_MCC->mcc_Super->cl_ID);
+
+        /* Try to obtain the overloaded dict from the class */
+        d = PyObject_GetAttrString(self, "__pymui_overloaded__");
+
+        /* silent exception if not found */
+        if (NULL == d)
+            PyErr_Clear();
+        else
+            Py_INCREF(d);
+
+        self->overloaded_dict = d;
     }
 
     if (NULL != tags) {
@@ -1469,8 +1528,10 @@ static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->parent);
+    Py_VISIT(self->overloaded_dict);
     Py_VISIT(self->raster);
     Py_VISIT(self->children);
+    
     return 0;
 }
 //-
@@ -1481,6 +1542,7 @@ muiobject_clear(PyMUIObject *self)
     DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
 
     Py_CLEAR(self->parent);
+    Py_CLEAR(self->overloaded_dict);
     Py_CLEAR(self->raster);
 
     PyMUIObject_ClearChildren(self);

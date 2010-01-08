@@ -377,7 +377,7 @@ class MUIMetaClass(type):
 
         dct['_mclassid'] = clid
         dct['isMCC'] = bool(dct.pop('MCC', False))
-
+            
         # cache attributes/methods
         attrs = {}
         attrs_id = {}
@@ -396,7 +396,7 @@ class MUIMetaClass(type):
         dct['_pymui_attrs_id_'] = attrs_id
         dct['_pymui_meths_'] = meths
         dct['_pymui_meths_id_'] = meths_id
-            
+
         # For super class accesses to methods and attributes,
         # add a version tagged with class name
         for k, v in attrs.iteritems():
@@ -406,6 +406,19 @@ class MUIMetaClass(type):
 
         return type.__new__(metacl, name, bases, dct)
 
+    def __init__(cl, name, bases, dct):
+        type.__init__(cl, name, bases, dct)
+
+        # register MUI overloaded methods
+        d = getattr(cl, '__pymui_overloaded__', {})
+        for v in dct.itervalues():
+            if hasattr(v, '_pymui_mid_'):
+                d[cl._getMM(v._pymui_mid_).id] = v
+
+# decorator to register a class method to overload a MUI method
+def muimethod(f, mid):
+    f._pymui_mid_ = mid
+    return f
 
 #===============================================================================
 
@@ -541,6 +554,10 @@ class rootclass(PyMUIObject, BOOPSIMixed):
         if self._cin(o):
             self._rem(o)
             self._crem(o)
+
+# decorator
+def muimethod(f):
+    pass
 
 #===============================================================================
 
