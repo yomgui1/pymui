@@ -250,6 +250,7 @@ typedef struct PyMUIObject_STRUCT {
                                    * automatically by MUI when the parent is deallocated.
                                    * This code doesn't put or remove children byitself, the user is responsible to handle that.
                                    */
+    PyObject *          notify_cbdict;
     PyObject *          parent;
     PyObject *          overloaded_dict; /* Dict of MethodID:callable items for overloaded MUI methods */
     PyRasterObject *    raster; /* cached value, /!\ not always valid */
@@ -585,14 +586,14 @@ py2long(PyObject *obj, LONG *value)
     else {
         PyObject *x = PyNumber_Long(obj); /* NR */
 
-        if (NULL == x) return -1;
+        if (NULL == x) return 0;
         *value = PyLong_AsUnsignedLongMask(x);
         Py_DECREF(x);
     }
 
     DPRINT("obj=%p-'%s', value = 0x%08x\n", obj, OBJ_TNAME_SAFE(obj), *value);
 
-    return 0;
+    return 1;
 }
 //-
 //+ callpython
@@ -623,7 +624,7 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
     Py_INCREF(self);
     res = PyObject_CallFunction(self->callable, "kk", a2_value, a1_value); /* NR */
     if (NULL != res) {
-        if (py2long(res, &result))
+        if (!py2long(res, &result))
             result = 0;
         Py_DECREF(res);
     }
@@ -644,48 +645,6 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 ** MCC MUI Object
 */
 
-//+ mAskMinMax
-static ULONG mAskMinMax(struct IClass *cl, Object *obj, struct MUIP_AskMinMax *msg)
-{
-    MCCData *data = INST_DATA(cl, obj);  
-    PyObject *pyo, *res;
-    WORD minw, defw, maxw, minh, defh, maxh;
-    
-    DoSuperMethodA(cl, obj, msg);
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
-    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_AskMinMax"))
-        return 0;
-
-    Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_AskMinMax", "hhhhhh",
-        msg->MinMaxInfo->MinWidth,
-        msg->MinMaxInfo->DefWidth,
-        msg->MinMaxInfo->MaxWidth,
-        msg->MinMaxInfo->MinHeight,
-        msg->MinMaxInfo->DefHeight,
-        msg->MinMaxInfo->MaxHeight); /* NR */
-    Py_DECREF(pyo); 
-    
-    if (NULL != res) {
-        int result = PyArg_ParseTuple(res, "hhhhhh", &minw, &defw, &maxw, &minh, &defh, &maxh);
-
-        Py_DECREF(res); 
-        if (!result)
-            return 0;
-    }
-
-    msg->MinMaxInfo->MinWidth  = minw;
-    msg->MinMaxInfo->DefWidth  = defw;
-    msg->MinMaxInfo->MaxWidth  = maxw;
-    msg->MinMaxInfo->MinHeight = minh;
-    msg->MinMaxInfo->DefHeight = defh;
-    msg->MinMaxInfo->MaxHeight = maxh;
-
-    return 0;
-}
-//-
 //+ mSetup
 static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
 {
@@ -697,7 +656,7 @@ static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
         return FALSE;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if (NULL == pyo)
         return TRUE;
 
@@ -726,7 +685,7 @@ static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
     PyObject *pyo, *res;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Cleanup")) {
         Py_INCREF(pyo);
         res = PyObject_CallMethod((PyObject *)pyo, "MCC_Cleanup", NULL); /* NR */
@@ -748,7 +707,7 @@ static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
         return FALSE;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
         return TRUE;
 
@@ -771,7 +730,7 @@ static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
     PyObject *pyo, *res;
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
         Py_INCREF(pyo);
         res = PyObject_CallMethod((PyObject *)pyo, "MCC_Hide", NULL); /* NR */
@@ -794,7 +753,7 @@ static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
         data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
         return 0;
 
@@ -820,7 +779,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     DPRINT("obj: %p, ehn: %p\n", obj, msg->ehn);
 
     pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
+    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
     if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_HandleEvent"))
         return 0;
 
@@ -904,33 +863,44 @@ static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 {
     MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo = data->PythonObject;
+    PyMUIObject *pyo = (PyMUIObject *)data->PythonObject;
     ULONG result = 0;
 
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME(pyo));
-    if ((NULL != pyo) && (NULL != pyo->overloaded_dict)) {
+    if (NULL != pyo->overloaded_dict) {
         PyObject *key;
 
-        key = PyLong_FromUnsignedLong(msg->MethodID);
+        key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
         if (NULL != key) {
-            PyObject *callable = PyDict_GetItem(pyo->overloaded_dict, key);
+            PyObject *callable;
 
+            DPRINT("pyo=%p-%s (dict: %p, MID: 0x%08x)\n", pyo, OBJ_TNAME(pyo), pyo->overloaded_dict, msg->MethodID);
+
+            callable = PyDict_GetItem(pyo->overloaded_dict, key); /* BR */
             Py_DECREF(key);
 
             if (NULL != callable) {
-                PyObject *o = PyObject_CallFunction(callable, "Ok", pyo, msg);
+                PyObject *o;
 
+                DPRINT("callable: %p\n", callable);
+
+                Py_INCREF(callable);
+                o = PyObject_CallFunction(callable, "Okk", pyo, cl, msg);
+                Py_DECREF(callable);
+
+                DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
                 if (NULL != o) {
-                    if (py2long(o, &result))
-                        result = 0;
+                    if (!py2long(o, &result))
+                        result = DoSuperMethodA(cl, obj, msg);
 
                     Py_DECREF(o);
                 }
+
+                return result;
             }
         }
     }
 
-    return result;
+    return DoSuperMethodA(cl, obj, msg);
 }
 //-
 //+ MCC Dispatcher
@@ -946,27 +916,42 @@ DISPATCHER(mcc)
         data->PythonObject = NULL;
     }
 
-    if (NULL != data->PythonObject)
-        gstate = PyGILState_Ensure();
+    if (NULL == data->PythonObject)
+        return DoSuperMethodA(cl, obj, msg);
+
+    gstate = PyGILState_Ensure();
 
     switch (msg->MethodID) {
-        case MUIM_AskMinMax    : result = mAskMinMax  (cl, obj, (APTR)msg); break;
-        case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
-        case MUIM_Cleanup      : result = mCleanup    (cl, obj, (APTR)msg); break;
-        case MUIM_Show         : result = mShow       (cl, obj, (APTR)msg); break;
-        case MUIM_Hide         : result = mHide       (cl, obj, (APTR)msg); break;
-        case MUIM_Draw         : result = mDraw       (cl, obj, (APTR)msg); break;
-        case MUIM_HandleEvent  : result = mHandleEvent(cl, obj, (APTR)msg); break;
-        default: result = mCheckPython(cl, obj, (APTR)msg); break;
+        /* Protect basic BOOPSI methods */
+        case OM_NEW:
+        case OM_DISPOSE:
+        case OM_ADDMEMBER:
+        case OM_REMMEMBER:
+        case OM_SET:
+        case OM_GET:
+        case OM_ADDTAIL:
+        case OM_REMOVE:
+        case OM_NOTIFY:
+        case OM_UPDATE:
+            result = DoSuperMethodA(cl, obj, msg);
+            break;
+
+        //case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
+        //case MUIM_Cleanup      : result = mCleanup    (cl, obj, (APTR)msg); break;
+        //case MUIM_Show         : result = mShow       (cl, obj, (APTR)msg); break;
+        //case MUIM_Hide         : result = mHide       (cl, obj, (APTR)msg); break;
+        //case MUIM_Draw         : result = mDraw       (cl, obj, (APTR)msg); break;
+        //case MUIM_HandleEvent  : result = mHandleEvent(cl, obj, (APTR)msg); break;
+        default: result = mCheckPython(cl, obj, (APTR)msg);
         //default: result = DoSuperMethodA(cl, obj, msg);
     }
 
-    if (NULL != data->PythonObject) {
-        if (PyErr_Occurred() && (NULL != gApp))
-            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+    if (PyErr_Occurred() && (NULL != gApp))
+        DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+    else
+        PyErr_Print();
 
-        PyGILState_Release(gstate);
-    }
+    PyGILState_Release(gstate);
 
     return result;
 }
@@ -1115,7 +1100,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->n_MCC->mcc_Super->cl_ID);
 
         /* Try to obtain the overloaded dict from the class */
-        d = PyObject_GetAttrString(self, "__pymui_overloaded__");
+        d = PyObject_GetAttrString((PyObject *)self, "__pymui_overloaded__");
 
         /* silent exception if not found */
         if (NULL == d)
@@ -1123,7 +1108,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         else
             Py_INCREF(d);
 
-        self->overloaded_dict = d;
+        ((PyMUIObject *)self)->overloaded_dict = d;
     }
 
     if (NULL != tags) {
@@ -1233,7 +1218,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "IO", &attr, &v_obj)) /* BR */
         return NULL;
 
-    if (py2long(v_obj, &value))
+    if (!py2long(v_obj, &value))
         return NULL;
 
     DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
@@ -1247,77 +1232,90 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 //-
-//+ boopsi__do
-PyDoc_STRVAR(boopsi__do_doc,
-"_do(method, args) -> int\n\
+//+ boopsi__new_do
+PyDoc_STRVAR(boopsi__new_do_doc,
+"_do(msg, *extra_args) -> long\n\
 \n\
 Sorry, Not documented yet :-(");
 
 static PyObject *
-boopsi__do(PyBOOPSIObject *self, PyObject *args) {
-    PyObject *meth_data=NULL;
+boopsi__new_do(PyBOOPSIObject *self, PyObject *args) {
     Object *obj;
-    DoMsg *msg;
-    int meth, i, n;
     ULONG result;
+    Msg msg;
+    int msg_length;
+    PyObject *extra_args = NULL;
 
     obj = PyBOOPSIObject_GetObject((PyObject *)self);
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "I|O", &meth, &meth_data)) /* BR */
+    if (!PyArg_ParseTuple(args, "s#|O:_do", &msg, &msg_length, &extra_args)) /* BR */
         return NULL;
 
-    DPRINT("DoMethod(obj=%p, meth=0x%08x):\n", obj, meth);
+    DPRINT("DoMethod(obj=%p, msg=%p (%u bytes), 0x%08x)\n", obj, msg, msg_length, msg->MethodID);
 
-    if (meth_data) {
-        PyObject *fast = PySequence_Fast(meth_data, "Method data should be convertible into tuple or list"); /* NR */
-        PyObject **data;
+    /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
+     * even if this call cause some Python code to be executed causing a DECREF of these objects.
+     * This is protected by the fact that objects have their ref counter increased until they remains
+     * inside the argument tuple of this function.
+     * So here there is no need to INCREF argument python objects.
+     */
 
+    /* Collect extra arguments (for variable arguments methods) */
+    if (NULL != extra_args) {
+        PyObject *fast;
+        Msg final_msg;
+        ULONG final_length;
+        int n;
+
+        fast = PySequence_Fast(extra_args, "Method optional arguments should be convertible into tuple or list"); /* NR */
         if (NULL == fast)
             return NULL;
 
         n = PySequence_Fast_GET_SIZE(fast);
-        DPRINT("#  Data size = %d\n", n);
+        final_length = msg_length + n * sizeof(ULONG);
 
-        msg = (DoMsg *) PyMem_Malloc(sizeof(DoMsg) + sizeof(ULONG) * n);
-        if (NULL == msg) {
+        DPRINT("#  Extra Args count: %d, final msg len: %lu bytes\n", n, final_length);
+
+        final_msg = PyMem_Malloc(final_length);
+        if (NULL == final_msg) {
             Py_DECREF(fast);
             return PyErr_NoMemory();
         }
 
-        data = PySequence_Fast_ITEMS(fast);
-        for (i=0; i < n; i++) {
-            LONG *ptr = (ULONG *) &msg->data[i];
+        /* copy the user msg base first */
+        CopyMem(msg, final_msg, msg_length);
 
-            if (py2long(data[i], ptr))
-                break;
-            DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, *ptr, (ULONG)*ptr, *ptr);
+        if (n > 0) {
+            PyObject **data = PySequence_Fast_ITEMS(fast);
+            ULONG i, *ptr = (ULONG *)(((char *)final_msg) + msg_length);
+
+            for (i=0; i < n; i++, ptr++) {
+                if (!py2long(data[i], ptr))
+                    break;
+
+                DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, *ptr, (ULONG)*ptr, *ptr);
+            }
         }
 
         Py_DECREF(fast);
 
-        DPRINT("PyErr_Occurred(): %p\n", PyErr_Occurred());
-
+        /* Catch possible exceptions during py2long() calls */
         if (PyErr_Occurred()) {
             PyMem_Free(msg);
             return NULL;
         }
 
-        /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
-         * even if this call cause some Python code to be executed causing a DECREF of these objects.
-         * This is protected by the fact that objects have their ref counter increased until they remains
-         * inside the argument tuple of this function.
-         * So here there is no need to INCREF argument python objects.
-         */
+        result = DoMethodA(obj, final_msg);
 
-        msg->MethodID = meth;
-        result = DoMethodA(obj, (Msg) msg);
+        PyMem_Free(final_msg);
     } else
-        result = DoMethod(obj, meth);
+        result = DoMethodA(obj, msg);
 
-    DPRINT("DoMethod(%08x) = %lu\n", meth, result);
+    DPRINT("DoMethod(obj=%p, 0x%08x) = (%ld, %lu, %lx)\n", obj, msg->MethodID, (LONG)result, result, result);
 
+    /* Methods can call Python ... check against exception here also */
     if (PyErr_Occurred())
         return NULL;
 
@@ -1332,7 +1330,6 @@ Sorry, Not documented yet :-(");
 
 static PyObject *
 boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
-    PyObject *v_obj;
     Object *obj;
     ULONG meth;
     LONG value;
@@ -1341,10 +1338,7 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "IO", &meth, &v_obj)) /* BR */
-        return NULL;
-
-    if (py2long(v_obj, &value))
+    if (!PyArg_ParseTuple(args, "IO&", &meth, py2long, &value)) /* BR */
         return NULL;
 
     DPRINT("DoMethod(obj=%p, meth=0x%08x, value=0x%08x):\n", obj, meth, value);
@@ -1472,7 +1466,7 @@ static struct PyMethodDef boopsi_methods[] = {
     {"_create", (PyCFunction) boopsi__create, METH_VARARGS, NULL},
     {"_get",    (PyCFunction) boopsi__get,    METH_VARARGS, boopsi__get_doc},
     {"_set",    (PyCFunction) boopsi__set,    METH_VARARGS, boopsi__set_doc},
-    {"_do",     (PyCFunction) boopsi__do,     METH_VARARGS, boopsi__do_doc},
+    {"_do",     (PyCFunction) boopsi__new_do, METH_VARARGS, boopsi__new_do_doc},
     {"_do1",    (PyCFunction) boopsi__do1,    METH_VARARGS, boopsi__do1_doc},
     {"_add",    (PyCFunction) boopsi__add,    METH_VARARGS, boopsi__add_doc},
     {"_rem",    (PyCFunction) boopsi__rem,    METH_VARARGS, boopsi__rem_doc},
@@ -1510,11 +1504,14 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
-        self->children = PySet_New(NULL); /* NR */
-        if (NULL != self->children) {
-            self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
-            if (NULL != self->raster)
-                return (PyObject *)self;
+        self->notify_cbdict = PyDict_New(); /* NR */
+        if (NULL != self->notify_cbdict) {
+            self->children = PySet_New(NULL); /* NR */
+            if (NULL != self->children) {
+                self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
+                if (NULL != self->raster)
+                    return (PyObject *)self;
+            }
         }
 
         Py_DECREF((PyObject *)self);
@@ -1527,6 +1524,7 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
+    Py_VISIT(self->notify_cbdict);
     Py_VISIT(self->parent);
     Py_VISIT(self->overloaded_dict);
     Py_VISIT(self->raster);
@@ -1541,6 +1539,7 @@ muiobject_clear(PyMUIObject *self)
 {
     DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
 
+    Py_CLEAR(self->notify_cbdict);
     Py_CLEAR(self->parent);
     Py_CLEAR(self->overloaded_dict);
     Py_CLEAR(self->raster);
@@ -1640,17 +1639,13 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
 {
     Object *obj;
     ULONG attr;
-    PyObject *v_obj;
     LONG value;
 
     obj = PyBOOPSIObject_GetObject((PyObject *)self);
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "IO", &attr, &v_obj)) /* BR */
-        return NULL;
-
-    if (py2long(v_obj, &value))
+    if (!PyArg_ParseTuple(args, "IO&", &attr, py2long, &value)) /* BR */
         return NULL;
 
     DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
@@ -1695,6 +1690,36 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
     DPRINT("done\n");
 
     Py_RETURN_NONE;
+}
+//-
+//+ muiobject__dosuper
+PyDoc_STRVAR(muiobject__dosuper_doc,
+"_dosuper(msg) -> long\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+muiobject__dosuper(PyMUIObject *self, PyObject *args)
+{
+    Object *mo;
+    Msg msg;
+    ULONG result, size;
+    ULONG cl;
+
+    mo = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == mo)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "ks#", &cl, &msg, &size)) /* BR */
+        return NULL;
+
+    DPRINT("MO: %p, cl: %p, msg: %p (%lu bytes, MethodID: 0x%08x)\n", mo, cl, msg, size, msg->MethodID);
+    result = DoSuperMethodA((struct IClass *)cl, mo, msg);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(result);
 }
 //-
 //+ muiobject_redraw
@@ -1914,6 +1939,11 @@ static PyGetSetDef muiobject_getseters[] = {
     {NULL} /* sentinel */
 };
 
+static PyMemberDef muiobject_members[] = {
+    {"_notify_cbdict", T_OBJECT, offsetof(PyMUIObject, notify_cbdict), RO, NULL},
+    {NULL} /* sentinel */
+};
+
 static struct PyMethodDef muiobject_methods[] = {
     {"_cclear", (PyCFunction) muiobject__cclear,  METH_NOARGS, NULL},
     {"_cadd",   (PyCFunction) muiobject__cadd,    METH_VARARGS, NULL},
@@ -1921,6 +1951,7 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_cin",    (PyCFunction) muiobject__cin,     METH_VARARGS, NULL},
     {"_nnset",  (PyCFunction) muiobject__nnset,   METH_VARARGS, muiobject__nnset_doc},
     {"_notify", (PyCFunction) muiobject__notify,  METH_VARARGS, muiobject__notify_doc},
+    {"DoSuperMethod", (PyCFunction) muiobject__dosuper,  METH_VARARGS, muiobject__dosuper_doc},
     {"Redraw",  (PyCFunction) muiobject_redraw,   METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
@@ -1940,6 +1971,7 @@ static PyTypeObject PyMUIObject_Type = {
     tp_dealloc      : (destructor)muiobject_dealloc,
     
     tp_methods      : muiobject_methods,
+    tp_members      : muiobject_members,
     tp_getset       : muiobject_getseters,
 };
 
@@ -2326,7 +2358,7 @@ chook_new(PyTypeObject *type, PyObject *args)
     self = (CHookObject *)type->tp_alloc(type, 0); /* NR */
     if (NULL != self) {
         if (PyArg_ParseTuple(args, "O", &v)) {
-            DPRINT("v: %p-'%s', callable: %s\n", v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no");
+            DPRINT("HookObject: %p, func: %p-'%s' (callable? %s)\n", self, v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no");
 
             if (PyCallable_Check(v)) {
                 self->hook = &self->_hook;
@@ -2336,7 +2368,7 @@ chook_new(PyTypeObject *type, PyObject *args)
             } else {
                 ULONG x;
 
-                if (py2long(v, &x)) {
+                if (!py2long(v, &x)) {
                     Py_CLEAR(self);
                     return NULL;
                 }
@@ -2374,7 +2406,7 @@ chook_clear(CHookObject *self)
 static void
 chook_dealloc(CHookObject *self)
 {
-    DPRINT("hook: %p\n", self);
+    DPRINT("HookObject: %p\n", self);
     chook_clear(self);
     self->ob_type->tp_free((PyObject *)self);
 }

@@ -138,8 +138,8 @@ class CPointer(PyMUICType):
 # Simples (all represent integer value)
 class c_BYTE(_ct.c_byte, CSimpleValue): pass
 class c_UBYTE(_ct.c_ubyte, CSimpleValue): pass
-class c_SHORT(_ct.c_short, CSimpleValue): pass
-class c_USHORT(_ct.c_ushort, CSimpleValue): pass
+class c_WORD(_ct.c_short, CSimpleValue): pass
+class c_UWORD(_ct.c_ushort, CSimpleValue): pass
 class c_LONG(_ct.c_long, CSimpleValue): pass
 class c_ULONG(_ct.c_ulong, CSimpleValue): pass
 

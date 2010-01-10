@@ -78,14 +78,27 @@ class c_PyObject(_ct.py_object, CPointer):
     def FromLong(cl, v):
         return cl(_muimaster._APTR2Python(v))
 
-class c_BoopsiObject(_ct.py_object, CPointer):
+class c_BoopsiObject(_ct.c_ulong, CPointer):
+    def __init__(self, x=None):
+        if x is not None:
+            if not isinstance(x, (long, int)):
+                assert isinstance(x, PyBOOPSIObject)
+                x = x._object
+
+            super(c_BoopsiObject, self).__init__(x)
+        else:
+            super(c_BoopsiObject, self).__init__()
+
+    @property
+    def value(self):
+        return _muimaster._BOOPSI2Python(_ct.c_ulong.value.__get__(self))
+
     def __long__(self):
-        x = self.value
-        return (0 if x is None else x._object)
+        return _ct.c_ulong.value.__get__(self)
 
     @classmethod
     def FromLong(cl, v):
-        return cl(_muimaster._BOOPSI2Python(v))
+        return cl(v)
 
 class c_MUIObject(c_BoopsiObject): pass
 
@@ -262,7 +275,7 @@ class MAttribute(property):
 #===============================================================================
 
 class MMethod(property):
-    def __init__(self, id, argstypes=None, rettype=None,
+    def __init__(self, id, fields=None, rettype=None,
                  varargs=False, doc=None, **kwds):
         self.__id = id
         self.__rettp = rettype
@@ -271,18 +284,61 @@ class MMethod(property):
         else:
             self.__retconv = rettype.FromLong
         
-        if argstypes:
-            if not isinstance(argstypes, (tuple, list)):
-                assert issubclass(argstypes, PyMUICType)
-                self.__argstp = argstypes
-                cb = (self.call1va if varargs else self.call1)
+        if fields:
+            self.__msgtype = type('c_MUIP_%x' % id, (CStructure,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
+            buftp = (_ct.c_ulong * (len(fields)+1))
+
+            if not varargs:
+                def cb(obj, *args, **kwds):
+                    msg = self.__msgtype()
+                    msg.MethodID = id # MethodID
+
+                    if len(args) > len(fields):
+                        raise SyntaxError("Too many arguments given")
+
+                    args = list(args)
+                    for i, field in enumerate(fields):
+                        nm, tp = field
+                        if args:
+                            if nm in kwds:
+                                raise SyntaxError("field '%s' is given as positional and keyword argument" % nm)
+                            o = args.pop(0)
+                            if not isinstance(o, tp):
+                                o = field[1](o)
+                            setattr(msg, nm, o)
+                        else:
+                            if nm not in kwds:
+                                raise SyntaxError("required field '%s' missing" % nm)
+                            o = kwds[nm]
+                            if not isinstance(o, tp):
+                                o = field[1](o)
+                            setattr(msg, nm, o)
+
+                    if kwds:
+                        raise SyntaxError("Too many arguments given")
+
+                    return self.__retconv(obj._do(msg))
             else:
-                assert any(issubclass(tp, PyMUICType) for tp in argstypes)
-                self.__argstp = argstypes
-                cb = (self.callva if varargs else self.call)
+                def cb(obj, *args):
+                    msg = buftp()
+                    msg[0] = id # MethodID
+
+                    args = list(args)
+                    keep = []
+                    for i, field in enumerate(fields):
+                        o = args.pop(0)
+                        if not isinstance(o, field[1]):
+                            o = field[1](o)
+                        keep.append(o)
+                        msg[i+1] = long(o)
+                    return self.__retconv(obj._do(msg, args))
         else:
-            self.__argstp = None
-            cb = self.call0
+            if not varargs:
+                def cb(obj):
+                    return self.__retconv(obj._do(_ct.c_ulong(id)))
+            else:
+                def cb(obj):
+                    return self.__retconv(obj._do(_ct.c_ulong(id)))
 
         self.__cb = cb
         self.__alias = None
@@ -293,41 +349,17 @@ class MMethod(property):
 
     def alias(self, f):
         @functools.wraps(f)
-        def wrapper(obj, *args):
-            return f(obj, self, *args)
+        def wrapper(obj, *args, **kwds):
+            return f(obj, self, *args, **kwds)
         return wrapper
-
-    def callva(self, obj, *args):
-        if len(self.__argstp) > len(args):
-            raise AttributeError("method accepts only %u argument(s), get %u"
-                                 % (len(self.__argstp), len(args)))
-        data = [ (v if isinstance(v, tp) else tp(v)) for tp, v in zip(self.__argstp, args) ]
-        data += [ long(v) for v in args[len(self.__argstp):] ]
-        return self.__retconv(obj._do(self.__id, data))
-    
-    def call1va(self, obj, data, *args):
-        data = [ (data if isinstance(data, self.__argstp) else self.__argstp(data)) ]
-        data += [ long(v) for v in args ]
-        return self.__retconv(obj._do(self.__id, data))
-
-    def call(self, obj, *args):
-        if len(args) != len(self.__argstp):
-            raise AttributeError("method accepts only %u argument(s), get %u"
-                                 % (len(self.__argstp), len(args)))
-        data = [ (v if isinstance(v, tp) else tp(v)) for tp, v in zip(self.__argstp, args) ]
-        return self.__retconv(obj._do(self.__id, data))
-            
-    def call0(self, obj):
-        return self.__retconv(obj._do(self.__id))
-
-    def call1(self, obj, data):
-        x = (data if isinstance(data, self.__argstp) else self.__argstp(data))
-        return self.__retconv(obj._do1(self.__id, long(x)))
 
     @property
     def id(self):
         return self.__id
 
+    @property
+    def msgtype(self):
+        return self.__msgtype
 
 #===============================================================================
 
@@ -355,7 +387,7 @@ class AttributeEvent(Event):
         self.not_value = not_value
         
 
-class AttributeNotify(object):
+class AttributeNotify:
     def __init__(self, trigvalue, cb, args):
         self.cb = cb
         self.args = args
@@ -370,13 +402,17 @@ class MUIMetaClass(type):
     def __new__(metacl, name, bases, dct):
         clid = dct.pop('CLASSID', None)
         if not clid:
-            clid = [base._mclassid for base in bases if hasattr(base, '_mclassid')]
+            clid = [ base._mclassid for base in bases if hasattr(base, '_mclassid') ]
             if not len(clid):
                 raise TypeError("No valid MUI class name found")
             clid = clid[0]
 
         dct['_mclassid'] = clid
         dct['isMCC'] = bool(dct.pop('MCC', False))
+
+        if dct['isMCC']:
+            if not any(hasattr(base, '__pymui_overloaded__') for base in bases):
+                dct['__pymui_overloaded__'] = {}
             
         # cache attributes/methods
         attrs = {}
@@ -410,15 +446,25 @@ class MUIMetaClass(type):
         type.__init__(cl, name, bases, dct)
 
         # register MUI overloaded methods
-        d = getattr(cl, '__pymui_overloaded__', {})
-        for v in dct.itervalues():
-            if hasattr(v, '_pymui_mid_'):
-                d[cl._getMM(v._pymui_mid_).id] = v
+        d = dct.get('__pymui_overloaded__')
+        if d is not None:
+            for v in dct.itervalues():
+                if hasattr(v, '_pymui_mid_'):
+                    meth = v._pymui_mid_
+                    if not isinstance(meth, MMethod):
+                        meth = cl._getMM(v._pymui_mid_)
+                    d[meth.id] = functools.partial(getattr(cl, v.__name__), tp=meth.msgtype)
+
 
 # decorator to register a class method to overload a MUI method
-def muimethod(f, mid):
-    f._pymui_mid_ = mid
-    return f
+def muimethod(mid):
+    def wrapper(func):
+        @functools.wraps(func)
+        def convertor(self, cl, msg, tp):
+            return func(self, cl, tp.FromLong(msg))
+        convertor._pymui_mid_ = mid
+        return convertor
+    return wrapper
 
 #===============================================================================
 
@@ -530,7 +576,7 @@ class rootclass(PyMUIObject, BOOPSIMixed):
         super(rootclass, self).__init__()
 
         self._keep_dict = {}
-        self._notify_cbdict = {} 
+        #self._notify_cbdict = {}
 
         # Extra parameters overwrite local ones.
         kwds.update(kwds.pop('pymui_extra', {}))
@@ -547,17 +593,14 @@ class rootclass(PyMUIObject, BOOPSIMixed):
         self._create(self._mclassid, _ct.addressof(init_tags), self.__class__.isMCC)
 
     def AddChild(self, o):
-        self._add(o)
-        self._cadd(o) # incref the child object to not lost it during next GC
+        if not self._cin(o):
+            self._add(o)
+            self._cadd(o) # incref the child object to not lost it during next GC
 
     def RemChild(self, o):
         if self._cin(o):
             self._rem(o)
             self._crem(o)
-
-# decorator
-def muimethod(f):
-    pass
 
 #===============================================================================
 
@@ -578,7 +621,7 @@ class Notify(rootclass):
     # forbidden: MUIA_UserData (intern usage)
     Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
 
-    CallHook = MMethod(MUIM_CallHook, c_NotifyHook, varargs=True)
+    CallHook = MMethod(MUIM_CallHook, [ ('hook', c_NotifyHook) ], rettype=c_ULONG, varargs=True)
 
     def NNSet(self, attr, v):
         self._getMA(attr).setter(self, v, True)
@@ -615,6 +658,11 @@ class Family(Notify):
     Child = MAttribute(MUIA_Family_Child, 'i..', c_MUIObject)
     List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
 
+    Insert   = MMethod(MUIM_Family_Insert,   [ ('obj', c_MUIObject), ('pred', c_MUIObject) ])
+    Remove   = MMethod(MUIM_Family_Remove,   [ ('obj', c_MUIObject) ])
+    Sort     = MMethod(MUIM_Family_Sort,     [ ('objs', c_MUIObject._PointerType()) ])
+    Transfer = MMethod(MUIM_Family_Transfer, [ ('family', c_MUIObject) ])
+
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
         super(Family, self).__init__(**kwds)
@@ -635,31 +683,35 @@ class Family(Notify):
         self._cadd(o)
         return x
 
-    def Insert(self, o, p):
+    @Insert.alias
+    def Insert(self, meth, o, p):
         if isinstance(o, c_MUIObject): o = o.value
         if isinstance(p, c_MUIObject): p = p.value
         isinstance(o, Family) and isinstance(p, Family)
         assert self._cin(p)
-        x = self._do(MUIM_Family_Insert, (o, p))
+        x = meth(self, o, p)
         self._cadd(o)
         return x
 
-    def Remove(self, o):
+    @Remove.alias
+    def Remove(self, meth, o):
         if isinstance(o, c_MUIObject): o = o.value
         assert self._cin(o)
-        x = self._do1(MUIM_Family_Remove, o)
+        x = meth(self, o)
         self._crem(o)
         return x
 
+    @Sort.alias
     def Sort(self, *args):
         a = c_MUIObject.ArrayOf(len(args)+1)() # transitive object, not needed to be keep
         a[:] = args
-        return self._do1(MUIM_Family_Sort, a)
+        return meth(self, a[0])
 
-    def Transfer(self, f):
+    @Transfer.alias
+    def Transfer(self, meth, f):
         if isinstance(f, c_MUIObject): f = f.value
         assert isinstance(f, Family)
-        x = self._do1(MUIM_Family_Transfer, f)
+        x = meth(self, f)
         for o in self._children:
             f._cadd(o)
         self._cclear()
@@ -674,7 +726,10 @@ class Menustrip(Family):
 
     InitChange = MMethod(MUIM_Menustrip_InitChange)
     ExitChange = MMethod(MUIM_Menustrip_ExitChange)
-    Popup      = MMethod(MUIM_Menustrip_Popup, (c_MUIObject, c_ULONG, c_LONG, c_LONG))
+    Popup      = MMethod(MUIM_Menustrip_Popup, [ ('parent', c_MUIObject),
+                                                 ('flags', c_ULONG),
+                                                 ('x', c_LONG),
+                                                 ('y', c_LONG) ])
 
     def __init__(self, items=None, **kwds):
         super(Menustrip, self).__init__(**kwds)
@@ -771,27 +826,32 @@ class Application(Notify):
     Window         = MAttribute(MUIA_Application_Window         , 'i..', c_MUIObject)
     WindowList     = MAttribute(MUIA_Application_WindowList     , '..g', c_pList)
 
-    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , c_MUIObject)
-    #AddInputHandler
-    #BuildSettingsPanel
+    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , [ ('refwindow', c_MUIObject) ])
+    ##AddInputHandler
+    ##BuildSettingsPanel
     CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
-    #DefaultConfigItem
+    ##DefaultConfigItem
     InputBuffered    = MMethod(MUIM_Application_InputBuffered)
-    Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
-    NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType(), rettype=c_ULONG)
-    OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
-    PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_MUIObject, c_LONG), varargs=True)
-    #RemInputHandler
-    ReturnID         = MMethod(MUIM_Application_ReturnID         , c_ULONG)
-    Save             = MMethod(MUIM_Application_Save             , c_STRPTR)
-    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , (c_MUIObject, c_STRPTR, c_STRPTR, c_LONG))
+    #Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
+    #NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType(), rettype=c_ULONG)
+    #OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
+    #PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_MUIObject, c_LONG), varargs=True)
+    ##RemInputHandler
+    ReturnID         = MMethod(MUIM_Application_ReturnID         , [ ('retid', c_ULONG) ])
+    #Save             = MMethod(MUIM_Application_Save             , c_STRPTR)
 
-    def __init__(self, **kwds):
-        win = kwds.pop('Window', None)
+    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , [ ('window', c_MUIObject),
+                                                                     ('name',   c_STRPTR),
+                                                                     ('node',   c_STRPTR),
+                                                                     ('line',   c_LONG) ])
+
+    def __init__(self, MainWindow=None, **kwds):
         super(Application, self).__init__(**kwds)
 
         # Add Window PyMUIObject passed as argument
-        if win: self.AddChild(win)
+        if MainWindow is not None:
+            self.AddChild(MainWindow)
+            MainWindow.Notify('Open', False, lambda e: MainWindow.KillApp())
 
     def AddChild(self, win):
         assert isinstance(win, Window)
@@ -1034,6 +1094,14 @@ class AboutMUI(Window):
         
 #===============================================================================
 
+class c_MinMax(CStructure):
+    _fields_ = [ ('MinWidth', c_WORD),
+                 ('MinHeight', c_WORD),
+                 ('MaxWidth', c_WORD),
+                 ('MaxHeight', c_WORD),
+                 ('DefWidth', c_WORD),
+                 ('DefHeight', c_WORD) ]
+
 class Area(Notify):
     CLASSID = MUIC_Area
 
@@ -1083,6 +1151,9 @@ class Area(Notify):
     Width              = MAttribute(MUIA_Width              , '..g', c_LONG)
     Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
     WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
+
+    AskMinMax = MMethod(MUIM_AskMinMax, [ ('MinMaxInfo', c_MinMax._PointerType()) ])
+    DragQuery = MMethod(MUIM_DragQuery, [ ('obj', c_MUIObject) ], rettype=c_ULONG)
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
@@ -1514,9 +1585,22 @@ PageGroup = Group.PageGroup
 
 #===============================================================================
 
-class c_ListConstructHook(c_Hook): _argtypes_ = (None, long)
-class c_ListDestructHook(c_Hook): _argtypes_ = (None, long)
-class c_ListDisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
+class c_List_ConstructHook(c_Hook): _argtypes_ = (None, long)
+class c_List_DestructHook(c_Hook): _argtypes_ = (None, long)
+class c_List_DisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
+
+class c_MUIP_List_Construct(CStructure):
+    _fields_ = [ ('MethodID', c_ULONG),
+                 ('entry', c_APTR),
+                 # Pool not used with Python
+               ]
+
+c_MUIP_List_Destruct = c_MUIP_List_Construct
+
+class c_MUIP_List_Display(CStructure):
+    _fields_ = [ ('MethodID', c_ULONG),
+                 ('entry', c_APTR),
+                 ('array', c_pSTRPTR) ]
 
 class List(Group):
     CLASSID = MUIC_List
@@ -1528,10 +1612,10 @@ class List(Group):
     AutoVisible      = MAttribute(MUIA_List_AutoVisible,    'isg', c_BOOL)
     ClickColumn      = MAttribute(MUIA_List_ClickColumn,    '..g', c_LONG)
     CompareHook      = MAttribute(MUIA_List_CompareHook,    'is.', c_Hook)
-    ConstructHook    = MAttribute(MUIA_List_ConstructHook,  'is.', c_ListConstructHook)
+    ConstructHook    = MAttribute(MUIA_List_ConstructHook,  'is.', c_List_ConstructHook)
     DefClickColumn   = MAttribute(MUIA_List_DefClickColumn, 'isg', c_LONG)
-    DestructHook     = MAttribute(MUIA_List_DestructHook,   'is.', c_ListDestructHook)
-    DisplayHook      = MAttribute(MUIA_List_DisplayHook,    'is.', c_ListDisplayHook)
+    DestructHook     = MAttribute(MUIA_List_DestructHook,   'is.', c_List_DestructHook)
+    DisplayHook      = MAttribute(MUIA_List_DisplayHook,    'is.', c_List_DisplayHook)
     DoubleClick      = MAttribute(MUIA_List_DoubleClick,    'i.g', c_BOOL)
     DragSortable     = MAttribute(MUIA_List_DragSortable,   'isg', c_BOOL)
     DragType         = MAttribute(MUIA_List_DragType,       'isg', c_LONG)
@@ -1557,16 +1641,22 @@ class List(Group):
     Visible          = MAttribute(MUIA_List_Visible,        '..g', c_LONG)
 
     Clear              = MMethod(MUIM_List_Clear)
-    Insert             = MMethod(MUIM_List_Insert,       (c_APTR, c_LONG, c_LONG))
-    InsertSingle       = MMethod(MUIM_List_InsertSingle, (c_APTR, c_LONG))
-    InsertSingleString = MMethod(MUIM_List_InsertSingle, (c_STRPTR, c_LONG))
+    Construct          = MMethod(MUIM_List_Construct,    [ ('entry', c_APTR), ('pool', c_APTR) ], rettype=c_APTR)
+    Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
+    Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
+    Insert             = MMethod(MUIM_List_Insert,       [ ('entries', c_APTR), ('count', c_LONG), ('pos', c_LONG) ], rettype=c_ULONG)
+    InsertSingle       = MMethod(MUIM_List_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ], rettype=c_ULONG)
     Sort               = MMethod(MUIM_List_Sort)
-    GetEntry           = MMethod(MUIM_List_GetEntry,     (c_LONG, c_APTR))
+    GetEntry           = MMethod(MUIM_List_GetEntry,     [ ('pos', c_LONG), ('entry', c_APTR._PointerType()) ])
 
     @Insert.alias
     def Insert(self, meth, objs, pos):
         n = len(objs)
         return meth(c_APTR.ArrayOf(n)(*objs), n, pos)
+
+    @InsertSingle.alias
+    def InsertSingleString(self, meth, s, pos=MUIV_List_Insert_Bottom):
+        return meth(self, c_STRPTR(s), pos)
 
     cols = property(fget=lambda self: self.Format.value.count(',')+1)
 

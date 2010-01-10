@@ -75,36 +75,42 @@ class MyReadline(object):
             raise StopIteration()
 
 class MyList(List):
+    MCC = True
+
     def __init__(self):
-        List.__init__(self, Background='ListBack', Format="BAR,")
+        List.__init__(self, Background='ListBack', Format='BAR,', Title=True)
         self.entries = {}
 
-        self.ConstructHook = self.Constructor
-        self.DestructHook = self.Destructor
-        self.DisplayHook = self.Display
+    @muimethod(MUIM_List_Construct)
+    def MyConstruct(self, cl, msg):
+        # entry is a string handled by a str Python object.
+        # So we need to keep alive this object to keep valid the string pointer.
 
-    def Constructor(self, entry):
-        # make a copy of entry string
-        v = c_STRPTR(entry).value
+        # Converting the entry c_APTR into a Python string object
+        v = c_STRPTR(msg.entry.value)
 
-        # If the line is identical twice or more, the entry value can be identical multiple times also.
-        # Becarefull with that during the Destruct hook call!
-
-        res = c_STRPTR(v)
-        self.entries.setdefault(long(res), v)
+        # store the python object into a dict to keep valid the string
+        if v.value in self.entries:
+            print "double: '%s'" % v.value
+        v = self.entries.setdefault(v.value, v) # we use setdefault and the string as key
+                                                # to keep only one time equal strings.
 
         # because v is a c_STRPTR it's convertible into long!
-        return res
+        return v
 
-    def Destructor(self, value):
-        try:
-            del self.entries[value]
-        except:
-            pass
+    @muimethod(MUIM_List_Destruct)
+    def Destructor(self, cl, msg):
+        print long(msg)
 
-    def Display(self, str_array, entry):
-        str_array[0] = str(long(str_array[-1])+1)
-        str_array[1] = entry
+    @muimethod(MUIM_List_Display)
+    def Display(self, cl, msg):
+        # here entry is NULL for title strings or a pointer on a C string, the one keep in self.entries.
+        if msg.entry.value:
+            msg.array[0] = str(long(msg.array[-1])+1)
+            msg.array[1] = msg.entry.value
+        else:
+            msg.array[0] = 'Line #'
+            msg.array[1] = 'Text'
 
 mylist = MyList()
 
@@ -112,10 +118,9 @@ f = open(sys.argv[1], 'Ur')
 lines = f.readlines()
 f.close()
 
-lines = ''.join(colorize(MyReadline(lines)))
-
-for line in lines.split('\n'):
-    mylist.InsertSingleString(line, MUIV_List_Insert_Bottom)
+lines = ''.join(colorize(MyReadline(lines))).split('\n')
+for line in lines:
+    mylist.InsertSingleString(line)
 
 top = HGroup(Child=mylist)
 
