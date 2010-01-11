@@ -250,6 +250,7 @@ typedef struct PyMUIObject_STRUCT {
                                    * automatically by MUI when the parent is deallocated.
                                    * This code doesn't put or remove children byitself, the user is responsible to handle that.
                                    */
+    PyObject *          children_dict; /* like children, but inserted in a dict for at given key */
     PyObject *          notify_cbdict;
     PyObject *          parent;
     PyObject *          overloaded_dict; /* Dict of MethodID:callable items for overloaded MUI methods */
@@ -322,55 +323,74 @@ for more information on calls.");
 ** Private Functions
 */
 
+static void PyMUIObject_ClearChildren(PyMUIObject *self);
+
+//+ PyMUIObject_Unlink
+static void
+PyMUIObject_Unlink(PyObject *o)
+{
+    if (!PyMUIObject_Check(o)) return;
+
+    if (PyBOOPSIObject_ISMUI(o)) {
+        Object *mo;
+
+        PyMUIObject_ClearChildren((PyMUIObject *)o);
+
+        mo = PyBOOPSIObject_GET_OBJECT(o);
+        if (NULL != mo) {
+            struct MUI_CustomClass *mcc = PyMUIObject_GET_MCC(o);
+
+            muiUserData(mo) = 0;
+            if (NULL != mcc)
+                ((MCCData *)INST_DATA(mcc->mcc_Class, mo))->PythonObject = NULL;
+        }
+    }
+
+    PyBOOPSIObject_SET_OBJECT(o, NULL);
+    REMOVE(((PyBOOPSIObject *)o)->node);
+}
+//-
 //+ PyMUIObject_ClearChildren
 static void
 PyMUIObject_ClearChildren(PyMUIObject *self)
 {
-    PyObject *iter;
-
-    if (NULL == self->children)
-        return;
-
-    DPRINT("self: %p '%s'\n", self, OBJ_TNAME(self));
+    DPRINT("Root: %p-'%s'\n", self, OBJ_TNAME(self));
 
     /* The MUI object will be destroyed and MUI will dispose children automatically.
      * So we're going to unlink the MUI side of all children Python objects before.
      */
 
-    iter = PyObject_GetIter(self->children);
-    if (NULL != iter) {
-        PyObject *child;
+    if (NULL != self->children) {
+        PyObject *iter;
 
-        while (NULL != (child = PyIter_Next(iter))) /* NR */ {
-            /* As the list is not publicly exposed, all objects are normally PyBOOPSIObject */
-            if (PyBOOPSIObject_ISMUI(child)) {
-                Object *mo;
+        iter = PyObject_GetIter(self->children);
+        if (NULL != iter) {
+            PyObject *child;
 
-                PyMUIObject_ClearChildren((PyMUIObject *)child);
-
-                mo = PyBOOPSIObject_GET_OBJECT(child);
-                if (NULL != mo) {
-                    struct MUI_CustomClass *mcc = PyMUIObject_GET_MCC(child);
-
-                    muiUserData(mo) = 0;
-                    if (NULL != mcc)
-                        ((MCCData *)INST_DATA(mcc->mcc_Class, mo))->PythonObject = NULL;
-                }
+            while (NULL != (child = PyIter_Next(iter))) /* NR */ {
+                PyMUIObject_Unlink(child);
+                Py_DECREF(child);
             }
 
-            PyBOOPSIObject_SET_OBJECT(child, NULL);
-            REMOVE(((PyBOOPSIObject *)child)->node);
-
-            Py_DECREF(child);
+            Py_DECREF(iter);
         }
 
-        Py_DECREF(iter);
+        PyErr_Clear();
+        PySet_Clear(self->children);
     }
 
-    PyErr_Clear();
-    PySet_Clear(self->children);
+    if (NULL != self->children_dict) {
+        PyObject *key, *child;
+        int pos = 0;
 
-    DPRINT("self: %p '%s' [done]\n", self, OBJ_TNAME(self));
+        while (PyDict_Next(self->children_dict, &pos, &key, &child))
+            PyMUIObject_Unlink(child);
+
+        PyErr_Clear();
+        PyDict_Clear(self->children_dict);
+    }
+
+    DPRINT("Root: %p '%s' [done]\n", self, OBJ_TNAME(self));
 }
 //-
 //+ Generic_DisposeObject
@@ -1506,11 +1526,14 @@ muiobject_new(PyTypeObject *type, PyObject *args)
     if (NULL != self) {
         self->notify_cbdict = PyDict_New(); /* NR */
         if (NULL != self->notify_cbdict) {
-            self->children = PySet_New(NULL); /* NR */
-            if (NULL != self->children) {
-                self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
-                if (NULL != self->raster)
-                    return (PyObject *)self;
+            self->children_dict = PyDict_New(); /* NR */
+            if (NULL != self->children_dict) {
+                self->children = PySet_New(NULL); /* NR */
+                if (NULL != self->children) {
+                    self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
+                    if (NULL != self->raster)
+                        return (PyObject *)self;
+                }
             }
         }
 
@@ -1528,6 +1551,7 @@ muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
     Py_VISIT(self->parent);
     Py_VISIT(self->overloaded_dict);
     Py_VISIT(self->raster);
+    Py_VISIT(self->children_dict);
     Py_VISIT(self->children);
     
     return 0;
@@ -1547,6 +1571,7 @@ muiobject_clear(PyMUIObject *self)
     PyMUIObject_ClearChildren(self);
 
     /* Safe to clear the children list now */
+    Py_CLEAR(self->children_dict);
     Py_CLEAR(self->children);
     return 0;
 }
@@ -1564,6 +1589,7 @@ muiobject_dealloc(PyMUIObject *self)
 static PyObject *
 muiobject__cclear(PyMUIObject *self)
 {
+    PyDict_Clear(self->children_dict);
     PySet_Clear(self->children);
 
     Py_RETURN_NONE;
@@ -1573,21 +1599,28 @@ muiobject__cclear(PyMUIObject *self)
 static PyObject *
 muiobject__cadd(PyMUIObject *self, PyObject *args)
 {
-    PyObject *child;
+    PyObject *child, *key=NULL;
     Object *child_obj;
 
-    if (!PyArg_ParseTuple(args, "O!", &PyBOOPSIObject_Type, &child))
+    if (!PyArg_ParseTuple(args, "O!|O", &PyBOOPSIObject_Type, &child, &key))
         return NULL;
 
     child_obj = PyBOOPSIObject_GET_OBJECT(child);
     if (NULL != child_obj) {
+        int result;
+
         /* Protection against adding itself */
         if (child_obj == PyBOOPSIObject_GET_OBJECT(self)) {
             PyErr_SetString(PyExc_TypeError, "cannot add an object its own children list!");
             return NULL;
         }
 
-        if (PySet_Add(self->children, child) < 0)
+        if (NULL != key) {
+            result = PyDict_SetItem(self->children_dict, key, child);
+        } else
+            result = PySet_Add(self->children, child);
+
+        if (result < 0)
             return NULL;
     }
 
@@ -1599,12 +1632,18 @@ muiobject__cadd(PyMUIObject *self, PyObject *args)
 static PyObject *
 muiobject__crem(PyMUIObject *self, PyObject *args)
 {
-    PyObject *child;
+    PyObject *child, *key=NULL;
+    int result;
 
-    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &child))
+    if (!PyArg_ParseTuple(args, "O!|O", &PyMUIObject_Type, &child, &key))
         return NULL;
 
-    if (PySet_Discard(self->children, child) < 0)
+    if (NULL != key)
+        result = PyDict_DelItem(self->children_dict, key);
+    else
+        result = PySet_Discard(self->children, child);
+
+    if (result < 0)
         return NULL;
 
     Py_RETURN_NONE;

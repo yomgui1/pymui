@@ -41,5 +41,7 @@ class Busy(Area):
     ShowHideIH = MAttribute(MUIA_Busy_ShowHideIH , 'i..', c_BOOL)
     Speed      = MAttribute(MUIA_Busy_Speed      , 'isg', c_LONG)
 
+    Move = MMethod(MUIM_Busy_Move)
+
     def __init__(self, Speed=MUIV_Busy_Speed_User, **kwds):
         super(Busy, self).__init__(Speed=Speed, **kwds)

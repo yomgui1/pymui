@@ -84,11 +84,10 @@ class c_BoopsiObject(_ct.c_ulong, CPointer):
             if not isinstance(x, (long, int)):
                 assert isinstance(x, PyBOOPSIObject)
                 x = x._object
-
             super(c_BoopsiObject, self).__init__(x)
         else:
             super(c_BoopsiObject, self).__init__()
-
+            
     @property
     def value(self):
         return _muimaster._BOOPSI2Python(_ct.c_ulong.value.__get__(self))
@@ -99,6 +98,9 @@ class c_BoopsiObject(_ct.c_ulong, CPointer):
     @classmethod
     def FromLong(cl, v):
         return cl(v)
+
+    def _keep(self):
+        return self.value
 
 class c_MUIObject(c_BoopsiObject): pass
 
@@ -190,7 +192,7 @@ class MAttribute(property):
             def _init(obj, v):
                 v = v if isinstance(v, ctype) else ctype(v)
                 if (keep is None and v._iskept) or keep is True:
-                    obj._keep_dict[id] = v
+                    obj._keep_dict[id] = v._keep()
                 return long(v)
         else:
             def _init(*args):
@@ -200,7 +202,7 @@ class MAttribute(property):
             def _setter(obj, v, nn=False):
                 v = v if isinstance(v, ctype) else ctype(v)
                 if (keep is None and v._iskept) or keep is True:
-                    obj._keep_dict[id] = v
+                    obj._keep_dict[id] = v._keep()
                 if nn:
                     obj._nset(id, v)
                 else:
@@ -275,7 +277,7 @@ class MAttribute(property):
 #===============================================================================
 
 class MMethod(property):
-    def __init__(self, id, fields=None, rettype=None,
+    def __init__(self, id, fields=None, rettype=c_ULONG,
                  varargs=False, doc=None, **kwds):
         self.__id = id
         self.__rettp = rettype
@@ -559,6 +561,9 @@ class BOOPSIMixed:
 #### Official Public Classes
 ################################################################################
 
+def _postSet_Child(self, attr, o):
+        self._cadd(o, attr.id)
+
 class rootclass(PyMUIObject, BOOPSIMixed):
     """rootclass for all other PyMUI classes.
 
@@ -621,7 +626,7 @@ class Notify(rootclass):
     # forbidden: MUIA_UserData (intern usage)
     Version           = MAttribute(MUIA_Version           , '..g', c_LONG)
 
-    CallHook = MMethod(MUIM_CallHook, [ ('hook', c_NotifyHook) ], rettype=c_ULONG, varargs=True)
+    CallHook = MMethod(MUIM_CallHook, [ ('hook', c_NotifyHook) ], varargs=True)
 
     def NNSet(self, attr, v):
         self._getMA(attr).setter(self, v, True)
@@ -833,7 +838,7 @@ class Application(Notify):
     ##DefaultConfigItem
     InputBuffered    = MMethod(MUIM_Application_InputBuffered)
     #Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
-    #NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType(), rettype=c_ULONG)
+    #NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType())
     #OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
     #PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_MUIObject, c_LONG), varargs=True)
     ##RemInputHandler
@@ -1153,7 +1158,7 @@ class Area(Notify):
     WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
 
     AskMinMax = MMethod(MUIM_AskMinMax, [ ('MinMaxInfo', c_MinMax._PointerType()) ])
-    DragQuery = MMethod(MUIM_DragQuery, [ ('obj', c_MUIObject) ], rettype=c_ULONG)
+    DragQuery = MMethod(MUIM_DragQuery, [ ('obj', c_MUIObject) ])
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
@@ -1311,8 +1316,8 @@ class Text(Area):
     # Factory class methods
 
     @classmethod
-    def KeyButton(cl, label, key=None):
-        kwds = dict(Contents=label,
+    def KeyButton(cl, label, key=None, **kwds):
+        kwds.update(Contents=label,
                     Font=MUIV_Font_Button,
                     Frame=MUIV_Frame_Button,
                     PreParse=MUIX_C,
@@ -1644,8 +1649,9 @@ class List(Group):
     Construct          = MMethod(MUIM_List_Construct,    [ ('entry', c_APTR), ('pool', c_APTR) ], rettype=c_APTR)
     Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
     Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
-    Insert             = MMethod(MUIM_List_Insert,       [ ('entries', c_APTR), ('count', c_LONG), ('pos', c_LONG) ], rettype=c_ULONG)
-    InsertSingle       = MMethod(MUIM_List_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ], rettype=c_ULONG)
+    Insert             = MMethod(MUIM_List_Insert,       [ ('entries', c_APTR), ('count', c_LONG), ('pos', c_LONG) ])
+    InsertSingle       = MMethod(MUIM_List_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ])
+    Jump               = MMethod(MUIM_List_Jump,         [ ('pos', c_LONG) ])
     Sort               = MMethod(MUIM_List_Sort)
     GetEntry           = MMethod(MUIM_List_GetEntry,     [ ('pos', c_LONG), ('entry', c_APTR._PointerType()) ])
 
@@ -1703,7 +1709,9 @@ class Mccprefs(Group):
 
 class Register(Group):
     CLASSID = MUIC_Register
-    # TODO
+
+    Frame  = MAttribute(MUIA_Register_Frame,  'i.g', c_BOOL)
+    Titles = MAttribute(MUIA_Register_Titles, 'i.g', c_pSTRPTR)
 
 #===============================================================================
 
@@ -1792,7 +1800,17 @@ class Scrollbar(Group):
 
 class Listview(Group):
     CLASSID = MUIC_Listview
-    # TODO
+
+    AgainClick     = MAttribute(MUIA_Listview_AgainClick,     'i.g', c_BOOL)
+    ClickColumn    = MAttribute(MUIA_Listview_ClickColumn,    '..g', c_LONG)
+    DefClickColumn = MAttribute(MUIA_Listview_DefClickColumn, 'isg', c_LONG)
+    DoubleClick    = MAttribute(MUIA_Listview_DoubleClick,    'i.g', c_BOOL)
+    DragType       = MAttribute(MUIA_Listview_DragType,       'isg', c_LONG)
+    Input          = MAttribute(MUIA_Listview_Input,          'i..', c_BOOL)
+    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=_postSet_Child)
+    MultiSelect    = MAttribute(MUIA_Listview_MultiSelect,    'i..', c_LONG)
+    ScollerPos     = MAttribute(MUIA_Listview_ScrollerPos,    'i..', c_BOOL)
+    SelectChange   = MAttribute(MUIA_Listview_SelectChange,   '..g', c_BOOL)
 
 #===============================================================================
 
@@ -1832,7 +1850,15 @@ class Palette(Group):
 
 class Popstring(Group):
     CLASSID = MUIC_Popstring
-    # TODO
+
+    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=_postSet_Child)
+    CloseHook = MAttribute(MUIA_Popstring_CloseHook, 'isg', c_Hook)
+    OpenHook  = MAttribute(MUIA_Popstring_OpenHook , 'isg', c_Hook)
+    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=_postSet_Child)
+    Toggle    = MAttribute(MUIA_Popstring_Toggle   , 'isg', c_BOOL)
+
+    Close = MMethod(MUIM_Popstring_Close, [ ('result', c_LONG) ])
+    Open  = MMethod(MUIM_Popstring_Open)
 
 #===============================================================================
 
@@ -1871,7 +1897,19 @@ class Popscreen(Popobject):
 
 class Popasl(Popstring):
     CLASSID = MUIC_Popasl
-    # TODO
+
+    Active    = MAttribute(MUIA_Popasl_Active,    '..g', c_BOOL)
+    StartHook = MAttribute(MUIA_Popasl_StartHook, 'isg', c_Hook)
+    StopHook  = MAttribute(MUIA_Popasl_StopHook,  'isg', c_Hook)
+    Type      = MAttribute(MUIA_Popasl_Type,      'i.g', c_ULONG)
+
+    __type_map = {'FileRequest':        0,
+                  'FontRequest':        1,
+                  'ScreenModeRequest':  2}
+
+    def __init__(self, Type, **kwds):
+        Type = self.__type_map.get(Type, Type)
+        Popstring.__init__(self, Type=Type, **kwds)
 
 #===============================================================================
 

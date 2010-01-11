@@ -27,6 +27,10 @@ class PyMUICType(object):
         """
         raise AssertionError("Shall be implemented by subclasses")
 
+    def _keep(self):
+        "Return the object to track."
+        return self
+
     @classmethod
     def FromLong(cl, v):
         """x.FromLong(v) -> instance

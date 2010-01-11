@@ -57,60 +57,54 @@ MUIM_Plot_UnbindXValues    = 0xFED2000B  # v1.2 (20.06.2008)
 
 #***** Values for data type (MUIM_Plot_Insert).
 
-MUIV_Plot_DataType_Double              1
+MUIV_Plot_DataType_Double           =   1
 
 #***** Special values for insert position (MUIM_Plot_Insert).
 
-MUIV_Plot_Insert_Top                   0
-MUIV_Plot_Insert_Bottom               -1
+MUIV_Plot_Insert_Top                =   0
+MUIV_Plot_Insert_Bottom             =  -1
 
 #***** Special values for move position (MUIM_Plot_Move).
 
-MUIV_Plot_Move_Top                     0
-MUIV_Plot_Move_Bottom                 -1
-MUIV_Plot_Move_Up                     -2
-MUIV_Plot_Move_Down                   -3
+MUIV_Plot_Move_Top                  =   0
+MUIV_Plot_Move_Bottom               =  -1
+MUIV_Plot_Move_Up                   =  -2
+MUIV_Plot_Move_Down                 =  -3
 
 #***** Special values for remove position (MUIM_Plot_Remove).
 
-MUIV_Plot_Remove_Top                   0
-MUIV_Plot_Remove_Bottom               -1
+MUIV_Plot_Remove_Top                =   0
+MUIV_Plot_Remove_Bottom             =  -1
 
 #***** Graphic elements identifiers for MUIM_Plot_SetAttr.
 
-MUIV_Plot_BorderLeft                  -1
-MUIV_Plot_BorderTop                   -2
-MUIV_Plot_BorderRight                 -3
-MUIV_Plot_BorderBottom                -4
-MUIV_Plot_PrimaryGridX                -5
-MUIV_Plot_PrimaryGridY                -6
-MUIV_Plot_SecondaryGridX              -7
-MUIV_Plot_SecodnaryGridY              -8
-MUIV_Plot_AxisX                	      -9
-MUIV_Plot_AxisY                       -10
-MUIV_Plot_DescX                	      -11
-MUIV_Plot_DescY                       -12
+MUIV_Plot_BorderLeft                =  -1
+MUIV_Plot_BorderTop                 =  -2
+MUIV_Plot_BorderRight               =  -3
+MUIV_Plot_BorderBottom              =  -4
+MUIV_Plot_PrimaryGridX              =  -5
+MUIV_Plot_PrimaryGridY              =  -6
+MUIV_Plot_SecondaryGridX            =  -7
+MUIV_Plot_SecodnaryGridY            =  -8
+MUIV_Plot_AxisX                	    =  -9
+MUIV_Plot_AxisY                     =  -10
+MUIV_Plot_DescX                	    =  -11
+MUIV_Plot_DescY                     =  -12
 
 # point types
-MUIV_Graph_PointType_None              0     # not implemented yet
-MUIV_Graph_PointType_Dot	           1     # not implemented yet
-MUIV_Graph_PointType_EmptySquare       2     # not implemented yet
-MUIV_Graph_PointType_FilledSquare      3     # not implemented yet
+MUIV_Graph_PointType_None           =   0     # not implemented yet
+MUIV_Graph_PointType_Dot	        =   1     # not implemented yet
+MUIV_Graph_PointType_EmptySquare    =   2     # not implemented yet
+MUIV_Graph_PointType_FilledSquare   =   3     # not implemented yet
 
 # line types
-MUIV_Graph_LineType_None               0     # not implemented yet
-MUIV_Graph_LineType_Solid              1     # not implemented yet
+MUIV_Graph_LineType_None            =   0     # not implemented yet
+MUIV_Graph_LineType_Solid           =   1     # not implemented yet
 
 
 class Plot(Area):
     CLASSID = MUIC_Plot
 
-    #def _setattr(self, id, value):
-    #    self.DoMethod(MUIM_Plot_SetAttr, (id, value))
-
-    #SetAttr     = MMethod(MUIM_Plot_SetAttr, (c_LONG, c_ULONG, c_ULONG))
-
-    #Color       = MAttribute(MUIA_Plot_Color, '.s.', c_ULONG, fset=_setattr)
     GridOffsetX  = MAttribute(MUIA_Plot_GridOffsetX, 'isg', c_pDOUBLE)
     GridOffsetY  = MAttribute(MUIA_Plot_GridOffsetY, 'isg', c_pDOUBLE)
     MaxX         = MAttribute(MUIA_Plot_MaxX, 'isg', c_pDOUBLE)
@@ -125,3 +119,13 @@ class Plot(Area):
     PrimaryGridY = MAttribute(MUIA_Plot_PrimaryGridY, 'isg', c_pDOUBLE)
     Quiet        = MAttribute(MUIA_Plot_Quiet, '.s.', c_BOOL)
     Units        = MAttribute(MUIA_Plot_Units, 'isg', c_ULONG)
+
+    BindXValues   = MMethod(MUIM_Plot_BindXValues, [ ('YDataset', c_LONG), ('XDataset', c_LONG) ])
+    Clear         = MMethod(MUIM_Plot_Clear)
+    ExportODS     = MMethod(MUIM_Plot_ExportODS, [ ('Name', c_LONG), ('Compression', c_LONG) ])
+    Insert        = MMethod(MUIM_Plot_Insert, [ ('Data', c_APTR), ('Type', c_ULONG), ('Length', c_ULONG), ('InsertPos', c_ULONG) ])
+    Move          = MMethod(MUIM_Plot_Move, [ ('FromPosition', c_ULONG), ('ToPosition', c_ULONG) ])
+    Remove        = MMethod(MUIM_Plot_Remove, [ ('Position', c_ULONG) ])
+    SetAttr       = MMethod(MUIM_Plot_SetAttr, [ ('Target', c_LONG), ('Attr', c_ULONG), ('Value', c_ULONG) ], rettype=c_BOOL)
+    UnbindXValues = MMethod(MUIM_Plot_UnbindXValues, [ ('YDataset', c_LONG) ])
+
