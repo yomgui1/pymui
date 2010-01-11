@@ -1279,13 +1279,27 @@ CheckMark = Image.CheckMark
 
 class Bitmap(Area):
     CLASSID = MUIC_Bitmap
-    # TODO
+
+    Alpha          = MAttribute(MUIA_Bitmap_Alpha,          'isg', c_ULONG)
+    Bitmap         = MAttribute(MUIA_Bitmap_Bitmap,         'isg', c_APTR) # struct BitMap *
+    Height         = MAttribute(MUIA_Bitmap_Height,         'isg', c_LONG)
+    MappingTable   = MAttribute(MUIA_Bitmap_MappingTable,   'isg', c_UBYTE._PointerType())
+    Precision      = MAttribute(MUIA_Bitmap_Precision,      'isg', c_LONG)
+    RemappedBitmap = MAttribute(MUIA_Bitmap_RemappedBitmap, '..g', c_APTR) # struct BitMap *
+    SourceColors   = MAttribute(MUIA_Bitmap_SourceColors,   'isg', c_ULONG._PointerType())
+    Transparent    = MAttribute(MUIA_Bitmap_Transparent,    'isg', c_LONG)
+    UseFriend      = MAttribute(MUIA_Bitmap_UseFriend,      'i..', c_BOOL)
+    Width          = MAttribute(MUIA_Bitmap_Width,          'isg', c_LONG)
 
 #===============================================================================
 
 class Bodychunk(Bitmap):
     CLASSID = MUIC_Bodychunk
-    # TODO
+
+    Body        = MAttribute(MUIA_Bodychunk_Body,        'isg', c_UBYTE._PointerType())
+    Compression = MAttribute(MUIA_Bodychunk_Compression, 'isg', c_UBYTE)
+    Depth       = MAttribute(MUIA_Bodychunk_Depth,       'isg', c_LONG)
+    Masking     = MAttribute(MUIA_Bodychunk_Masking,     'isg', c_UBYTE)
 
 #===============================================================================
 
@@ -1345,27 +1359,27 @@ CFreeLabel = functools.partial(FreeLabel, align='c')
 class Gadget(Area):
     CLASSID = MUIC_Gadget
     
-    Gadget = MAttribute(MUIA_Gadget_Gadget, '..g', c_APTR),
+    Gadget = MAttribute(MUIA_Gadget_Gadget, '..g', c_APTR) # struct Gadget *
 
 #===============================================================================
 
 class String(Area):
     CLASSID = MUIC_String
 
-    Accept         = MAttribute(MUIA_String_Accept         , 'isg', c_STRPTR)
-    Acknowledge    = MAttribute(MUIA_String_Acknowledge    , '..g', c_STRPTR)
-    AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR    , 'isg', c_BOOL)
-    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_MUIObject, postSet=_postSet_Child)
-    BufferPos      = MAttribute(MUIA_String_BufferPos      , '.sg', c_LONG)
-    Contents       = MAttribute(MUIA_String_Contents       , 'isg', c_STRPTR)
-    DisplayPos     = MAttribute(MUIA_String_DisplayPos     , '.sg', c_LONG)
-    EditHook       = MAttribute(MUIA_String_EditHook       , 'isg', c_Hook)
-    Format         = MAttribute(MUIA_String_Format         , 'i.g', c_LONG)
-    Integer        = MAttribute(MUIA_String_Integer        , 'isg', c_ULONG)
-    LonelyEditHook = MAttribute(MUIA_String_LonelyEditHook , 'isg', c_BOOL)
-    MaxLen         = MAttribute(MUIA_String_MaxLen         , 'i.g', c_LONG)
-    Reject         = MAttribute(MUIA_String_Reject         , 'isg', c_STRPTR)
-    Secret         = MAttribute(MUIA_String_Secret         , 'i.g', c_BOOL)
+    Accept         = MAttribute(MUIA_String_Accept,         'isg', c_STRPTR)
+    Acknowledge    = MAttribute(MUIA_String_Acknowledge,    '..g', c_STRPTR)
+    AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR,    'isg', c_BOOL)
+    AttachedList   = MAttribute(MUIA_String_AttachedList,   'isg', c_MUIObject, postSet=_postSet_Child)
+    BufferPos      = MAttribute(MUIA_String_BufferPos,      '.sg', c_LONG)
+    Contents       = MAttribute(MUIA_String_Contents,       'isg', c_STRPTR)
+    DisplayPos     = MAttribute(MUIA_String_DisplayPos,     '.sg', c_LONG)
+    EditHook       = MAttribute(MUIA_String_EditHook,       'isg', c_Hook)
+    Format         = MAttribute(MUIA_String_Format,         'i.g', c_LONG)
+    Integer        = MAttribute(MUIA_String_Integer,        'isg', c_ULONG)
+    LonelyEditHook = MAttribute(MUIA_String_LonelyEditHook, 'isg', c_BOOL)
+    MaxLen         = MAttribute(MUIA_String_MaxLen,         'i.g', c_LONG)
+    Reject         = MAttribute(MUIA_String_Reject,         'isg', c_STRPTR)
+    Secret         = MAttribute(MUIA_String_Secret,         'i.g', c_BOOL)
 
     ALIGN_MAP = {'r': MUIV_String_Format_Right, 'l': MUIV_String_Format_Left, 'c': MUIV_String_Format_Center}
 
@@ -1387,19 +1401,31 @@ class Boopsi(String):
 
 class Gauge(Area):
     CLASSID = MUIC_Gauge
-    # TODO
+
+    Current  = MAttribute(MUIA_Gauge_Current,  'isg', c_LONG)
+    Divide   = MAttribute(MUIA_Gauge_Divide,   'isg', c_ULONG)
+    Horiz    = MAttribute(MUIA_Gauge_Horiz,    'i..', c_BOOL)
+    InfoRate = MAttribute(MUIA_Gauge_InfoRate, 'isg', c_LONG)
+    InfoText = MAttribute(MUIA_Gauge_InfoText, 'isg', c_STRPTR)
+    Max      = MAttribute(MUIA_Gauge_Max,      'isg', c_LONG)
 
 #===============================================================================
 
 class Scale(Area):
     CLASSID = MUIC_Scale
-    # TODO
 
+    Horiz = MAttribute(MUIA_Scale_Horiz, 'isg', c_BOOL)
+    
 #===============================================================================
 
 class Colorfield(Area):
     CLASSID = MUIC_Colorfield
-    # TODO
+
+    Blue  = MAttribute(MUIA_Colorfield_Blue,  'isg', c_ULONG)
+    Green = MAttribute(MUIA_Colorfield_Green, 'isg', c_ULONG)
+    Pen   = MAttribute(MUIA_Colorfield_Pen,   '..g', c_ULONG)
+    Red   = MAttribute(MUIA_Colorfield_Red,   'isg', c_ULONG)
+    RGB   = MAttribute(MUIA_Colorfield_RGB,   'isg', c_ULONG._PointerType())
 
 #===============================================================================
 
@@ -1416,6 +1442,13 @@ class Numeric(Area):
     RevUpDown     = MAttribute(MUIA_Numeric_RevUpDown     , 'isg', c_BOOL)
     Value         = MAttribute(MUIA_Numeric_Value         , 'isg', c_LONG)
 
+    Decrease     = MMethod(MUIM_Numeric_Decrease, [ ('amount', c_LONG) ])
+    Increase     = MMethod(MUIM_Numeric_Increase, [ ('amount', c_LONG) ])
+    ScaleToValue = MMethod(MUIM_Numeric_ScaleToValue, [ ('scalemin', c_LONG), ('scalemax', c_LONG), ('scale', c_LONG) ])
+    SetDefault   = MMethod(MUIM_Numeric_SetDefault)
+    Stringify    = MMethod(MUIM_Numeric_Stringify, [ ('value', c_LONG) ])
+    ValueToScale = MMethod(MUIM_Numeric_ValueToScale, [ ('scalemin', c_LONG), ('scalemax', c_LONG) ])
+
 #===============================================================================
 
 class Knob(Numeric):
@@ -1425,7 +1458,8 @@ class Knob(Numeric):
 
 class Levelmeter(Numeric):
     CLASSID = MUIC_Levelmeter
-    # TODO
+
+    Label = MAttribute(MUIA_Levelmeter_Label, 'isg', c_STRPTR)
 
 #===============================================================================
 
@@ -1480,7 +1514,15 @@ class Popfrimage(Frimagedisplay):
 
 class Pendisplay(Area):
     CLASSID = MUIC_Pendisplay
-    # TODO
+
+    Pen       = MAttribute(MUIA_Pendisplay_Pen,       '..g', c_ULONG)
+    Reference = MAttribute(MUIA_Pendisplay_Reference, 'isg', c_MUIObject)
+    RGBcolor  = MAttribute(MUIA_Pendisplay_RGBcolor,  'isg', c_APTR) # struct MUI_RGBcolor *
+    Spec      = MAttribute(MUIA_Pendisplay_Spec,      'isg', c_APTR) # struct MUI_PenSpec *
+
+    SetColormap = MMethod(MUIM_Pendisplay_SetColormap, [ ('colormap', c_LONG) ])
+    SetMUIPen   = MMethod(MUIM_Pendisplay_SetMUIPen,   [ ('muipen', c_LONG) ])
+    SetRGB      = MMethod(MUIM_Pendisplay_SetRGB,      [ ('red', c_ULONG), ('green', c_ULONG), ('blue', c_ULONG) ])
 
 #===============================================================================
 
@@ -1489,7 +1531,7 @@ class Poppen(Pendisplay):
 
 #===============================================================================
 
-class Group(Area):
+class Group(Area): # TODO: not finished
     CLASSID = MUIC_Group
 
     ActivePage   = MAttribute(MUIA_Group_ActivePage   , 'isg', c_LONG)
@@ -1650,18 +1692,44 @@ class List(Group):
 
 class Floattext(List):
     CLASSID = MUIC_Floattext
-    # TODO
 
+    Justify   = MAttribute(MUIA_Floattext_Justify,   'isg', c_BOOL)
+    SkipChars = MAttribute(MUIA_Floattext_SkipChars, 'is.', c_STRPTR)
+    TabSize   = MAttribute(MUIA_Floattext_TabSize,   'is.', c_LONG)
+    Text      = MAttribute(MUIA_Floattext_Text,      'isg', c_STRPTR)
+    
 #===============================================================================
+
 class Volumelist(List):
     CLASSID = MUIC_Volumelist
-    # TODO
+
+    ExampleMode = MAttribute(MUIA_Volumelist_ExampleMode, 'i..', c_BOOL)
 
 #===============================================================================
 
 class Dirlist(List):
     CLASSID = MUIC_Dirlist
-    # TODO
+
+    AcceptPattern = MAttribute(MUIA_Dirlist_AcceptPattern, 'is.', c_STRPTR)
+    Directory     = MAttribute(MUIA_Dirlist_Directory,     'isg,' c_STRPTR)
+    DrawersOnly   = MAttribute(MUIA_Dirlist_DrawersOnly,   'is.', c_BOOL)
+    ExAllType     = MAttribute(MUIA_Dirlist_ExAllType,     'i.g', c_ULONG)
+    FilesOnly     = MAttribute(MUIA_Dirlist_FilesOnly,     'is.', c_BOOL)
+    FilterDrawers = MAttribute(MUIA_Dirlist_FilterDrawers, 'is.', c_BOOL)
+    FilterHook    = MAttribute(MUIA_Dirlist_FilterHook,    'is.', c_Hook)
+    MultiSelDirs  = MAttribute(MUIA_Dirlist_MultiSelDirs,  'is.', c_BOOL)
+    NumBytes      = MAttribute(MUIA_Dirlist_NumBytes,      '..g', c_LONG)
+    NumDrawers    = MAttribute(MUIA_Dirlist_NumDrawers,    '..g', c_LONG)
+    NumFiles      = MAttribute(MUIA_Dirlist_NumFiles,      '..g', c_LONG)
+    Path          = MAttribute(MUIA_Dirlist_Path,          '..g', c_STRPTR)
+    RejectIcons   = MAttribute(MUIA_Dirlist_RejectIcons,   'is.', c_BOOL)
+    RejectPattern = MAttribute(MUIA_Dirlist_RejectPattern, 'is.', c_STRPTR)
+    SortDirs      = MAttribute(MUIA_Dirlist_SortDirs,      'is.', c_LONG)
+    SortHighLow   = MAttribute(MUIA_Dirlist_SortHighLow,   'is.', c_BOOL)
+    SortType      = MAttribute(MUIA_Dirlist_SortType,      'is.', c_LONG)
+    Status        = MAttribute(MUIA_Dirlist_Status,        '..g', c_LONG)
+    
+    ReRead = MMethod(MUIM_Dirlist_ReRead)
 
 #===============================================================================
 
@@ -1672,7 +1740,9 @@ class Selectgroup(Group):
 
 class Argstring(Group):
     CLASSID = MUIC_Argstring
-    # TODO
+
+    Contents = MAttribute(MUIA_Argstring_Contents, 'isg', c_STRPTR)
+    Template = MAttribute(MUIA_Argstring_Template, 'isg', c_STRPTR)
 
 #===============================================================================
 
@@ -1697,13 +1767,13 @@ class Register(Group):
 
 class Backgroundadjust(Area):
     CLASSID = MUIC_Backgroundadjust
-    # TODO
 
 #===============================================================================
 
 class Penadjust(Backgroundadjust):
     CLASSID = MUIC_Penadjust
-    # TODO
+
+    PSIMode = MAttribute(MUIA_Penadjust_PSIMode, 'i..', c_BOOL)
 
 #===============================================================================
 
@@ -1774,7 +1844,8 @@ class Scrollgroup(Group):
 
 class Scrollbar(Group):
     CLASSID = MUIC_Scrollbar
-    # TODO
+
+    Type = MAttribute(MUIA_Scrollbar_Type, 'i..', c_LONG)
 
 #===============================================================================
 
@@ -1796,7 +1867,12 @@ class Listview(Group):
 
 class Radio(Group):
     CLASSID = MUIC_Radio
-    # TODO
+
+    Active = MAttribute(MUIA_Radio_Active,   'isg', c_LONG)
+    Entries = MAttribute(MUIA_Radio_Entries, 'i..', c_pSTRPTR)
+
+    def __init__(self, Entries, **kwds):
+        super(Radio, self).__init__(Entries=Entries, **kwds)
 
 #===============================================================================
 
@@ -1822,9 +1898,19 @@ class Coloradjust(Group):
 
 #===============================================================================
 
+class c_PaletteEntry(CStructure):
+    _fields_ = [ ('mpe_ID':, c_LONG),
+                 ('mpe_Red':, c_ULONG),
+                 ('mpe_Green':, c_ULONG),
+                 ('mpe_Blue':, c_ULONG),
+                 ('mpe_Group':, c_LONG) ]
+
 class Palette(Group):
     CLASSID = MUIC_Palette
-    # TODO
+
+    Entries   = MAttribute(MUIA_Palette_Entries,   'i.g', c_PaletteEntry._PointerType())
+    Groupable = MAttribute(MUIA_Palette_Groupable, 'isg', c_BOOL)
+    Names     = MAttribute(MUIA_Palette_Names,     'isg', c_pSTRPTR)
 
 #===============================================================================
 
@@ -1854,19 +1940,31 @@ class Pubscreenpanel(Group):
 
 class Pubscreenlist(Group):
     CLASSID = MUIC_Pubscreenlist
-    # TODO
 
+    Selection = MAttribute(MUIA_Pubscreenlist_Selection, '..g', c_STRPTR)
+    
 #===============================================================================
 
 class Popobject(Popstring):
     CLASSID = MUIC_Popobject
-    # TODO
+
+    Follow     = MAttribute(MUIA_Popobject_Follow,      'isg', c_BOOL)
+    Light      = MAttribute(MUIA_Popobject_Light,       'isg', c_BOOL)
+    Object     = MAttribute(MUIA_Popobject_Object,      'i.g', c_MUIObject, postSet=_postSet_Child)
+    ObjStrHook = MAttribute(MUIA_Popobject_ObjStrHook , 'isg', c_Hook)
+    StrObjHook = MAttribute(MUIA_Popobject_StrObjHook,  'isg', c_Hook)
+    Volatile   = MAttribute(MUIA_Popobject_Volatile,    'isg', c_BOOL)
+    WindowHook = MAttribute(MUIA_Popobject_WindowHook,  'isg', c_Hook)
 
 #===============================================================================
 
 class Poplist(Popobject):
     CLASSID = MUIC_Poplist
-    # TODO
+
+    Array = MAttribute(MUIA_Poplist_Array, 'i..', c_pSTRPTR)
+
+    def __init__(self, Array, **kwds):
+        super(Cycle, self).__init__(Array=Array, **kwds)
 
 #===============================================================================
 
@@ -1893,9 +1991,15 @@ class Popasl(Popstring):
 
 #===============================================================================
 
+# XXX: this class isn't very usefull on Python
 class Semaphore(rootclass):
     CLASSID = MUIC_Semaphore
-    # TODO
+
+    Attempt       = MMethod(MUIM_Semaphore_Attempt)
+    AttemptShared = MMethod(MUIM_Semaphore_AttemptShared)
+    Obtain        = MMethod(MUIM_Semaphore_Obtain)
+    ObtainShared  = MMethod(MUIM_Semaphore_ObtainShared)
+    Release       = MMethod(MUIM_Semaphore_Release)
 
 #===============================================================================
 
@@ -1957,7 +2061,9 @@ class Screenmodepanel(Panel):
 
 class Keyadjust(Group):
     CLASSID = MUIC_Keyadjust
-    # TODO
+
+    AllowMouseEvents = MAttribute(MUIA_Keyadjust_AllowMouseEvents, 'isg', c_BOOL)
+    Key              = MAttribute(MUIA_Keyadjust_Key, 'isg', c_STRPTR)
 
 #===============================================================================
 
@@ -1971,6 +2077,7 @@ class Colorring(Group):
 
 #===============================================================================
 
+# XXX: Needed?
 class Process(Semaphore):
     CLASSID = MUIC_Process
     # TODO
