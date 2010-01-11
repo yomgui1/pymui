@@ -794,60 +794,62 @@ class Menuitem(Family):
 
 #===============================================================================
 
-class Application(Notify):
+class Application(Notify): # TODO: unfinished
     CLASSID = MUIC_Application
 
-    Active         = MAttribute(MUIA_Application_Active         , 'isg', c_BOOL)
-    Author         = MAttribute(MUIA_Application_Author         , 'i.g', c_STRPTR)
-    Base           = MAttribute(MUIA_Application_Base           , 'i.g', c_STRPTR)
-    Broker         = MAttribute(MUIA_Application_Broker         , '..g', c_APTR)
-    BrokerHook     = MAttribute(MUIA_Application_BrokerHook     , 'isg', c_Hook)
-    BrokerPort     = MAttribute(MUIA_Application_BrokerPort     , '..g', c_APTR)
-    BrokerPri      = MAttribute(MUIA_Application_BrokerPri      , 'i.g', c_LONG)
-    Commands       = MAttribute(MUIA_Application_Commands       , 'isg', c_APTR)
-    Copyright      = MAttribute(MUIA_Application_Copyright      , 'i.g', c_STRPTR)
-    Description    = MAttribute(MUIA_Application_Description    , 'i.g', c_STRPTR)
-    DiskObject     = MAttribute(MUIA_Application_DiskObject     , 'isg', c_APTR)
-    DoubleStart    = MAttribute(MUIA_Application_DoubleStart    , '..g', c_BOOL)
-    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_MUIObject, postSet=_postSet_Child)
-    ForceQuit      = MAttribute(MUIA_Application_ForceQuit      , '..g', c_BOOL)
-    HelpFile       = MAttribute(MUIA_Application_HelpFile       , 'isg', c_STRPTR)
-    Iconified      = MAttribute(MUIA_Application_Iconified      , '.sg', c_BOOL)
-    MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
-    MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
-    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_MUIObject, postSet=_postSet_Child)
-    RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_Hook)
-    RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
-    RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
-    SingleTask     = MAttribute(MUIA_Application_SingleTask     , 'i..', c_BOOL)
-    Sleep          = MAttribute(MUIA_Application_Sleep          , '.s.', c_BOOL)
-    Title          = MAttribute(MUIA_Application_Title          , 'i.g', c_STRPTR)
-    UseCommodities = MAttribute(MUIA_Application_UseCommodities , 'i..', c_BOOL)
-    UsedClasses    = MAttribute(MUIA_Application_UsedClasses    , 'isg', c_pSTRPTR)
-    UseRexx        = MAttribute(MUIA_Application_UseRexx        , 'i..', c_BOOL)
-    Version        = MAttribute(MUIA_Application_Version        , 'i.g', c_STRPTR)
-    Window         = MAttribute(MUIA_Application_Window         , 'i..', c_MUIObject)
-    WindowList     = MAttribute(MUIA_Application_WindowList     , '..g', c_pList)
+    Active         = MAttribute(MUIA_Application_Active,         'isg', c_BOOL)
+    Author         = MAttribute(MUIA_Application_Author,         'i.g', c_STRPTR)
+    Base           = MAttribute(MUIA_Application_Base,           'i.g', c_STRPTR)
+    Broker         = MAttribute(MUIA_Application_Broker,         '..g', c_APTR)
+    BrokerHook     = MAttribute(MUIA_Application_BrokerHook,     'isg', c_Hook)
+    BrokerPort     = MAttribute(MUIA_Application_BrokerPort,     '..g', c_APTR)
+    BrokerPri      = MAttribute(MUIA_Application_BrokerPri,      'i.g', c_LONG)
+    Commands       = MAttribute(MUIA_Application_Commands,       'isg', c_APTR)
+    Copyright      = MAttribute(MUIA_Application_Copyright,      'i.g', c_STRPTR)
+    Description    = MAttribute(MUIA_Application_Description,    'i.g', c_STRPTR)
+    DiskObject     = MAttribute(MUIA_Application_DiskObject,     'isg', c_APTR)
+    DoubleStart    = MAttribute(MUIA_Application_DoubleStart,    '..g', c_BOOL)
+    DropObject     = MAttribute(MUIA_Application_DropObject,     'is.', c_MUIObject, postSet=_postSet_Child)
+    ForceQuit      = MAttribute(MUIA_Application_ForceQuit,      '..g', c_BOOL)
+    HelpFile       = MAttribute(MUIA_Application_HelpFile,       'isg', c_STRPTR)
+    Iconified      = MAttribute(MUIA_Application_Iconified,      '.sg', c_BOOL)
+    MenuAction     = MAttribute(MUIA_Application_MenuAction,     '..g', c_ULONG)
+    MenuHelp       = MAttribute(MUIA_Application_MenuHelp,       '..g', c_ULONG)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip,      'i..', c_MUIObject, postSet=_postSet_Child)
+    RexxHook       = MAttribute(MUIA_Application_RexxHook,       'isg', c_Hook)
+    RexxMsg        = MAttribute(MUIA_Application_RexxMsg,        '..g', c_APTR)
+    RexxString     = MAttribute(MUIA_Application_RexxString,     '.s.', c_STRPTR)
+    SingleTask     = MAttribute(MUIA_Application_SingleTask,     'i..', c_BOOL)
+    Sleep          = MAttribute(MUIA_Application_Sleep,          '.s.', c_BOOL)
+    Title          = MAttribute(MUIA_Application_Title,          'i.g', c_STRPTR)
+    UseCommodities = MAttribute(MUIA_Application_UseCommodities, 'i..', c_BOOL)
+    UsedClasses    = MAttribute(MUIA_Application_UsedClasses,    'isg', c_pSTRPTR)
+    UseRexx        = MAttribute(MUIA_Application_UseRexx,        'i..', c_BOOL)
+    Version        = MAttribute(MUIA_Application_Version,        'i.g', c_STRPTR)
+    Window         = MAttribute(MUIA_Application_Window,         'i..', c_MUIObject)
+    WindowList     = MAttribute(MUIA_Application_WindowList,     '..g', c_pList)
 
-    AboutMUI         = MMethod(MUIM_Application_AboutMUI        , [ ('refwindow', c_MUIObject) ])
+    AboutMUI         = MMethod(MUIM_Application_AboutMUI,         [ ('refwindow', c_MUIObject) ])
     ##AddInputHandler
     ##BuildSettingsPanel
     CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
     ##DefaultConfigItem
     InputBuffered    = MMethod(MUIM_Application_InputBuffered)
-    #Load             = MMethod(MUIM_Application_Load             , c_STRPTR)
-    #NewInput         = MMethod(MUIM_Application_NewInput         , c_ULONG._PointerType())
-    #OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow , (c_ULONG, c_STRPTR))
-    #PushMethod       = MMethod(MUIM_Application_PushMethod       , (c_MUIObject, c_LONG), varargs=True)
+    Load             = MMethod(MUIM_Application_Load,             [ ('name', c_STRPTR) ])
+    NewInput         = MMethod(MUIM_Application_NewInput,         [ ('signal', c_ULONG._PointerType()) ])
+    OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow, [ ('flags', c_ULONG),
+                                                                    ('classid', c_STRPTR) ])
+    PushMethod       = MMethod(MUIM_Application_PushMethod,       [ ('dest', c_MUIObject),
+                                                                    ('count', c_LONG) ], varargs=True)
     ##RemInputHandler
-    ReturnID         = MMethod(MUIM_Application_ReturnID         , [ ('retid', c_ULONG) ])
-    #Save             = MMethod(MUIM_Application_Save             , c_STRPTR)
+    ReturnID         = MMethod(MUIM_Application_ReturnID,         [ ('retid', c_ULONG) ])
+    Save             = MMethod(MUIM_Application_Save,             [ ('name', c_STRPTR) ])
 
-    ShowHelp         = MMethod(MUIM_Application_ShowHelp         , [ ('window', c_MUIObject),
-                                                                     ('name',   c_STRPTR),
-                                                                     ('node',   c_STRPTR),
-                                                                     ('line',   c_LONG) ])
-
+    ShowHelp         = MMethod(MUIM_Application_ShowHelp,         [ ('window', c_MUIObject),
+                                                                    ('name',   c_STRPTR),
+                                                                    ('node',   c_STRPTR),
+                                                                    ('line',   c_LONG) ])
+    
     def __init__(self, MainWindow=None, **kwds):
         super(Application, self).__init__(**kwds)
 
@@ -876,7 +878,7 @@ class Application(Notify):
 
 #===============================================================================
 
-class Window(Notify):
+class Window(Notify): # TODO: unfinished
     CLASSID = MUIC_Window
     
     def __preSetRootObject(self, attr, o):
@@ -1084,7 +1086,7 @@ class Window(Notify):
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
 
-    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject, postSet=_postSet_Child)
+    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject)
 
     def __init__(self, app, **kwds):
         super(AboutMUI, self).__init__(Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
@@ -1100,7 +1102,7 @@ class c_MinMax(CStructure):
                  ('DefWidth', c_WORD),
                  ('DefHeight', c_WORD) ]
 
-class Area(Notify):
+class Area(Notify): # TODO: unfinished
     CLASSID = MUIC_Area
 
     Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR)
@@ -1442,11 +1444,11 @@ class Numeric(Area):
     RevUpDown     = MAttribute(MUIA_Numeric_RevUpDown     , 'isg', c_BOOL)
     Value         = MAttribute(MUIA_Numeric_Value         , 'isg', c_LONG)
 
-    Decrease     = MMethod(MUIM_Numeric_Decrease, [ ('amount', c_LONG) ])
-    Increase     = MMethod(MUIM_Numeric_Increase, [ ('amount', c_LONG) ])
+    Decrease     = MMethod(MUIM_Numeric_Decrease,     [ ('amount', c_LONG) ])
+    Increase     = MMethod(MUIM_Numeric_Increase,     [ ('amount', c_LONG) ])
     ScaleToValue = MMethod(MUIM_Numeric_ScaleToValue, [ ('scalemin', c_LONG), ('scalemax', c_LONG), ('scale', c_LONG) ])
     SetDefault   = MMethod(MUIM_Numeric_SetDefault)
-    Stringify    = MMethod(MUIM_Numeric_Stringify, [ ('value', c_LONG) ])
+    Stringify    = MMethod(MUIM_Numeric_Stringify,    [ ('value', c_LONG) ])
     ValueToScale = MMethod(MUIM_Numeric_ValueToScale, [ ('scalemin', c_LONG), ('scalemax', c_LONG) ])
 
 #===============================================================================
@@ -1531,7 +1533,7 @@ class Poppen(Pendisplay):
 
 #===============================================================================
 
-class Group(Area): # TODO: not finished
+class Group(Area): # TODO: unfinished
     CLASSID = MUIC_Group
 
     ActivePage   = MAttribute(MUIA_Group_ActivePage   , 'isg', c_LONG)
@@ -1629,7 +1631,7 @@ class c_List_ConstructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DestructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
 
-class List(Group):
+class List(Group): # TODO: unfinished
     CLASSID = MUIC_List
 
     Active           = MAttribute(MUIA_List_Active,         'isg', c_LONG)
