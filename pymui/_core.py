@@ -1713,7 +1713,7 @@ class Dirlist(List):
     CLASSID = MUIC_Dirlist
 
     AcceptPattern = MAttribute(MUIA_Dirlist_AcceptPattern, 'is.', c_STRPTR)
-    Directory     = MAttribute(MUIA_Dirlist_Directory,     'isg,' c_STRPTR)
+    Directory     = MAttribute(MUIA_Dirlist_Directory,     'isg', c_STRPTR)
     DrawersOnly   = MAttribute(MUIA_Dirlist_DrawersOnly,   'is.', c_BOOL)
     ExAllType     = MAttribute(MUIA_Dirlist_ExAllType,     'i.g', c_ULONG)
     FilesOnly     = MAttribute(MUIA_Dirlist_FilesOnly,     'is.', c_BOOL)
@@ -1901,11 +1901,11 @@ class Coloradjust(Group):
 #===============================================================================
 
 class c_PaletteEntry(CStructure):
-    _fields_ = [ ('mpe_ID':, c_LONG),
-                 ('mpe_Red':, c_ULONG),
-                 ('mpe_Green':, c_ULONG),
-                 ('mpe_Blue':, c_ULONG),
-                 ('mpe_Group':, c_LONG) ]
+    _fields_ = [ ('mpe_ID', c_LONG),
+                 ('mpe_Red', c_ULONG),
+                 ('mpe_Green', c_ULONG),
+                 ('mpe_Blue', c_ULONG),
+                 ('mpe_Group', c_LONG) ]
 
 class Palette(Group):
     CLASSID = MUIC_Palette
