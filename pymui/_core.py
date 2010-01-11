@@ -747,6 +747,7 @@ class Menustrip(Family):
 
     @Popup.alias
     def Popup(self, meth, parent, x, y, flags=0):
+        # XXX: safe to not keep parent?
         meth(self, parent, flags, x, y)
 
 #===============================================================================
@@ -796,9 +797,6 @@ class Menuitem(Family):
 class Application(Notify):
     CLASSID = MUIC_Application
 
-    def __postSetMenuStrip(self, attr, o):
-        self._cadd(o)
-
     Active         = MAttribute(MUIA_Application_Active         , 'isg', c_BOOL)
     Author         = MAttribute(MUIA_Application_Author         , 'i.g', c_STRPTR)
     Base           = MAttribute(MUIA_Application_Base           , 'i.g', c_STRPTR)
@@ -811,13 +809,13 @@ class Application(Notify):
     Description    = MAttribute(MUIA_Application_Description    , 'i.g', c_STRPTR)
     DiskObject     = MAttribute(MUIA_Application_DiskObject     , 'isg', c_APTR)
     DoubleStart    = MAttribute(MUIA_Application_DoubleStart    , '..g', c_BOOL)
-    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_MUIObject)
+    DropObject     = MAttribute(MUIA_Application_DropObject     , 'is.', c_MUIObject, postSet=_postSet_Child)
     ForceQuit      = MAttribute(MUIA_Application_ForceQuit      , '..g', c_BOOL)
     HelpFile       = MAttribute(MUIA_Application_HelpFile       , 'isg', c_STRPTR)
     Iconified      = MAttribute(MUIA_Application_Iconified      , '.sg', c_BOOL)
     MenuAction     = MAttribute(MUIA_Application_MenuAction     , '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp       , '..g', c_ULONG)
-    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_MUIObject, postSet=__postSetMenuStrip)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip      , 'i..', c_MUIObject, postSet=_postSet_Child)
     RexxHook       = MAttribute(MUIA_Application_RexxHook       , 'isg', c_Hook)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg        , '..g', c_APTR)
     RexxString     = MAttribute(MUIA_Application_RexxString     , '.s.', c_STRPTR)
@@ -885,16 +883,13 @@ class Window(Notify):
         assert o is not None
         return o
 
-    def __postSetRootObject(self, attr, o):
-        self._cadd(o)
-
     def __checkForApp(self, attr, o):
         if not self.ApplicationObject.value:
             raise AttributeError("Window not linked to an application yet")
         return o
 
     Activate                = MAttribute(MUIA_Window_Activate                , 'isg', c_BOOL)
-    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_MUIObject)
+    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_MUIObject) # XXX: what append if the object is not a child?
     AltHeight               = MAttribute(MUIA_Window_AltHeight               , 'i.g', c_LONG)
     AltLeftEdge             = MAttribute(MUIA_Window_AltLeftEdge             , 'i.g', c_LONG)
     AltTopEdge              = MAttribute(MUIA_Window_AltTopEdge              , 'i.g', c_LONG)
@@ -904,7 +899,7 @@ class Window(Notify):
     Borderless              = MAttribute(MUIA_Window_Borderless              , 'i..', c_BOOL)
     CloseGadget             = MAttribute(MUIA_Window_CloseGadget             , 'i..', c_BOOL)
     CloseRequest            = MAttribute(MUIA_Window_CloseRequest            , '..g', c_BOOL)
-    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_MUIObject)
+    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_MUIObject) # XXX: what append if the object is not a child?
     DepthGadget             = MAttribute(MUIA_Window_DepthGadget             , 'i..', c_BOOL)
     DisableKeys             = MAttribute(MUIA_Window_DisableKeys             , 'isg', c_LONG)
     DragBar                 = MAttribute(MUIA_Window_DragBar                 , 'i..', c_BOOL)
@@ -915,16 +910,14 @@ class Window(Notify):
     IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
     LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
     MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
-    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject, postSet=_postSet_Child)
     MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_MUIObject)
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
-    Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL,
-                                         preSet=__checkForApp)
+    Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
     RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject)
-    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject,
-                                         preSet=__preSetRootObject, postSet=__postSetRootObject)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, preSet=__preSetRootObject, postSet=_postSet_Child)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
@@ -1091,7 +1084,7 @@ class Window(Notify):
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
 
-    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject)
+    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject, postSet=_postSet_Child)
 
     def __init__(self, app, **kwds):
         super(AboutMUI, self).__init__(Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
@@ -1112,7 +1105,7 @@ class Area(Notify):
 
     Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
-    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=_postSet_Child)
     ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
     ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
@@ -1362,7 +1355,7 @@ class String(Area):
     Accept         = MAttribute(MUIA_String_Accept         , 'isg', c_STRPTR)
     Acknowledge    = MAttribute(MUIA_String_Acknowledge    , '..g', c_STRPTR)
     AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR    , 'isg', c_BOOL)
-    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_MUIObject)
+    AttachedList   = MAttribute(MUIA_String_AttachedList   , 'isg', c_MUIObject, postSet=_postSet_Child)
     BufferPos      = MAttribute(MUIA_String_BufferPos      , '.sg', c_LONG)
     Contents       = MAttribute(MUIA_String_Contents       , 'isg', c_STRPTR)
     DisplayPos     = MAttribute(MUIA_String_DisplayPos     , '.sg', c_LONG)
@@ -1593,19 +1586,6 @@ PageGroup = Group.PageGroup
 class c_List_ConstructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DestructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
-
-class c_MUIP_List_Construct(CStructure):
-    _fields_ = [ ('MethodID', c_ULONG),
-                 ('entry', c_APTR),
-                 # Pool not used with Python
-               ]
-
-c_MUIP_List_Destruct = c_MUIP_List_Construct
-
-class c_MUIP_List_Display(CStructure):
-    _fields_ = [ ('MethodID', c_ULONG),
-                 ('entry', c_APTR),
-                 ('array', c_pSTRPTR) ]
 
 class List(Group):
     CLASSID = MUIC_List

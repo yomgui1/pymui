@@ -2,8 +2,21 @@
 #### PyMUI C types
 ################################################################################
 
+## ** Concepts **
 ##
-## Design rules:
+## This files brings some classes based on ctypes modules and designed to mimic
+## C datatypes accepted in MUI API. It's based on the AmigaOS BOOPSI paradigm.
+##
+## The AmigaOS has been developed for a 32bit architecture,
+## so this API has the particularity to pass data using only 32bit integer values,
+## that may be unsigned or signed.
+## So when more data or floating point values are needed to be transfered between
+## functions, a pointer (32bit integer) is used.
+##
+## So PyMUI types uses this concept also: all instances shall be convertible into
+## a 32bit integer value.
+##
+## ** Design rules **
 ##
 ## Pointers: pointer classes should accept as first argument an instance of the
 ##           pointed type or nothing. In last case, the pointer value is zero.
@@ -18,8 +31,6 @@ class PyMUICType(object):
     So any data shall be have this representation to be given to MUI.
     """
 
-    _iskept = False
-
     def __long__(self):
         """Return a 32bit integer value usable for MUI.
 
@@ -27,6 +38,13 @@ class PyMUICType(object):
         """
         raise AssertionError("Shall be implemented by subclasses")
 
+    def __set__iskept(self, v):
+        self.__iskept = bool(v)
+        
+    __iskept = False
+    _iskept = property(doc="return True if an object needs to be tracked to not be deallocated.",
+                       fget=lambda self: self.__iskept, fset=__set__iskept)
+    
     def _keep(self):
         "Return the object to track."
         return self
@@ -47,7 +65,7 @@ class PyMUICType(object):
         """Return a python interpretation of the instance.
 
         Some ctypes doesn't have 'value' property.
-        To have a common API, this mixing add this property if not exists.
+        To have a common API, this mixin add this property if not exists.
         
         By default, the integer representation of the instance is returned.
         """
@@ -100,7 +118,7 @@ class CComplexBase(PyMUICType):
         return cl.from_address(v)
 
 class CStructure(_ct.Structure, CComplexBase):
-    """CStructure mixing class.
+    """CStructure mixin class.
 
     All subclasses shall defines '_fields_' attribute.
     See ctypes module documentation about Structure type.
@@ -109,7 +127,7 @@ class CStructure(_ct.Structure, CComplexBase):
     pass
 
 class _CArray(CComplexBase):
-    """_CArray mixing class.
+    """_CArray mixin class.
 
     Private class, shall not be used publicly. Use 'ArrayOf' methods.
     
@@ -122,7 +140,7 @@ class _CArray(CComplexBase):
         return len(self.contents)
 
 class CPointer(PyMUICType):
-    """CPointer mixing class
+    """CPointer mixin class
 
     All subclasses shall defines '_type_' attribute representing the pointed memory ctype.
     See ctypes module documentation about Pointer type.
@@ -149,10 +167,7 @@ class c_ULONG(_ct.c_ulong, CSimpleValue): pass
 
 class c_APTR(_ct.c_void_p, CSimpleValue): # c_APTR is not subclass of CPointer, the only possible case
     def __init__(self, x=0):
-        if isinstance(x, (c_APTR, CPointer)):
-            _ct.c_void_p.__init__(self, long(x))
-        else:
-            _ct.c_void_p.__init__(self, x)
+        _ct.c_void_p.__init__(self, long(x))
         
     def __long__(self):
         return self.value or 0
@@ -184,23 +199,23 @@ class c_STRPTR(_ct.c_char_p, CPointer):
 
 
 # Specials
-class Iterator_c_pSTRPTR:
-    def __init__(self, o):
-        self.__o = o
-        self.__i = 0
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        v = self.__o[self.__i]
-        if v.value is None:
-            raise StopIteration()
-        self.__i += 1
-        return v
-
 class c_pSTRPTR(c_STRPTR._PointerType()):
     _type_ = c_STRPTR
+
+    class __iter_c_pSTRPTR:
+        def __init__(self, o):
+            self.__o = o
+            self.__i = 0
+
+        def __iter__(self):
+            return self
+
+        def next(self):
+            v = self.__o[self.__i]
+            if v.value is None:
+                raise StopIteration()
+            self.__i += 1
+            return v
 
     def __init__(self, x=None):
         if x:
@@ -212,7 +227,7 @@ class c_pSTRPTR(c_STRPTR._PointerType()):
             super(c_pSTRPTR, self).__init__()
 
     def __iter__(self):
-        return Iterator_c_pSTRPTR(self)
+        return c_pSTRPTR.__iter_c_pSTRPTR(self)
 
 class c_FLOAT(_ct.c_float, CSimpleValue):
     def __long__(self):
