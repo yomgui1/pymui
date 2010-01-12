@@ -198,10 +198,52 @@ class c_ListTitle(c_STRPTR):
 ################################################################################
 
 class MAttribute(property):
-    def __init__(self, id, isg, ctype, keep=None, doc=None, **kwds):
+    """MAttribute(id, isg, ctype, keep=None, doc=None, **kwds) -> instance
+
+    This class generates class properties to define MUI attributes when you wrap
+    a MUI class with PyMUI. Just use it as the property Python class.
+    
+    This property is used by instances of your class to set/get MUI attribute
+    as GetAttr() and SetAttrs() do in the insane C world.
+
+
+    Arguments documentation:
+
+    - id: [long] the MUI id (MUIA_xxxx values) to wrap
+    - isg: [str] a 3-characters string to indicate if the attribute is available
+    at initialisation of your class (__init__), can be set or get. Only 4 characters
+    are recognized : 'i', 's', 'g' or '.' (dot).
+    Use the dot when the corresponding flags is not avaible, in the same way as
+    documented in the library/mui.h file. Order doesn't matter, just presence or not.
+    - ctype: [PyMUICType class] a PyMUICType class used to handle the MUI attribute value.
+    - keep: [bool or None] use it to force or not the object tracking scheme
+    (incref a Python object related the input value given during the init or set of
+    the attribute). None to let the atribute type decide what to do. True or False
+    to force to track or not track something related to the input
+
+
+    Optional keywords:
+
+    - 'preSet': a callable with prototype (PyMUIObject instance, MAttribute instance, value).
+    Called before setting the value to the MUI attribute of the given object.
+    This callable shall return the value to really use for setting.
+    - 'postSet': a callable with same prototype as preSet. Called after the MUI set is done.
+    No return.
+    - 'preGet': a callable with prototype (PyMUIObject instance, MAttribute instance).
+    Called before getting the value to the MUI attribute of the given object.
+    No return.
+    - 'postSet': a callable with same prototype as preSet (and not preGet!).
+    Called after the MUI get is done with the get value.
+    This callable shall return the value really to really return to the user.
+
+    Other keywords are directly given to the property class __init__ constructor.
+    """
+    
+    def __init__(self, id, isg, ctype, keep=None, **kwds):
+        assert issubclass(ctype, PyMUICType)
+        
         self.__isg = isg
         self.__id = id
-        assert issubclass(ctype, PyMUICType)
         self.__ctype = ctype
 
         if 'i' in isg:
@@ -232,8 +274,8 @@ class MAttribute(property):
         else:
             _getter = None
 
-        preSet = kwds.get('preSet')
-        postSet = kwds.get('postSet')
+        preSet = kwds.pop('preSet', None)
+        postSet = kwds.pop('postSet', None)
         if preSet and postSet:
             def setter(obj, v, nn=False):
                 _setter(obj, preSet(obj, self, v), nn)
@@ -261,8 +303,8 @@ class MAttribute(property):
 
         self.init = init
 
-        preGet = kwds.get('preGet')
-        postGet = kwds.get('postGet')
+        preGet = kwds.pop('preGet', None)
+        postGet = kwds.pop('postGet', None)
         if preGet and postGet:
             def getter(obj):
                 preGet(obj, self)
@@ -278,17 +320,22 @@ class MAttribute(property):
             getter = _getter
 
         self.setter = setter
-        property.__init__(self, fget=getter, fset=setter, doc=doc)
+        property.__init__(self, fget=getter, fset=setter, **kwds)
 
     @property
-    def isg(self): return self.__isg
-    
-    @property
-    def id(self): return self.__id
-    
-    @property
-    def ctype(self): return self.__ctype
+    def id(self):
+        "MUI id of the MUI attribute"
+        return self.__id
 
+    @property
+    def isg(self):
+        "MUI ISG flags of the MUI attribute"
+        return self.__isg
+    
+    @property
+    def ctype(self):
+        "PyMUICType class of the MUI attribute"
+        return self.__ctype
 
 #===============================================================================
 
@@ -488,13 +535,12 @@ def muimethod(mid):
 
 #===============================================================================
 
-class BOOPSIMixed:
+class BOOPSIMixin:
     @classmethod
     def _getMA(cl, o):
-        if type(o) is str:
+        if isinstance(o, str):
             return cl._getMAByName(o)
-        else:
-            return cl._getMAByID(o)
+        return cl._getMAByID(o)
         
     @classmethod
     def _getMAByName(cl, name):
@@ -526,10 +572,9 @@ class BOOPSIMixed:
 
     @classmethod
     def _getMM(cl, o):
-        if type(o) is str:
+        if isinstance(o, str):
             return cl._getMMByName(o)
-        else:
-            return cl._getMMByID(o)
+        return cl._getMMByID(o)
 
     @classmethod
     def _getMMByName(cl, name):
@@ -582,7 +627,7 @@ class BOOPSIMixed:
 def _postSet_Child(self, attr, o):
         self._cadd(o, attr.id)
 
-class rootclass(PyMUIObject, BOOPSIMixed):
+class rootclass(PyMUIObject, BOOPSIMixin):
     """rootclass for all other PyMUI classes.
 
     ATTENTION: You can't create instance of this class!
