@@ -150,6 +150,22 @@ class c_Hook(c_PyObject):
     def FromLong(cl, v):
         return cl(_muimaster._CHook(v))
 
+class c_Node(CStructure): pass
+c_Node._fields_ = [ ('ln_Succ', c_Node._PointerType()),
+                    ('ln_Pred', c_Node._PointerType()),
+                    ('ln_Type', c_UBYTE),
+                    ('ln_Pri', c_BYTE),
+                    ('ln_Name', c_STRPTR) ]
+
+class c_MinNode(CStructure): pass
+c_MinNode._fields_ = [ ('mln_Succ', c_MinNode._PointerType()),
+                       ('mln_Pred', c_MinNode._PointerType()) ]
+
+class c_Message(CStructure):
+    _fields_ = [ ('mn_Node', c_Node),
+                 ('mn_ReplyPort', c_APTR),
+                 ('mn_Length', c_UWORD) ]
+
 class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
@@ -335,6 +351,8 @@ class MMethod(property):
                         msg[i+1] = long(o)
                     return self.__retconv(obj._do(msg, args))
         else:
+            self.__msgtype = type('c_MUIP_%x' % id, (CStructure,), {'_fields_': [ ('MethodID', c_ULONG) ]})
+
             if not varargs:
                 def cb(obj):
                     return self.__retconv(obj._do(_ct.c_ulong(id)))
@@ -1102,6 +1120,28 @@ class c_MinMax(CStructure):
                  ('DefWidth', c_WORD),
                  ('DefHeight', c_WORD) ]
 
+class c_IntuiMessage(CStructure):
+    _fields_ = [ ('ExecMessage', c_Message),
+                 ('Class', c_ULONG),
+                 ('Code', c_UWORD),
+                 ('Qualifier', c_UWORD),
+                 ('IAddress', c_APTR),
+                 ('MouseX', c_WORD),
+                 ('MouseY', c_WORD),
+                 ('Seconds', c_ULONG),
+                 ('Micros', c_ULONG),
+                 ('IDCMPWindow', c_APTR),
+                 ('SpecialLink', c_APTR) ]
+
+class c_EventHandlerNode(CStructure):
+    _fields_ = [ ('ehn_Node', c_MinNode),
+                 ('ehn_Reserved', c_BYTE),
+                 ('ehn_Priority', c_BYTE),
+                 ('ehn_Flags', c_UWORD),
+                 ('ehn_Object', c_MUIObject),
+                 ('ehn_Class', c_APTR),
+                 ('ehn_Events', c_ULONG) ]
+
 class Area(Notify): # TODO: unfinished
     CLASSID = MUIC_Area
 
@@ -1152,8 +1192,14 @@ class Area(Notify): # TODO: unfinished
     Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
     WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
 
-    AskMinMax = MMethod(MUIM_AskMinMax, [ ('MinMaxInfo', c_MinMax._PointerType()) ])
-    DragQuery = MMethod(MUIM_DragQuery, [ ('obj', c_MUIObject) ])
+    AskMinMax   = MMethod(MUIM_AskMinMax,   [ ('MinMaxInfo', c_MinMax._PointerType()) ])
+    Cleanup     = MMethod(MUIM_Cleanup)
+    DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_MUIObject) ])
+    Draw        = MMethod(MUIM_Draw,        [ ('flags', c_ULONG) ])
+    HandleEvent = MMethod(MUIM_HandleEvent, [ ('imsg', c_IntuiMessage._PointerType()),
+                                              ('muikey', c_LONG),
+                                              ('ehn', c_EventHandlerNode._PointerType()) ])
+    Setup       = MMethod(MUIM_Setup,       [ ('RenderInfo', c_APTR) ])
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
@@ -1177,6 +1223,26 @@ class Area(Notify): # TODO: unfinished
             kwds['Background'] = g['MUII_'+bg]
 
         super(Area, self).__init__(**kwds)
+
+    def AddClipping(self):
+        """AddClipping() -> None
+
+        Call MUI_AddClipping() for the full area.
+
+        This function shall be called during MUIM_Draw method call.
+        And method RemoveClipping shall be called before leaving the MUIM_Draw method.
+        """
+
+        self.__cliphandle =_muimaster._AddClipping(self)
+
+    def RemoveClipping(self):
+        """RemoveClipping(self) -> None
+
+        Call MUI_RemoveClipping(). Must be called after a call to AddClipping and before
+        the end of the MUIM_Draw method.
+        """
+
+        _muimaster._RemoveClipping(self, self.__cliphandle)
 
 #===============================================================================
 

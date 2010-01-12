@@ -123,8 +123,8 @@ class CStructure(_ct.Structure, CComplexBase):
     All subclasses shall defines '_fields_' attribute.
     See ctypes module documentation about Structure type.
     """
-    
-    pass
+
+    _pack_ = 2
 
 class _CArray(CComplexBase):
     """_CArray mixin class.

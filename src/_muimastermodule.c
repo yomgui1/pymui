@@ -665,143 +665,18 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 ** MCC MUI Object
 */
 
-//+ mSetup
-static ULONG mSetup(struct IClass *cl, Object *obj, Msg msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
-    ULONG result;
-
-    if (!DoSuperMethodA(cl, obj, msg))
-        return FALSE;
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if (NULL == pyo)
-        return TRUE;
-
-    data->Clip = PyObject_HasAttrString(pyo, "_clip");
-
-    if (!PyObject_HasAttrString(pyo, "MCC_Setup"))
-        return TRUE;
-
-    Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Setup", NULL); /* NR */
-    Py_DECREF(pyo); 
-    
-    if (NULL != res) {
-        result = PyInt_AsLong(res);
-        Py_DECREF(res);
-    } else
-        result = FALSE;
-
-    return result;
-}
-//-
-//+ mCleanup
-static ULONG mCleanup(struct IClass *cl, Object *obj, Msg msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Cleanup")) {
-        Py_INCREF(pyo);
-        res = PyObject_CallMethod((PyObject *)pyo, "MCC_Cleanup", NULL); /* NR */
-        Py_XDECREF(res);
-        Py_DECREF(pyo);
-    }
-
-    return DoSuperMethodA(cl, obj, msg);
-}
-//-
-//+ mShow
-static ULONG mShow(struct IClass *cl, Object *obj, Msg msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
-    ULONG result;
-
-    if (!DoSuperMethodA(cl, obj, msg))
-        return FALSE;
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Show"))
-        return TRUE;
-
-    Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Show", NULL); /* NR */
-    if (NULL != res)
-        result = PyInt_AsLong(res);
-    else
-        result = TRUE;
-    Py_XDECREF(res);
-    Py_DECREF(pyo);
-
-    return result;
-}
-//-
-//+ mHide
-static ULONG mHide(struct IClass *cl, Object *obj, Msg msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if ((NULL != pyo)  && PyObject_HasAttrString(pyo, "MCC_Hide")) {
-        Py_INCREF(pyo);
-        res = PyObject_CallMethod((PyObject *)pyo, "MCC_Hide", NULL); /* NR */
-        Py_XDECREF(res);
-        Py_DECREF(pyo);
-    }
-
-    return DoSuperMethodA(cl, obj, msg);
-}
-//-
-//+ mDraw
-static ULONG mDraw(struct IClass *cl, Object *obj, struct MUIP_Draw *msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
-
-    DoSuperMethodA(cl, obj, msg);
-
-    if (data->Clip)
-        data->ClipHandle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_Draw"))
-        return 0;
-
-    Py_INCREF(pyo);
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_Draw", "I", msg->flags); /* NR */
-    Py_XDECREF(res);
-    Py_DECREF(pyo);
-
-    if (data->Clip)
-        MUI_RemoveClipping(muiRenderInfo(obj), data->ClipHandle);
-
-    return 0;
-}
-//-
+#if 0
 //+ mHandleEvent
-static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEvent *msg)
+static ULONG
+mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEvent *msg)
 {
     MCCData *data = INST_DATA(cl, obj);
-    PyObject *pyo, *res;
+    PyMUIObject *pyo = (PyMUIObject *)data->PythonObject;
+    PyObject *res;
     PyEventHandlerObject *ehn_obj;
     ULONG result;
 
     DPRINT("obj: %p, ehn: %p\n", obj, msg->ehn);
-
-    pyo = data->PythonObject;
-    DPRINT("pyo=%p-%s\n", pyo, OBJ_TNAME_SAFE(pyo));
-    if ((NULL == pyo) || !PyObject_HasAttrString(pyo, "MCC_HandleEvent"))
-        return 0;
 
     ehn_obj = *(((PyEventHandlerObject **)msg->ehn) - 1);
     if (NULL == ehn_obj)
@@ -878,6 +753,7 @@ static ULONG mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEven
     return result;
 }
 //-
+#endif
 //+ mCheckPython
 static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
@@ -956,14 +832,7 @@ DISPATCHER(mcc)
             result = DoSuperMethodA(cl, obj, msg);
             break;
 
-        //case MUIM_Setup        : result = mSetup      (cl, obj, (APTR)msg); break;
-        //case MUIM_Cleanup      : result = mCleanup    (cl, obj, (APTR)msg); break;
-        //case MUIM_Show         : result = mShow       (cl, obj, (APTR)msg); break;
-        //case MUIM_Hide         : result = mHide       (cl, obj, (APTR)msg); break;
-        //case MUIM_Draw         : result = mDraw       (cl, obj, (APTR)msg); break;
-        //case MUIM_HandleEvent  : result = mHandleEvent(cl, obj, (APTR)msg); break;
         default: result = mCheckPython(cl, obj, (APTR)msg);
-        //default: result = DoSuperMethodA(cl, obj, msg);
     }
 
     if (PyErr_Occurred() && (NULL != gApp))
@@ -2326,8 +2195,16 @@ evthandler_get_key(PyEventHandlerObject *self, void *closure)
     return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
 }
 //-
+//+ evthandler_get_handler
+static PyObject *
+evthandler_get_handler(PyEventHandlerObject *self, void *closure)
+{
+    return PyLong_FromVoidPtr(&self->handler);
+}
+//-
 
 static PyGetSetDef evthandler_getseters[] = {
+    {"handler", (getter)evthandler_get_handler, NULL, "Address of the MUI_EventHandlerNode", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
     {"Key", (getter)evthandler_get_key, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
@@ -2607,6 +2484,45 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
     return NULL;
 }
 //-
+//+ _muimaster_addclipping
+static PyObject *
+_muimaster_addclipping(PyObject *self, PyObject *args)
+{
+    PyObject *pyo;
+    Object *obj;
+    APTR handle;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &pyo))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)pyo);
+    if (NULL == obj)
+        return NULL;
+
+    handle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+    return PyLong_FromVoidPtr(handle);
+}
+//-
+//+ _muimaster_removeclipping
+static PyObject *
+_muimaster_removeclipping(PyObject *self, PyObject *args)
+{
+    PyObject *pyo;
+    Object *obj;
+    APTR handle;
+
+    if (!PyArg_ParseTuple(args, "O!k", &PyMUIObject_Type, &pyo, &handle))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)pyo);
+    if (NULL == obj)
+        return NULL;
+
+    MUI_RemoveClipping(muiRenderInfo(obj), handle);
+
+    Py_RETURN_NONE;
+}
+//-
 //+ _muimaster_boopsitopython
 static PyObject *
 _muimaster_boopsitopython(PyObject *self, PyObject *args)
@@ -2667,6 +2583,8 @@ static PyMethodDef _muimaster_methods[] = {
     {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {"_setwinpointer", _muimaster_setwinpointer, METH_VARARGS, NULL},
+    {"_AddClipping", _muimaster_addclipping, METH_VARARGS, NULL},
+    {"_RemoveClipping", _muimaster_removeclipping, METH_VARARGS, NULL},
     {"_BOOPSI2Python", _muimaster_boopsitopython, METH_VARARGS, NULL},
     {"_APTR2Python", _muimaster_aptr2python, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
