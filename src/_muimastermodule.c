@@ -203,14 +203,16 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 ** Private Types and Structures
 */
 
-typedef struct DoMsg_STRUCT {
-    ULONG MethodID;
-    ULONG data[0];
-} DoMsg;
+typedef struct OverloadedNode_STRUCT {
+    struct MinNode  Node;
+    ULONG           MethodID;
+    PyObject *      Callable;
+} OverloadedNode;
 
 typedef struct CreatedObjectNode_STRUCT {
     struct MinNode           n_Node;
     Object *                 n_Object;
+    Object *                 n_Parent;
     ULONG                    n_Flags; /* See CONF_xxx below */
     struct MUI_CustomClass * n_MCC;
 } CreatedObjectNode;
@@ -252,9 +254,11 @@ typedef struct PyMUIObject_STRUCT {
                                    */
     PyObject *          children_dict; /* like children, but inserted in a dict for at given key */
     PyObject *          notify_cbdict;
-    PyObject *          parent;
     PyObject *          overloaded_dict; /* Dict of MethodID:callable items for overloaded MUI methods */
-    PyRasterObject *    raster; /* cached value, /!\ not always valid */
+    struct MinList      overloaded;
+    PyRasterObject *    raster;          /* cached value, /!\ not always valid */
+    ULONG               SuperCalled;
+    ULONG               SuperResult;
 } PyMUIObject;
 
 typedef struct PyEventHandlerObject_STRUCT {
@@ -329,11 +333,13 @@ static void PyMUIObject_ClearChildren(PyMUIObject *self);
 static void
 PyMUIObject_Unlink(PyObject *o)
 {
+    Object *mo;
+
     if (!PyMUIObject_Check(o)) return;
 
-    if (PyBOOPSIObject_ISMUI(o)) {
-        Object *mo;
+    DPRINT("Child: %p-'%s'\n", o, OBJ_TNAME(o));
 
+    if (PyBOOPSIObject_ISMUI(o)) {
         PyMUIObject_ClearChildren((PyMUIObject *)o);
 
         mo = PyBOOPSIObject_GET_OBJECT(o);
@@ -346,8 +352,9 @@ PyMUIObject_Unlink(PyObject *o)
         }
     }
 
+    /* because this object is intended to be disposed by MUI */
     PyBOOPSIObject_SET_OBJECT(o, NULL);
-    REMOVE(((PyBOOPSIObject *)o)->node);
+    REMOVE(((PyBOOPSIObject *)o)->node); 
 }
 //-
 //+ PyMUIObject_ClearChildren
@@ -368,7 +375,7 @@ PyMUIObject_ClearChildren(PyMUIObject *self)
             PyObject *child;
 
             while (NULL != (child = PyIter_Next(iter))) /* NR */ {
-                PyMUIObject_Unlink(child);
+                PyMUIObject_Unlink(child); /* recursive call to PyMUIObject_ClearChildren() */
                 Py_DECREF(child);
             }
 
@@ -376,7 +383,7 @@ PyMUIObject_ClearChildren(PyMUIObject *self)
         }
 
         PyErr_Clear();
-        PySet_Clear(self->children);
+        Py_CLEAR(self->children);
     }
 
     if (NULL != self->children_dict) {
@@ -387,7 +394,7 @@ PyMUIObject_ClearChildren(PyMUIObject *self)
             PyMUIObject_Unlink(child);
 
         PyErr_Clear();
-        PyDict_Clear(self->children_dict);
+        Py_CLEAR(self->children_dict);
     }
 
     DPRINT("Root: %p '%s' [done]\n", self, OBJ_TNAME(self));
@@ -409,20 +416,23 @@ Generic_DisposeObject(PyBOOPSIObject *self)
         if (PyBOOPSIObject_ISMUI(self))
             PyMUIObject_ClearChildren((PyMUIObject *)self);
 
+        if (PyBOOPSIObject_ISMUI(self)) {
+            DPRINT("Before MUI_DisposeObject(%p) (%p-'%s')\n", obj, self, OBJ_TNAME(self));
+            MUI_DisposeObject(obj);
+            DPRINT("After MUI_DisposeObject(%p) (%p-'%s')\n", obj, self, OBJ_TNAME(self));
+        } else {
+            DPRINT("before DisposeObject(%p) (%p-'%s')\n", obj, self, OBJ_TNAME(self));
+            DisposeObject(obj);
+            DPRINT("after DisposeObject(%p) (%p-'%s')\n", obj, self, OBJ_TNAME(self));
+        }
+
         /* Due to the Note #2 upper, we unlink the BOOPSI side now */
         PyBOOPSIObject_SET_OBJECT(self, NULL);
-        free(REMOVE(self->node));
-
-        if (PyBOOPSIObject_ISMUI(self)) {
-            DPRINT("Before MUI_DisposeObject(%p)\n", obj);
-            MUI_DisposeObject(obj);
-            DPRINT("After MUI_DisposeObject(%p)\n", obj);
-        } else {
-            DPRINT("before DisposeObject(%p)\n", obj);
-            DisposeObject(obj);
-            DPRINT("after DisposeObject(%p)\n", obj);
-        }
+        REMOVE(self->node);
     }
+
+    free(self->node);
+    self->node = NULL;
 }
 //-
 //+ PyBOOPSIObject_GetObject
@@ -498,7 +508,7 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
                attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
 
         res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, value, ~value); /* NR */
-        DPRINT("PyObject_CallMethod() resulted  with value %p (err=%d)\n", res, PyErr_Occurred());
+        DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
 
         if (PyErr_Occurred() && (NULL != gApp))
             DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
@@ -599,10 +609,10 @@ py2long(PyObject *obj, LONG *value)
 {
     if (obj == Py_None)
         *value = 0;
-    else if (PyBOOPSIObject_Check(obj))
-        *value = (LONG)PyBOOPSIObject_GET_OBJECT(obj);
     else if (PyLong_CheckExact(obj))
         *value = PyLong_AsUnsignedLongMask(obj);
+    else if (PyInt_CheckExact(obj))
+        *value = PyInt_AsLong(obj);
     else {
         PyObject *x = PyNumber_Long(obj); /* NR */
 
@@ -665,95 +675,6 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 ** MCC MUI Object
 */
 
-#if 0
-//+ mHandleEvent
-static ULONG
-mHandleEvent(struct IClass *cl, Object *obj, struct MUIP_HandleEvent *msg)
-{
-    MCCData *data = INST_DATA(cl, obj);
-    PyMUIObject *pyo = (PyMUIObject *)data->PythonObject;
-    PyObject *res;
-    PyEventHandlerObject *ehn_obj;
-    ULONG result;
-
-    DPRINT("obj: %p, ehn: %p\n", obj, msg->ehn);
-
-    ehn_obj = *(((PyEventHandlerObject **)msg->ehn) - 1);
-    if (NULL == ehn_obj)
-        return 0;
-
-    DPRINT("ehn_obj=%p-%s\n", ehn_obj, OBJ_TNAME_SAFE(ehn_obj));
-
-    if (&ehn_obj->handler != msg->ehn) {
-        PyErr_SetString(PyExc_TypeError, "mHandlerEvent called with inconsistant event handler!");
-        return 0;
-    }
-
-    /* Make a copy of data */
-    CopyMem(msg->imsg, &ehn_obj->imsg, sizeof(ehn_obj->imsg));
-    ehn_obj->muikey = msg->muikey;
-    ehn_obj->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
-    ehn_obj->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
-
-    /* if tablet data, extract tag items */
-    Py_CLEAR(ehn_obj->TabletTagsList);
-    if (ehn_obj->hastablet) {
-        PyObject *o_tags, *dict;
-        struct TagItem *tag, *tags = ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData->td_TagList;
-
-        o_tags = PyList_New(0); /* NR */
-        if (NULL == o_tags)
-            return 0;
-
-        while (NULL != (tag = NextTagItem(&tags))) {
-            PyObject *item = Py_BuildValue("II", tag->ti_Tag, tag->ti_Data); /* NR */
-
-            if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
-                Py_XDECREF(item);
-                Py_DECREF(o_tags);
-                return 0;
-            }
-        }
-
-        dict = PyDict_New(); /* NR */
-        if (NULL == dict) {
-            Py_DECREF(o_tags);
-            return 0;
-        }
-
-        result = PyDict_MergeFromSeq2(dict, o_tags, TRUE); /* NR */
-        Py_DECREF(o_tags);   
-        if (result != 0) {
-            Py_DECREF(dict);
-            return 0;
-        }
-
-        ehn_obj->TabletTagsList = dict;
-        ehn_obj->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
-    } else
-        memset(&ehn_obj->tabletdata, 0, sizeof(ehn_obj->tabletdata));
-
-    Py_INCREF(ehn_obj); 
-    Py_INCREF(pyo);
-
-    res = PyObject_CallMethod((PyObject *)pyo, "MCC_HandleEvent", "O", ehn_obj); /* NR */
-    if (NULL != res) {
-        if (res == Py_None)
-            result = 0;
-        else
-            result = PyLong_AsLong(res);
-        Py_DECREF(res);
-    } else
-        result = 0;
-
-    Py_DECREF(pyo);
-    Py_DECREF(ehn_obj);
-
-    DPRINT("result: %u\n", result);
-    return result;
-}
-//-
-#endif
 //+ mCheckPython
 static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
@@ -762,14 +683,17 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
     PyMUIObject *pyo = (PyMUIObject *)data->PythonObject;
     ULONG result = 0;
 
-    if (NULL != pyo->overloaded_dict) {
-        PyObject *key;
+    pyo->SuperCalled = FALSE;
 
+    if (NULL != pyo->overloaded_dict) {
+        #if 0
+        PyObject *key;
+        
         key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
         if (NULL != key) {
             PyObject *callable;
 
-            DPRINT("pyo=%p-%s (dict: %p, MID: 0x%08x)\n", pyo, OBJ_TNAME(pyo), pyo->overloaded_dict, msg->MethodID);
+            DPRINT("pyo=%p-%s (MID: 0x%08x)\n", pyo, OBJ_TNAME(pyo), msg->MethodID);
 
             callable = PyDict_GetItem(pyo->overloaded_dict, key); /* BR */
             Py_DECREF(key);
@@ -779,24 +703,48 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 
                 DPRINT("callable: %p\n", callable);
 
-                Py_INCREF(callable);
                 o = PyObject_CallFunction(callable, "Okk", pyo, cl, msg);
-                Py_DECREF(callable);
-
                 DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
                 if (NULL != o) {
-                    if (!py2long(o, &result))
-                        result = DoSuperMethodA(cl, obj, msg);
+                    int ok = py2long(o, &result);
 
                     Py_DECREF(o);
+                    if (!ok) return 0;
+                    return result;
                 }
-
-                return result;
             }
         }
+        #else
+        OverloadedNode *node;
+
+        ForeachNode(&pyo->overloaded, node) {
+            if (node->MethodID == msg->MethodID) {
+                PyObject *callable, *o;
+
+                callable = node->Callable; /* BR */
+                DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p)\n", pyo, OBJ_TNAME(pyo), msg->MethodID, callable);
+
+                //XXX: really needed ?
+                //ADDHEAD(&pyo->overloaded, REMOVE(node));
+
+                o = PyObject_CallFunction(callable, "Okk", pyo, cl, msg);
+                DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
+
+                if (NULL != o) {
+                    int ok = py2long(o, &result);
+
+                    Py_DECREF(o);
+                    if (!ok) return 0;
+                    return result;
+                }
+            }
+        }
+        #endif
     }
 
-    return DoSuperMethodA(cl, obj, msg);
+    if (!pyo->SuperCalled)
+        return DoSuperMethodA(cl, obj, msg);
+    return pyo->SuperResult;
 }
 //-
 //+ MCC Dispatcher
@@ -806,16 +754,16 @@ DISPATCHER(mcc)
     PyGILState_STATE gstate = 0;
     ULONG result;
 
-    if (gClosingModule && (NULL != data->PythonObject)) {
-        dprintf("Warning: closing _muimaster module, but PythonObject not NULL (%p-%s)\n",
-            data->PythonObject, OBJ_TNAME(data->PythonObject));
+    if (gClosingModule && (NULL != data->PythonObject))
         data->PythonObject = NULL;
-    }
 
     if (NULL == data->PythonObject)
         return DoSuperMethodA(cl, obj, msg);
 
     gstate = PyGILState_Ensure();
+
+    if (PyErr_Occurred())
+        goto err;
 
     switch (msg->MethodID) {
         /* Protect basic BOOPSI methods */
@@ -835,13 +783,17 @@ DISPATCHER(mcc)
         default: result = mCheckPython(cl, obj, (APTR)msg);
     }
 
-    if (PyErr_Occurred() && (NULL != gApp))
-        DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
-    else
-        PyErr_Print();
+    if (PyErr_Occurred()) {
+err:
+        DPRINT("error, gApp=%p, MethodID=%x\n", gApp, msg->MethodID);
+
+        if (NULL != gApp)
+            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+
+        result = 0;
+    }
 
     PyGILState_Release(gstate);
-
     return result;
 }
 DISPATCHER_END
@@ -935,6 +887,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     BOOL isMUI;
     struct MUI_CustomClass *mcc = NULL;
     struct TagItem *tags;
+    PyObject *overloaded_dict = NULL;
 
     /* Protect againts doubles */
     if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
@@ -942,7 +895,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s|Ii:PyBOOPSIObject", &classid, &tags, &isMCC)) /* BR */
+    if (!PyArg_ParseTuple(args, "s|IiO!:PyBOOPSIObject", &classid, &tags, &isMCC, &PyDict_Type, &overloaded_dict)) /* BR */
         return NULL;
 
     DPRINT("ClassID: '%s', tags: %p, isMCC: %d\n", classid, tags, isMCC);
@@ -956,7 +909,6 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     /* Need to create a new MCC or a simple MUI object instance ? */
     if (isMCC) {
         CreatedMCCNode *node = NULL, *next;
-        PyObject *d;
 
         DPRINT("Search for MCC based on: '%s'\n", classid);
         
@@ -987,17 +939,42 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             mcc = node->n_MCC;
 
         DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->n_MCC->mcc_Super->cl_ID);
+        
+        if ((NULL != overloaded_dict) && (PyDict_Size(overloaded_dict) > 0)) {
+            /* Create an array from 'overloaded' dict entries */
+            PyMUIObject *mo = (PyMUIObject *)self;
+            PyObject *key, *value;
+            int pos = 0;
+            OverloadedNode *ovn = NULL;
 
-        /* Try to obtain the overloaded dict from the class */
-        d = PyObject_GetAttrString((PyObject *)self, "__pymui_overloaded__");
+            while (PyDict_Next(overloaded_dict, &pos, &key, &value)) { /* BR */
+                ULONG mid = PyLong_AsUnsignedLongMask(key);
 
-        /* silent exception if not found */
-        if (NULL == d)
-            PyErr_Clear();
-        else
-            Py_INCREF(d);
+                if (PyErr_Occurred()) {
+                    ovn = NULL;
+                    break;
+                }
 
-        ((PyMUIObject *)self)->overloaded_dict = d;
+                ovn = PyMem_Malloc(sizeof(OverloadedNode));
+                if (NULL == ovn) break;
+
+                ovn->MethodID = mid;
+                ovn->Callable = value;
+
+                ADDTAIL(&mo->overloaded, ovn);
+                DPRINT("Overloaded: method 0x%08x added, callable: %p\n", mid, value);
+            }
+
+            if (NULL == ovn) {
+                PyErr_SetString(PyExc_MemoryError, "failed to create the overloaded method list");
+                return NULL;
+            }
+
+            mo->overloaded_dict = overloaded_dict;
+            Py_INCREF(overloaded_dict); /* this keep dict values valid */
+        }
+
+        DPRINT("Overloaded: %p\n", overloaded_dict);
     }
 
     if (NULL != tags) {
@@ -1393,6 +1370,8 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
+        NEWLIST(&self->overloaded);
+
         self->notify_cbdict = PyDict_New(); /* NR */
         if (NULL != self->notify_cbdict) {
             self->children_dict = PyDict_New(); /* NR */
@@ -1417,7 +1396,6 @@ static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->notify_cbdict);
-    Py_VISIT(self->parent);
     Py_VISIT(self->overloaded_dict);
     Py_VISIT(self->raster);
     Py_VISIT(self->children_dict);
@@ -1433,7 +1411,6 @@ muiobject_clear(PyMUIObject *self)
     DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
 
     Py_CLEAR(self->notify_cbdict);
-    Py_CLEAR(self->parent);
     Py_CLEAR(self->overloaded_dict);
     Py_CLEAR(self->raster);
 
@@ -1442,6 +1419,7 @@ muiobject_clear(PyMUIObject *self)
     /* Safe to clear the children list now */
     Py_CLEAR(self->children_dict);
     Py_CLEAR(self->children);
+
     return 0;
 }
 //-
@@ -1449,9 +1427,14 @@ muiobject_clear(PyMUIObject *self)
 static void
 muiobject_dealloc(PyMUIObject *self)
 {
+    OverloadedNode *node, *next;
+
     muiobject_clear(self);
-    Generic_DisposeObject((PyBOOPSIObject *)self);
-    ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
+
+    ForeachNodeSafe(&self->overloaded, node, next)
+        PyMem_Free(node);
+
+    boopsi_dealloc((PyBOOPSIObject *)self);
 }
 //-
 //+ muiobject__cclear
@@ -1471,7 +1454,7 @@ muiobject__cadd(PyMUIObject *self, PyObject *args)
     PyObject *child, *key=NULL;
     Object *child_obj;
 
-    if (!PyArg_ParseTuple(args, "O!|O", &PyBOOPSIObject_Type, &child, &key))
+    if (!PyArg_ParseTuple(args, "O!|O", &PyMUIObject_Type, &child, &key))
         return NULL;
 
     child_obj = PyBOOPSIObject_GET_OBJECT(child);
@@ -1491,6 +1474,8 @@ muiobject__cadd(PyMUIObject *self, PyObject *args)
 
         if (result < 0)
             return NULL;
+
+        ((PyBOOPSIObject *)child)->node->n_Parent = PyBOOPSIObject_GET_OBJECT(self);
     }
 
     Py_RETURN_NONE;
@@ -1506,6 +1491,8 @@ muiobject__crem(PyMUIObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, "O!|O", &PyMUIObject_Type, &child, &key))
         return NULL;
+
+    ((PyBOOPSIObject *)child)->node->n_Parent = NULL;
 
     if (NULL != key)
         result = PyDict_DelItem(self->children_dict, key);
@@ -1611,23 +1598,24 @@ muiobject__dosuper(PyMUIObject *self, PyObject *args)
 {
     Object *mo;
     Msg msg;
-    ULONG result, size;
+    ULONG size;
     ULONG cl;
 
     mo = PyBOOPSIObject_GetObject((PyObject *)self);
     if (NULL == mo)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "ks#", &cl, &msg, &size)) /* BR */
+    if (!PyArg_ParseTuple(args, "ks#", &cl, &msg, &size))
         return NULL;
 
     DPRINT("MO: %p, cl: %p, msg: %p (%lu bytes, MethodID: 0x%08x)\n", mo, cl, msg, size, msg->MethodID);
-    result = DoSuperMethodA((struct IClass *)cl, mo, msg);
+    self->SuperResult = DoSuperMethodA((struct IClass *)cl, mo, msg);
+    self->SuperCalled = TRUE;
 
     if (PyErr_Occurred())
         return NULL;
 
-    return PyLong_FromUnsignedLong(result);
+    return PyLong_FromUnsignedLong(self->SuperResult);
 }
 //-
 //+ muiobject_redraw
@@ -2171,6 +2159,76 @@ evthandler_uninstall(PyEventHandlerObject *self)
     Py_RETURN_NONE;
 }
 //-
+//+ evthandler_readmsg
+static PyObject *
+evthandler_readmsg(PyEventHandlerObject *self, PyObject *args)
+{
+    Object *obj; /* used by _isinobject macro */
+    struct MUIP_HandleEvent *msg;
+
+    if (NULL == self->target) {
+        PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
+        return NULL;
+    }
+
+    obj = PyBOOPSIObject_GetObject(self->target);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "O&", &py2long, &msg))
+        return NULL;
+
+    /* Sanity check */
+    if (msg->ehn != &self->handler) {
+        PyErr_SetString(PyExc_RuntimeError, "given message doesn't match to this event handler");
+        return NULL;
+    }
+
+    CopyMem(msg->imsg, &self->imsg, sizeof(self->imsg));
+    self->muikey = msg->muikey;
+
+    self->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
+    self->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+
+    /* if tablet data, extract tag items */
+    if (self->hastablet) {
+        PyObject *o_tags;
+        struct TagItem *tag, *tags = ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData->td_TagList;
+        int error;
+
+        if (NULL == self->TabletTagsList) {
+            self->TabletTagsList = PyDict_New(); /* NR */
+            if (NULL == self->TabletTagsList)
+                return NULL;
+        } else
+            PyDict_Clear(self->TabletTagsList);
+
+        o_tags = PyList_New(0); /* NR */
+        if (NULL == o_tags)
+            return 0;
+
+        while (NULL != (tag = NextTagItem(&tags))) {
+            PyObject *item = Py_BuildValue("II", tag->ti_Tag, tag->ti_Data); /* NR */
+
+            if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
+                Py_XDECREF(item);
+                Py_DECREF(o_tags);
+                return 0;
+            }
+        }
+
+        error = PyDict_MergeFromSeq2(self->TabletTagsList, o_tags, TRUE); /* NR */
+        Py_DECREF(o_tags);
+        if (error)
+            return 0;
+
+        self->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+    } else
+        memset(&self->tabletdata, 0, sizeof(self->tabletdata));
+
+    Py_RETURN_NONE;
+}
+//-
 //+ evthandler_get_normtablet
 static PyObject *
 evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
@@ -2238,6 +2296,7 @@ static PyMemberDef evthandler_members[] = {
 static struct PyMethodDef evthandler_methods[] = {
     {"install",   (PyCFunction)evthandler_install,   METH_VARARGS, NULL},
     {"uninstall", (PyCFunction)evthandler_uninstall, METH_NOARGS, NULL},
+    {"readmsg", (PyCFunction)evthandler_readmsg, METH_VARARGS, NULL},
     {NULL} /* sentinel */
 };
 
@@ -2617,14 +2676,31 @@ PyMorphOS_CloseModule(void) {
             } else if (node->n_Flags & CONF_MUI) {
                 Object *parent;
 
-                DPRINT("Forgotten object [%p, node: %p, MCC: %p]\n", obj, node, node->n_MCC);
+                DPRINT("Forgotten object [%p-'%s', node: %p, MCC: %p]\n",
+                    obj, OCLASS(obj)->cl_ID?(char *)OCLASS(obj)->cl_ID:(char *)"<MCC>", node, node->n_MCC);
 
                 /* Python is not perfect, PyMUI not also and user design even less :-P
                  * So an object can be here if for any reasons its dealloc function has not been called.
                  * Normally in this case, MUI should not have deleted the object and it remains valid.
                  * But...
                  */
+                app = parent = NULL;
                 if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
+                    /* If Python has not deleted some objects is possible that an object
+                     * is detroyed here, but if this objects has some children
+                     * and these ones are destroyed after (due to the node order at creation)
+                     * the parent, MUIA_Parent/MUIA_ApplicationObject return NULL! That's correct,
+                     * but our delete procedure here will fails because we thing that an object without
+                     * parent (and app) is a standalone object, safe to destroy ourself.
+                     * That's not true as the parent object has disposed its children during its dispose!
+                     *
+                     * To workaround that we use the recoreded parent during a call to muiobject__cadd().
+                     * This not fixing the pb if the PyMUI user doesn't design well his GUI.
+                     * In this case MUI will shows an error message!
+                     */
+                    if (NULL == parent)
+                        parent = node->n_Parent;
+
                     DPRINT("[%p] app=%p, parent=%p\n", obj, app, parent);
 
                     /* As the Python interpretor doesn't exist remove invalid Python linkage! */

@@ -49,6 +49,7 @@ import ctypes as _ct
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
+MUI_MAXMAX = 10000
 
 ## Currently private defines, but very useful
 MUIA_Window_TabletMessages = 0x804217b7
@@ -193,6 +194,9 @@ class c_ListTitle(c_STRPTR):
     def value(self):
         return (c_STRPTR.value.__get__(self) if long(self) != 1 else True)
 
+class c_PenSpec(CStructure):
+    _fields_ = [ ('buf', c_BYTE.ArrayOf(32)) ]
+
 ################################################################################
 #### PyMUI internal base classes and routines
 ################################################################################
@@ -258,11 +262,11 @@ class MAttribute(property):
 
         if 's' in isg:
             def _setter(obj, v, nn=False):
-                v = v if isinstance(v, ctype) else ctype(v)
+                v = (v if isinstance(v, ctype) else ctype(v))
                 if (keep is None and v._iskept) or keep is True:
                     obj._keep_dict[id] = v._keep()
                 if nn:
-                    obj._nset(id, v)
+                    obj._nnset(id, v)
                 else:
                     obj._set(id, v)
         else:
@@ -658,7 +662,10 @@ class rootclass(PyMUIObject, BOOPSIMixin):
             init_tags[i].ti_Tag = attr.id
             init_tags[i].ti_Data = attr.init(self, kwds[k])
 
-        self._create(self._mclassid, _ct.addressof(init_tags), self.__class__.isMCC)
+        overloaded = getattr(self, '__pymui_overloaded__', {})
+
+        self._create(self._mclassid, _ct.addressof(init_tags),
+                     self.__class__.isMCC, overloaded)
 
     def AddChild(self, o):
         if not self._cin(o):
@@ -1011,24 +1018,16 @@ class Window(Notify): # TODO: unfinished
 
     @classmethod
     def __new_ID(cl, i=-1):
-        if isinstance(i, str):
-            i = -1 # XXX: ID bugged when id is string
         if i == -1:
             for i in xrange(1<<10):
                 if i not in cl.__idset:
                     cl.__idset.add(i)
                     return i
             raise RuntimeError("No more availables IDs")
-        else:
-            # use address of string as ID integer, but store the string
-            if isinstance(i, str):
-                s = i
-                i = long(c_STRPTR(i))
-            if s in cl.__idset:
+        elif isinstance(i, str):
+            i = sum(ord(c) << (n*8) for n, c in enumerate(i))
+            if i in cl.__idset:
                 raise RuntimeError("ID %u already taken" % i)
-            if s:
-                cl.__idset.add(s)
-                return i
 
         cl.__idset.add(i)
         return i
@@ -1781,6 +1780,9 @@ class List(Group): # TODO: unfinished
     Visible          = MAttribute(MUIA_List_Visible,        '..g', c_LONG)
 
     Clear              = MMethod(MUIM_List_Clear)
+    CreateImage        = MMethod(MUIM_List_CreateImage,  [ ('obj', c_MUIObject), ('flags', c_ULONG) ], retype=c_APTR)
+    DeleteImage        = MMethod(MUIM_List_DeleteImage,  [ ('listimg', c_APTR) ])
+    Compare            = MMethod(MUIM_List_Compare,      [ ('entry1', c_APTR), ('entry2', c_APTR) ], rettype=c_LONG)
     Construct          = MMethod(MUIM_List_Construct,    [ ('entry', c_APTR), ('pool', c_APTR) ], rettype=c_APTR)
     Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
     Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
@@ -2086,6 +2088,10 @@ class Popscreen(Popobject):
 
 #===============================================================================
 
+_ASL_TB = TAG_USER + 0x80000
+ASLFR_DrawersOnly = _ASL_TB + 47
+ASLFR_TitleText   = _ASL_TB + 1
+
 class Popasl(Popstring):
     CLASSID = MUIC_Popasl
 
@@ -2093,6 +2099,10 @@ class Popasl(Popstring):
     StartHook = MAttribute(MUIA_Popasl_StartHook, 'isg', c_Hook)
     StopHook  = MAttribute(MUIA_Popasl_StopHook,  'isg', c_Hook)
     Type      = MAttribute(MUIA_Popasl_Type,      'i.g', c_ULONG)
+
+    ASLDrawersOnly = MAttribute(ASLFR_DrawersOnly, 'i..', c_BOOL)
+    ASLTitle       = MAttribute(ASLFR_TitleText,   'i..', c_STRPTR)
+
 
     __type_map = {'FileRequest':        0,
                   'FontRequest':        1,

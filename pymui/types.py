@@ -23,6 +23,7 @@
 ##
 
 import ctypes as _ct
+import functools
 
 class PyMUICType(object):
     """PyMUICType: base class for all values types accepted by MUI API.
@@ -96,7 +97,17 @@ class PyMUICType(object):
         """
 
         # Note: I don't cache the returned type here due to the volatile 'n' factor.
-        return type('%s_Array_%u' % (cl.__name__, n), (cl*n, _CArray), {'_type_': cl, '_length_': n})
+
+        def myinit(self, *args):
+            if len(args) == 1:
+                x = args[0]
+                if isinstance(x, (tuple, list)):
+                    super(type(self), self).__init__(*x)
+                    return
+            super(type(self), self).__init__(*args)
+        myinit.__name__ = '__init__'
+
+        return type('%s_Array_%u' % (cl.__name__, n), (cl*n, _CArray), {'_type_': cl, '_length_': n, '__init__': myinit})
         
 class CSimpleValue(PyMUICType):
     def __long__(self):
@@ -105,6 +116,9 @@ class CSimpleValue(PyMUICType):
     @classmethod
     def FromLong(cl, v):
         return cl(v)
+
+    def __iadd__(self, v):
+        return self.value + v
 
 # Common base class for CStructure and CArray classes
 class CComplexBase(PyMUICType):

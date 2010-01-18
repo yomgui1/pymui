@@ -23,7 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import Area, c_LONG, c_BOOL, MAttribute
+from pymui import Area, c_LONG, c_BOOL, MAttribute, MMethod
 
 MUIC_Busy            = "Busy.mcc"
 
