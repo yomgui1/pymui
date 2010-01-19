@@ -82,7 +82,7 @@ class MyList(List):
         self.entries = {}
 
     @muimethod(MUIM_List_Construct)
-    def MyConstruct(self, cl, msg):
+    def MyConstruct(self, msg):
         # entry is a string handled by a str Python object.
         # So we need to keep alive this object to keep valid the string pointer.
 
@@ -99,11 +99,11 @@ class MyList(List):
         return v
 
     @muimethod(MUIM_List_Destruct)
-    def Destructor(self, cl, msg):
+    def Destructor(self, msg):
         print long(msg)
 
     @muimethod(MUIM_List_Display)
-    def Display(self, cl, msg):
+    def Display(self, msg):
         # here entry is NULL for title strings or a pointer on a C string, the one keep in self.entries.
         if msg.entry.value:
             msg.array[0] = str(long(msg.array[-1])+1)

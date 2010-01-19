@@ -531,8 +531,11 @@ class MUIMetaClass(type):
 def muimethod(mid):
     def wrapper(func):
         @functools.wraps(func)
-        def convertor(self, cl, msg, tp):
-            return func(self, cl, tp.FromLong(msg))
+        def convertor(self, msg, tp):
+            # Becarefull here: the constructed Msg object from tp,
+            # is only valid during the call of the function and accessible
+            # by msg getattr function.
+            return func(self, msg._setup(tp.FromLong))
         convertor._pymui_mid_ = mid
         return convertor
     return wrapper

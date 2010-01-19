@@ -290,6 +290,17 @@ typedef struct CHookObject_STRUCT {
     PyObject *    callable;
 } CHookObject;
 
+typedef struct PyMethodMsgObject_STRUCT {
+    PyObject_HEAD
+
+    PyObject *      mmsg_PyMsg;
+    struct IClass * mmsg_Class;
+    Object *        mmsg_Object;
+    Msg             mmsg_Msg;
+    BOOL            mmsg_SuperCalled;
+    ULONG           mmsg_SuperResult;
+} PyMethodMsgObject;
+
 
 /*
 ** Private Variables
@@ -305,6 +316,7 @@ static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static PyTypeObject PyEventHandlerObject_Type;
 static PyTypeObject CHookObject_Type;
+static PyTypeObject PyMethodMsgObject_Type;
 static struct MinList gCreatedObjectList;
 static struct MinList gCreatedMCCList;
 static BOOL gClosingModule = FALSE;
@@ -480,6 +492,24 @@ PyBOOPSIObject_Initialize(PyObject *self, Object *mo, struct MUI_CustomClass *mc
     bo->hash = ((ULONG)self) ^ ((ULONG)node); /* simple but enough for the purpose */
 
     return TRUE;
+}
+//-
+//+ PyMethodMsg_New
+static PyMethodMsgObject *
+PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
+{
+    PyMethodMsgObject *self;
+
+    self = PyObject_New(PyMethodMsgObject, &PyMethodMsgObject_Type); /* NR */
+    if (NULL != self) {
+        self->mmsg_PyMsg = NULL;
+        self->mmsg_Class = cl;
+        self->mmsg_Object = obj;
+        self->mmsg_Msg = msg;
+        self->mmsg_SuperCalled = FALSE;
+    }
+
+    return self;
 }
 //-
 //+ OnAttrChanged
@@ -680,71 +710,53 @@ static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 {
     MCCData *data = INST_DATA(cl, obj);
-    PyMUIObject *pyo = (PyMUIObject *)data->PythonObject;
+    PyMUIObject *pyo = (PyMUIObject *)data->PythonObject; /* BR */
+    BOOL super = FALSE;
     ULONG result = 0;
 
-    pyo->SuperCalled = FALSE;
-
     if (NULL != pyo->overloaded_dict) {
-        #if 0
-        PyObject *key;
-        
-        key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
-        if (NULL != key) {
-            PyObject *callable;
-
-            DPRINT("pyo=%p-%s (MID: 0x%08x)\n", pyo, OBJ_TNAME(pyo), msg->MethodID);
-
-            callable = PyDict_GetItem(pyo->overloaded_dict, key); /* BR */
-            Py_DECREF(key);
-
-            if (NULL != callable) {
-                PyObject *o;
-
-                DPRINT("callable: %p\n", callable);
-
-                o = PyObject_CallFunction(callable, "Okk", pyo, cl, msg);
-                DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
-                if (NULL != o) {
-                    int ok = py2long(o, &result);
-
-                    Py_DECREF(o);
-                    if (!ok) return 0;
-                    return result;
-                }
-            }
-        }
-        #else
         OverloadedNode *node;
 
         ForeachNode(&pyo->overloaded, node) {
             if (node->MethodID == msg->MethodID) {
                 PyObject *callable, *o;
+                PyMethodMsgObject *msg_obj;
 
-                callable = node->Callable; /* BR */
-                DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p)\n", pyo, OBJ_TNAME(pyo), msg->MethodID, callable);
+                msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
+                if (NULL != msg_obj) {
+                    callable = node->Callable; /* BR */
+                    DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
+                        pyo, OBJ_TNAME(pyo), msg->MethodID, callable, msg_obj);
 
-                //XXX: really needed ?
-                //ADDHEAD(&pyo->overloaded, REMOVE(node));
+                    //XXX: really needed ?
+                    //ADDHEAD(&pyo->overloaded, REMOVE(node));
 
-                o = PyObject_CallFunction(callable, "Okk", pyo, cl, msg);
-                DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
+                    o = PyObject_CallFunction(callable, "ON", pyo, msg_obj);
+                    DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
 
-                if (NULL != o) {
-                    int ok = py2long(o, &result);
+                    super = msg_obj->mmsg_SuperCalled;
+                    result = msg_obj->mmsg_SuperResult;
 
-                    Py_DECREF(o);
-                    if (!ok) return 0;
-                    return result;
+                    if (NULL != o) {
+                        int ok = py2long(o, &result);
+
+                        Py_DECREF(o);
+                        if (!ok)
+                            goto check_super;
+
+                        return result;
+                    }
                 }
+
+                break;
             }
         }
-        #endif
     }
 
-    if (!pyo->SuperCalled)
+check_super:
+    if (!super)
         return DoSuperMethodA(cl, obj, msg);
-    return pyo->SuperResult;
+    return result;
 }
 //-
 //+ MCC Dispatcher
@@ -1587,37 +1599,6 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
-//+ muiobject__dosuper
-PyDoc_STRVAR(muiobject__dosuper_doc,
-"_dosuper(msg) -> long\n\
-\n\
-Sorry, Not documented yet :-(");
-
-static PyObject *
-muiobject__dosuper(PyMUIObject *self, PyObject *args)
-{
-    Object *mo;
-    Msg msg;
-    ULONG size;
-    ULONG cl;
-
-    mo = PyBOOPSIObject_GetObject((PyObject *)self);
-    if (NULL == mo)
-        return NULL;
-
-    if (!PyArg_ParseTuple(args, "ks#", &cl, &msg, &size))
-        return NULL;
-
-    DPRINT("MO: %p, cl: %p, msg: %p (%lu bytes, MethodID: 0x%08x)\n", mo, cl, msg, size, msg->MethodID);
-    self->SuperResult = DoSuperMethodA((struct IClass *)cl, mo, msg);
-    self->SuperCalled = TRUE;
-
-    if (PyErr_Occurred())
-        return NULL;
-
-    return PyLong_FromUnsignedLong(self->SuperResult);
-}
-//-
 //+ muiobject_redraw
 PyDoc_STRVAR(muiobject_redraw_doc,
 "_redraw(flags) -> None\n\
@@ -1847,7 +1828,6 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_cin",    (PyCFunction) muiobject__cin,     METH_VARARGS, NULL},
     {"_nnset",  (PyCFunction) muiobject__nnset,   METH_VARARGS, muiobject__nnset_doc},
     {"_notify", (PyCFunction) muiobject__notify,  METH_VARARGS, muiobject__notify_doc},
-    {"DoSuperMethod", (PyCFunction) muiobject__dosuper,  METH_VARARGS, muiobject__dosuper_doc},
     {"Redraw",  (PyCFunction) muiobject_redraw,   METH_VARARGS, muiobject_redraw_doc},
     {NULL} /* sentinel */
 };
@@ -1869,6 +1849,92 @@ static PyTypeObject PyMUIObject_Type = {
     tp_methods      : muiobject_methods,
     tp_members      : muiobject_members,
     tp_getset       : muiobject_getseters,
+};
+
+/*******************************************************************************************
+** MethodMsg_Type
+*/
+
+//+ mmsg__setup
+static PyObject *
+mmsg__setup(PyMethodMsgObject *self, PyObject *callable)
+{
+    if (!PyCallable_Check(callable)) {
+        PyErr_SetString(PyExc_TypeError, "bad internal call");
+        return NULL;
+    }
+
+    /* The argument shall be a callable that takes the pointer on the BOOPSI Msg
+     * and returns a PyMUICType object set with this message.
+     */
+    self->mmsg_PyMsg = PyObject_CallFunction(callable, "k", (ULONG)self->mmsg_Msg);
+    if (NULL == self->mmsg_PyMsg)
+        return NULL;
+
+    Py_INCREF(self);
+    return (PyObject *)self;
+}
+//-
+//+ mmsg_dosuper
+static PyObject *
+mmsg_dosuper(PyMethodMsgObject *self)
+{
+    struct IClass *cl;
+    Object *obj;
+    Msg msg;
+
+    msg = self->mmsg_Msg;
+
+    if (self->mmsg_SuperCalled)
+        return PyErr_Format(PyExc_RuntimeError, "SuperMethod already called for id 0x%08x", (unsigned int)msg->MethodID);
+
+    cl = self->mmsg_Class;
+    obj = self->mmsg_Object;
+
+    DPRINT("cl: %p, obj: %p, msg: %p (MethodID: 0x%08x)\n", cl, obj, msg, msg->MethodID);
+    self->mmsg_SuperCalled = TRUE; /* better to set it now */
+    self->mmsg_SuperResult = DoSuperMethodA((struct IClass *)cl, obj, msg);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(self->mmsg_SuperResult);
+}
+//-
+//+ mmsg_getattro
+static PyObject *
+mmsg_getattro(PyMethodMsgObject *self, PyObject *attr)
+{
+    PyObject *o;
+
+    o = PyObject_GenericGetAttr((PyObject *)self, attr); /* NR */
+    if ((NULL == o) && (NULL != self->mmsg_PyMsg)) {
+        PyErr_Clear();
+        DPRINT("PyMsg: %p\n", self->mmsg_PyMsg);
+        return PyObject_GetAttr(self->mmsg_PyMsg, attr);
+    }
+
+    return o;
+}
+//-
+
+static struct PyMethodDef mmsg_methods[] = {
+    {"_setup", (PyCFunction)mmsg__setup, METH_O, "PRIVATE. Don't call it."},
+    {"DoSuper", (PyCFunction)mmsg_dosuper, METH_NOARGS, "Call DoSuperMethod() using IClass and Msg in this object."},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyMethodMsgObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.MethodMsg",
+    tp_basicsize    : sizeof(PyMethodMsgObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT,
+    tp_doc          : "Method Message Objects",
+
+    tp_new          : (newfunc)PyType_GenericNew,
+    tp_getattro     : (getattrofunc)mmsg_getattro,
+    tp_methods      : mmsg_methods,
 };
 
 
@@ -2815,6 +2881,7 @@ INITFUNC(void) {
     if (PyType_Ready(&PyMUIObject_Type) < 0) return;
     if (PyType_Ready(&PyEventHandlerObject_Type) < 0) return;
     if (PyType_Ready(&CHookObject_Type) < 0) return;
+    if (PyType_Ready(&PyMethodMsgObject_Type) < 0) return;
 
     /* Module creation/initialization */
     m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
@@ -2824,6 +2891,7 @@ INITFUNC(void) {
     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
     ADD_TYPE(m, "_CHook", &CHookObject_Type);
+    ADD_TYPE(m, "MethodMsg", &PyMethodMsgObject_Type);
 }
 //-
 

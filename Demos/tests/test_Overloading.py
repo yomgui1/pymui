@@ -7,9 +7,9 @@ class MyMCC(Rectangle):
     MCC = True
 
     @muimethod(Rectangle.AskMinMax)
-    def MCC_AskMinMax(self, cl, msg):
+    def MCC_AskMinMax(self, msg):
         # Let MUI super fill data
-        self.DoSuperMethod(cl, msg)
+        msg.DoSuper()
 
         # Print information
         minmax = msg.MinMaxInfo.contents
@@ -21,7 +21,7 @@ class MyMCC(Rectangle):
         minmax.DefHeight = 240
 
     @muimethod(MUIM_DragQuery)
-    def MCC_DragQuery(self, cl, msg):
+    def MCC_DragQuery(self, msg):
         return (MUIV_DragQuery_Accept if msg.obj.value is dragobject else MUIV_DragQuery_Refuse)
 
 assert MUIM_AskMinMax in MyMCC.__pymui_overloaded__
