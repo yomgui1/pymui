@@ -750,14 +750,14 @@ class Family(Notify):
     def AddHead(self, o):
         if isinstance(o, c_MUIObject): o = o.value
         assert isinstance(o, Family)
-        x = self._do1(MUIM_Family_AddHead, o)
+        x = self._do1(MUIM_Family_AddHead, o._object)
         self._cadd(o)
         return x
 
     def AddTail(self, o):
         if isinstance(o, c_MUIObject): o = o.value
         assert isinstance(o, Family)
-        x = self._do1(MUIM_Family_AddTail, o)
+        x = self._do1(MUIM_Family_AddTail, o._object)
         self._cadd(o)
         return x
 

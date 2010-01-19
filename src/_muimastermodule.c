@@ -179,6 +179,8 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyMUIObject_Check(op) PyObject_TypeCheck(op, &PyMUIObject_Type)
 #define PyMUIObject_CheckExact(op) ((op)->ob_type == &PyMUIObject_Type)
 
+#define PyMethodMsgObject_CheckExact(op) ((op)->ob_type == &PyMethodMsgObject_Type)
+
 #define PyBOOPSIObject_GET_OBJECT(o) (((PyBOOPSIObject *)(o))->node->n_Object)
 #define PyBOOPSIObject_SET_OBJECT(o, x) (((PyBOOPSIObject *)(o))->node->n_Object = (x))
 #define PyBOOPSIObject_ISMUI(o) (CONF_MUI == (((PyBOOPSIObject *)(o))->node->n_Flags & CONF_MUI))
@@ -2227,22 +2229,23 @@ evthandler_uninstall(PyEventHandlerObject *self)
 //-
 //+ evthandler_readmsg
 static PyObject *
-evthandler_readmsg(PyEventHandlerObject *self, PyObject *args)
+evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
 {
     Object *obj; /* used by _isinobject macro */
     struct MUIP_HandleEvent *msg;
 
-    if (NULL == self->target) {
+    if (NULL == self->window) {
         PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
         return NULL;
     }
 
-    obj = PyBOOPSIObject_GetObject(self->target);
-    if (NULL == obj)
+    if (!PyMethodMsgObject_CheckExact(msg_obj)) {
+        PyErr_SetString(PyExc_TypeError, "readmsg argument shall the the method msg object");
         return NULL;
+    }
 
-    if (!PyArg_ParseTuple(args, "O&", &py2long, &msg))
-        return NULL;
+    msg = (APTR)msg_obj->mmsg_Msg;
+    obj = msg_obj->mmsg_Object;
 
     /* Sanity check */
     if (msg->ehn != &self->handler) {
@@ -2362,7 +2365,7 @@ static PyMemberDef evthandler_members[] = {
 static struct PyMethodDef evthandler_methods[] = {
     {"install",   (PyCFunction)evthandler_install,   METH_VARARGS, NULL},
     {"uninstall", (PyCFunction)evthandler_uninstall, METH_NOARGS, NULL},
-    {"readmsg", (PyCFunction)evthandler_readmsg, METH_VARARGS, NULL},
+    {"readmsg", (PyCFunction)evthandler_readmsg, METH_O, NULL},
     {NULL} /* sentinel */
 };
 
