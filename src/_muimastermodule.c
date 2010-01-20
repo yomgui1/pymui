@@ -1519,6 +1519,23 @@ muiobject__crem(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ muiobject__cdel
+static PyObject *
+muiobject__cdel(PyMUIObject *self, PyObject *key)
+{
+    PyObject *child;
+
+    if (PyDict_Contains(self->children_dict, key)) {
+        child = PyDict_GetItem(self->children_dict, key); /* BR */
+        ((PyBOOPSIObject *)child)->node->n_Parent = NULL;
+
+        if (PyDict_DelItem(self->children_dict, key) < 0)
+            return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+//-
 //+ muiobject__cin
 static PyObject *
 muiobject__cin(PyMUIObject *self, PyObject *args)
@@ -1828,6 +1845,7 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_cadd",   (PyCFunction) muiobject__cadd,    METH_VARARGS, NULL},
     {"_crem",   (PyCFunction) muiobject__crem,    METH_VARARGS, NULL},
     {"_cin",    (PyCFunction) muiobject__cin,     METH_VARARGS, NULL},
+    {"_cdel",   (PyCFunction) muiobject__cdel,    METH_O, NULL},
     {"_nnset",  (PyCFunction) muiobject__nnset,   METH_VARARGS, muiobject__nnset_doc},
     {"_notify", (PyCFunction) muiobject__notify,  METH_VARARGS, muiobject__notify_doc},
     {"Redraw",  (PyCFunction) muiobject_redraw,   METH_VARARGS, muiobject_redraw_doc},

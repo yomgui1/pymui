@@ -632,7 +632,10 @@ class BOOPSIMixin:
 ################################################################################
 
 def _postSet_Child(self, attr, o):
-        self._cadd(o, attr.id)
+        if o is None:
+            self._cdel(attr.id)
+        else:
+            self._cadd(o, attr.id)
 
 class rootclass(PyMUIObject, BOOPSIMixin):
     """rootclass for all other PyMUI classes.
@@ -954,10 +957,6 @@ class Application(Notify): # TODO: unfinished
 class Window(Notify): # TODO: unfinished
     CLASSID = MUIC_Window
     
-    def __preSetRootObject(self, attr, o):
-        assert o is not None
-        return o
-
     def __checkForApp(self, attr, o):
         if not self.ApplicationObject.value:
             raise AttributeError("Window not linked to an application yet")
@@ -992,7 +991,7 @@ class Window(Notify): # TODO: unfinished
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
     RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject)
-    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, preSet=__preSetRootObject, postSet=_postSet_Child)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=_postSet_Child)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
@@ -1028,7 +1027,7 @@ class Window(Notify): # TODO: unfinished
                     return i
             raise RuntimeError("No more availables IDs")
         elif isinstance(i, str):
-            i = sum(ord(c) << (n*8) for n, c in enumerate(i))
+            i = sum(ord(c) << (24-n*8) for n, c in enumerate(i[:4]))
             if i in cl.__idset:
                 raise RuntimeError("ID %u already taken" % i)
 
