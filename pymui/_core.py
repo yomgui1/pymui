@@ -866,7 +866,7 @@ class Menuitem(Family):
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
     def Bind(self, callback, *args):
-        self.Notify('Trigger', callback=lambda e: callback(), args=args)
+        self.Notify('Trigger', callback=lambda e, *args: callback(*args), args=args)
 
 #===============================================================================
 
