@@ -529,6 +529,16 @@ class MUIMetaClass(type):
 
 # decorator to register a class method to overload a MUI method
 def muimethod(mid):
+    """muimethod(MethodID) -> function
+
+    MCC class method decorator to declare the decorated method to be called
+    by BOOPSI when the given MethodID is used by a DoMethod() call.
+
+    The given MethodID argument can be a interger or an instance of MAttribute.
+
+    Note: an MCC class shall define 'MCC' class attribute to True to be used
+    as an MCC with overloading methods and not as normal class.
+    """
     def wrapper(func):
         @functools.wraps(func)
         def convertor(self, msg, tp):
