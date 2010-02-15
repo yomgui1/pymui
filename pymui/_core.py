@@ -1251,6 +1251,7 @@ class Area(Notify): # TODO: unfinished
     AskMinMax   = MMethod(MUIM_AskMinMax,   [ ('MinMaxInfo', c_MinMax._PointerType()) ])
     Cleanup     = MMethod(MUIM_Cleanup)
     DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_MUIObject) ])
+    DragDrop    = MMethod(MUIM_DragDrop,    [ ('obj', c_MUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
     Draw        = MMethod(MUIM_Draw,        [ ('flags', c_ULONG) ])
     HandleEvent = MMethod(MUIM_HandleEvent, [ ('imsg', c_IntuiMessage._PointerType()),
                                               ('muikey', c_LONG),
@@ -1335,15 +1336,15 @@ class Rectangle(Area):
         return cl(HorizWeight=x)
 
     @classmethod
-    def mkHCenter(cl, o):
-        g = Group.HGroup(Spacing=0)
-        g.AddChild(cl.HSpace(0), o, cl.HSpace(0))
+    def mkHCenter(cl, o, **kwds):
+        g = Group.HGroup(Spacing=0, **kwds)
+        g.AddChild(cl.mkHSpace(0), o, cl.mkHSpace(0))
         return g
 
     @classmethod
-    def mkVCenter(cl, o):
-        g = Group.VGroup(Spacing=0)
-        return g.AddChild(cl.VSpace(0), o, cl.VSpace(0))
+    def mkVCenter(cl, o, **kwds):
+        g = Group.VGroup(Spacing=0, **kwds)
+        return g.AddChild(cl.mkVSpace(0), o, cl.mkVSpace(0))
 
     @classmethod
     def mkHBar(cl, space):
@@ -1662,6 +1663,7 @@ class Group(Area): # TODO: unfinished
     Child        = MAttribute(MUIA_Group_Child        , 'i..', c_MUIObject)
     ChildList    = MAttribute(MUIA_Group_ChildList    , '..g', c_pList)
     Columns      = MAttribute(MUIA_Group_Columns      , 'is.', c_LONG)
+    Forward      = MAttribute(MUIA_Group_Forward,       '.s.', c_BOOL)
     Horiz        = MAttribute(MUIA_Group_Horiz        , 'i..', c_BOOL)
     HorizSpacing = MAttribute(MUIA_Group_HorizSpacing , 'isg', c_LONG)
     LayoutHook   = MAttribute(MUIA_Group_LayoutHook   , 'i..', c_Hook)
@@ -1673,8 +1675,12 @@ class Group(Area): # TODO: unfinished
     Spacing      = MAttribute(MUIA_Group_Spacing      , 'is.', c_LONG)
     VertSpacing  = MAttribute(MUIA_Group_VertSpacing  , 'isg', c_LONG)
 
-    InitChange   = MMethod(MUIM_Group_InitChange)
+    AddHead      = MMethod(MUIM_Group_AddHead,    [ ('obj', c_MUIObject) ])
+    AddTail      = MMethod(MUIM_Group_AddTail,    [ ('obj', c_MUIObject) ])
     ExitChange   = MMethod(MUIM_Group_ExitChange)
+    InitChange   = MMethod(MUIM_Group_InitChange)
+    MoveMember   = MMethod(MUIM_Group_MoveMember, [ ('obj', c_MUIObject), ('pos', c_LONG) ])
+    Remove       = MMethod(MUIM_Group_Remove,     [ ('obj', c_MUIObject) ])
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
@@ -1710,7 +1716,28 @@ class Group(Area): # TODO: unfinished
         if lock: self.InitChange()
         try:
             for o in children:
+                self.Remove(o)
                 super(Group, self).RemChild(o)
+        finally:
+            if lock: self.ExitChange()
+
+    @AddHead.alias
+    def AddHead(self, meth, obj, lock=False):
+        if lock: self.InitChange()
+        try:
+            if not self._cin(obj):
+                meth(self, obj)
+                self._cadd(obj)
+        finally:
+            if lock: self.ExitChange()
+
+    @AddTail.alias
+    def AddTail(self, meth, obj, lock=False):
+        if lock: self.InitChange()
+        try:
+            if not self._cin(obj):
+                meth(self, obj)
+                self._cadd(obj)
         finally:
             if lock: self.ExitChange()
 
@@ -1966,6 +1993,14 @@ PageGroupV = Virtgroup.PageGroup
 
 class Scrollgroup(Group):
     CLASSID = MUIC_Scrollgroup
+
+    AutoBars     = MAttribute(MUIA_Scrollgroup_AutoBars,     'isg', c_BOOL)
+    Contents     = MAttribute(MUIA_Scrollgroup_Contents,     'i.g', c_MUIObject, postSet=_postSet_Child)
+    FreeHoriz    = MAttribute(MUIA_Scrollgroup_FreeHoriz,    'i..', c_BOOL)
+    FreeVert     = MAttribute(MUIA_Scrollgroup_FreeVert,     'i..', c_BOOL)
+    HorizBar     = MAttribute(MUIA_Scrollgroup_HorizBar,     '..g', c_MUIObject)
+    UseWinBorder = MAttribute(MUIA_Scrollgroup_UseWinBorder, 'i..', c_BOOL)
+    VertBar      = MAttribute(MUIA_Scrollgroup_VertBar,      '..g', c_MUIObject)
 
 #===============================================================================
 
