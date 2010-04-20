@@ -131,3 +131,116 @@ On faite c'est très simple, la règle est la suivante: un objet MUI ne doit pas ê
 => pas solutionnable localement, c'est au programmeur d'en tenire compte!
 => Notes pour la documentation utilisateur:
    Expliquer le pb de garder des références des valeurs données.
+
+**********************************************************************************************************************************************************
+
+L'eau à coulée sous les ponts! PyMUI est arrivé à une certaine maturité, il utilise le module ctypes pour effectuer le passage entre le monde
+Python et MUI pour les "valeurs".
+Mais après quelques développements "lourds" (comme Gribouillis) je m'appercois que certaines classes sont dures à utiliser (ex. implémenter la méthode
+MUIM_List_Display de la classe List, trop de convertions compliquées et en plus une gestion hazardeuse des références entre python et boopsi).
+
+Il est temps de remettre les choses à plat:
+
+BOOPSI: MUI étant totalement basé dessus, concentrons nous d'abord sur celui-ci.
+-> BOOPSI c'est de l'objet dynamique: les objets sont des instances de classes.
+Une classe implémente (le code) les methodes, manipulant de façon générique des données données dynamiquements (ex. OM_SET/OM_GET) ainsi
+que celles stockées dans le block de données de l'instance (l'objet).
+L'instance ne représente donc qu'une allocation unique de ce block de donnée, manipulé par les méthodes de la classes.
+
+-> Les instances ne peuvent exister que si la classes dont elles proviennent existe.
+=> Sous BOOPSI, une classe ne doit pas être détruite tant que des objets l'utilisant existent.
+=> Mais BOOPSI ne protège en rien l'utilisateur cette régle! Attention aux crashes...
+
+-> Il y a 2 fonctions pour créer des objets sous BOOPSI: NewObjetA() et NewObjet().
+=> MUI rajoute aussi MUI_NewObjectA(), MUI_NewObject() et MUI_MakeObject().
+=> soit un total de 5 fonctions possibles.
+
+-> Il y a 1 fonction BOOPSI pour détruire un objet BOOPSI: DisposeObject().
+=> MUI rajoutant lui: MUI_DiposeObject().
+
+-> Aucun moyen de savoir quand un objet est créé ou détruit (sauf si on est l'originateur de l'action).
+=> Ni sous BOOPSI, ni sous MUI.
+=> Pire, rien n'est assuré qu'en interne des bibliothèques intuition ou muimaster, le respect stricte aux
+appels précédents (Note: vérifié! MUI détruit des objets sans passer par (MUI_)DisposeObject(), ni même par
+le dispatcher!!!).
+
+-> Il n'y a pas de méchanisme de référencement comme sous Python, l'implémenteur de la classe doit le faire de lui-même.
+=> La destruction d'un objet devient dépendant de la classe voir d'autres classes.
+=> Par exemple sous MUI, où l'application détruit ses fenêtres attachées, elles même leur 'RootObject' et ainsi de suite.
+
+-> Autant il est possible (mais pas facile, demande de créer des MCCs à la volées) de lier un objet BOOPSI à un objet
+Python si le module python est le créateur de l'objet BOOPSI.
+Autant il est impossible de le faire pour un objet créé hors du module et donc impossible pour les objets pré-définis,
+créés avec MUI_MakeObject().
+
+-> L'appartenance d'un objet à une classe donnée est possible mais non directe car aucune API dans BOOPSI
+n'a été prévue à cet effet.
+
+On en deduit donc:
+1) qu'il est difficile voir impossible d'avoir une méthode automatique et générique pour gérer la création/destruction
+d'un objet BOOSI au travers d'un objet Python.
+
+**** Solution envisageable ****
+
+=> il faut que l'utilisateur du module devienne responsable de cette gestion.
+=> L'objet Python devient un simple proxy vers un objet BOOPSI, sans à avoir l'assurance que cet objet:
+ a) soit valide (pas détruit).
+ b) qu'il implémente bien la classe attendue (bien que ce dernier point peut-être résolus).
+=> Donc à un objet BOOPSI correspond plusieurs objets Python possibles. A l'inverse, à un objet Python
+ne peut correspondre qu'un objet BOOPSI.
+
+2) Il est difficile ou impossible de lié de façon bidirectionnelle un objet Python à un objet BOOPSI.
+=> comment alors gérer les notifications de MUI? La version actuelle utilise un Hook fixe appelé
+avec un objet MUI, ce dernier devant être lié avec un objet Python, sinon quoi il n'est pas
+possible de savoir quels sont les callbacks Python associées.
+=> Liaison uni-directionnelle (Python -> BOOPSI) uniquement. Si un objet doit être reconvertis
+vers un objet Python, un nouvel objet est recréé.
+=> la solution d'utiliser un dictionnaire pour la résolution inverse ne peut-être utilisée à cause
+du point 1), vu qu'on ne peut savoir précisément quand un objet BOOPSI est détruit (et donc la mémoire
+réutilisée, voir pour un autre objet BOOPSI).
+=> pourtant il faut une solution car sinon il est impossible d'affecté des données à un objet Python
+sous peine de pouvoir les retrouver dans un Hook comme celui de la notification MUI.
+
+**** Solution envisageable ****
+
+=> Il y a 2 cas de figures:
+   a) soit l'objet BOOPSI est créé depuis le module lui-même: on peut alors utiliser
+une table associant un objet Python pour un objet BOOPSI donné.
+   - L'objet Python est marqué comme "possédant" l'objet BOOPSI.
+   - Si il advient que cette objet est lié avec un autre objet BOOPSI pouvant le détruire,
+   l'objet Python pert alors ce marquage, mais cette action est manuelle et déclenchée par l'utilisateur à l'appel
+   à une API donnée du module.
+   -> Vu qu'il est utile de garder l'entrée, la valeur de la table sera non pas l'objet Python lui-même mais
+   un weakref de ce dernier. Reste à l'utilisateur de sauver quelque part l'objet Python pour qu'il reste
+   en vie suffisement longtemp au besoin.
+
+   b) soit l'objet BOOPSI est d'origine inconnue: un nouvel objet Python lui est associé.
+   Reste à l'utilisateur de pouvoir associé une classe Python particulière: prévoir une API pour.
+   Evidement l'objet Python n'est pas marqué comme propiétaire.
+
+=> Dans tous les cas on pourra ajouter cette association dans la table d'associativité:
+elle devra être temporaire et gérée par l'utilisateur.
+En cas de conflit (oublis d'enlever une entrée temporaire par exemple) une exception devra être provoquée.
+
+=> l'utilisation d'une table inverse impose une restriction à la régle d'associativité décrite en 1):
+si l'objet BOOPSI est dans la table, alors il ne peut y être associé qu'un seul objet Python, celui de la table.
+
+**** Résultion du cas des notifiations MUI ****
+
+=> puisque l'appel au hook ne peut être provoqué que si le module à lui-même appliqué cette notification avec un appel
+à la méthode MUIM_Notify, on contrôle donc les arguments donnés: il suffit donc d'avoir un argument suplémentaire,
+mais obligatoire, qui sera l'objet python correspondant.
+=> la référence ne sera par contre pas incrémenté: malheureusement enléver une notification particulière
+est compliquée voir impossible avec MUI. On pourra alors utiliser une structure allouée pour l'occasion,
+qui contient la référence vers l'objet Python, cette structure sera donnée en argument. La référence
+à la structure est gardée dans l'objet python, qui effacera sa propre référence dans la structure à l'appel
+de la méthode de destruction de l'objet Python.
+La structure ne sera jamais déallouée sauf lors de la destruction du module lui-même ou si appel à une API
+de destruction (DisposeObject(), ...) si l'objet Python est propriétaire.
+
+4) Multithreading
+
+=> la table d'associativité et les structures pour les notifications devront être accéssibles pour les threads.
+
+5) pb de la complexité d'implémentations des méthodes comme MUIM_List_Display avec des arguments aux types très variables.
+=> à revoir.
