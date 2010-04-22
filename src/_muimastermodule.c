@@ -267,10 +267,9 @@ static PyObject *objdb_get(Object *bObj)
 
 //+ PyBOOPSIObject_GetObject
 static Object *
-PyBOOPSIObject_GetObject(PyObject *pyo)
+PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
 {
-    PyBOOPSIObject *pybo = (APTR)pyo;
-    Object *bo = pybo->node->n_Object;
+    Object *bo = PyBOOPSIObject_GET_OBJECT(pyo);
 
     if (NULL != bo)
         return bo;
@@ -282,7 +281,7 @@ PyBOOPSIObject_GetObject(PyObject *pyo)
 
 //+ PyBOOPSIObject_DisposeObject
 static int
-PyBOOPSIObject_DisposeObject(PyObject *pObj)
+PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 {
     Object *bObj = PyBOOPSIObject_GetObject(pObj);
 
@@ -293,12 +292,12 @@ PyBOOPSIObject_DisposeObject(PyObject *pObj)
     objdb_remove(bObj);
 
     /* BOOPSI/MUI destroy */
-    DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, self, OBJ_TNAME(self));
-    if (PyMUIObject_Check(self))
+    DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+    if (PyMUIObject_Check(pObj))
         MUI_DisposeObject(bObj);
     else
         DisposeObject(bObj);
-    DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, self, OBJ_TNAME(self));
+    DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
 
     return 0;
 }
@@ -324,14 +323,14 @@ boopsi_new(PyTypeObject *type, PyObject *args)
         }
     }
 
-    return self;
+    return (PyObject *)self;
 }
 //-
 //+ boopsi_dealloc
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
-    Object *bObj = PyBOOPSIObject_GET_OBJECT(obj);
+    Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
 
     DPRINT("self=%p, bObj=%p\n", self, bObj);
 
@@ -409,8 +408,13 @@ boopsi__dispose(PyBOOPSIObject *self)
 static PyObject *
 boopsi__loosed(PyBOOPSIObject *self)
 {
-    if (PyBOOPSIObject_ISOWNER(pychild))
-        objdb_remove(child);
+    Object *bObj = PyBOOPSIObject_GetObject(self);
+
+    if (NULL == bObj)
+        return NULL;
+
+    if (PyBOOPSIObject_ISOWNER(self))
+        objdb_remove(bObj);
 
     PyBOOPSIObject_REM_FLAGS(self, FLAG_OWNER);
 
@@ -430,7 +434,7 @@ boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
     Object *obj, *child;
     int lock = FALSE;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject(self);
     if (NULL == obj)
         return NULL;
 
@@ -438,7 +442,7 @@ boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
         return NULL;
 
     /* Warning: no reference kept on arg object after return! */
-    child = PyBOOPSIObject_GetObject((PyObject *)pychild);
+    child = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pychild);
     if (NULL == child)
         return NULL;
 
@@ -513,7 +517,7 @@ muiobject_new(PyTypeObject *type, PyObject *args)
         /**/
     }
 
-    return self;
+    return (PyObject *)self;
 }
 //-
 
