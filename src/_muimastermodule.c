@@ -302,6 +302,29 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
     return 0;
 }
 //-
+//+ py2long
+static int
+py2long(PyObject *obj, LONG *value)
+{
+    if (obj == Py_None)
+        *value = 0;
+    else if (PyLong_CheckExact(obj))
+        *value = PyLong_AsUnsignedLongMask(obj);
+    else if (PyInt_CheckExact(obj))
+        *value = PyInt_AsLong(obj);
+    else {
+        PyObject *x = PyNumber_Long(obj); /* NR */
+
+        if (NULL == x) return 0;
+        *value = PyLong_AsUnsignedLongMask(x);
+        Py_DECREF(x);
+    }
+
+    DPRINT("obj=%p-'%s', value = 0x%08x\n", obj, OBJ_TNAME_SAFE(obj), *value);
+
+    return 1;
+}
+//-
 
 /*******************************************************************************************
 ** PyBOOPSIObject_Type
@@ -405,6 +428,11 @@ boopsi__dispose(PyBOOPSIObject *self)
 }
 //-
 //+ boopsi__loosed
+PyDoc_STRVAR(boopsi__loosed_doc,
+"_loosed(object) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+
 static PyObject *
 boopsi__loosed(PyBOOPSIObject *self)
 {
@@ -421,7 +449,7 @@ boopsi__loosed(PyBOOPSIObject *self)
     Py_RETURN_NONE;
 }
 //-
-//+ boopsi__add
+//+ boopsi__addchild
 PyDoc_STRVAR(boopsi__addchild_doc,
 "_addchild(object) -> int\n\
 \n\
@@ -467,6 +495,147 @@ boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
     return ret;
 }
 //-
+//+ boopsi__remchild
+PyDoc_STRVAR(boopsi__remchild_doc,
+"_remchild(object) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+boopsi__remchild(PyBOOPSIObject *self, PyObject *args)
+{
+    PyObject *ret, *pychild;
+    Object *obj, *child;
+    int lock = FALSE;
+
+    obj = PyBOOPSIObject_GetObject(self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "O!|i", &PyBOOPSIObject_Type, &pychild, &lock)) /* BR */
+        return NULL;
+
+    /* Warning: no reference kept on arg object after return! */
+    child = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pychild);
+    if (NULL == child)
+        return NULL;
+
+    if (lock) {
+        DPRINT("Lock\n");    
+        DoMethod(obj, MUIM_Group_InitChange);
+    }
+
+    DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);         
+    ret = PyInt_FromLong(DoMethod(obj, OM_REMMEMBER, (ULONG)child));
+    
+    if (lock) {
+        DPRINT("Unlock\n");        
+        DoMethod(obj, MUIM_Group_ExitChange);
+    }
+
+    return ret;
+}
+//-
+//+ boopsi__create
+PyDoc_STRVAR(boopsi__create_doc,
+"_create(object) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+boopsi__create(PyBOOPSIObject *self, PyObject *args)
+{
+    UBYTE *classid;
+    LONG isMCC = FALSE;
+    PyObject *fast, *params = NULL;
+    PyObject *overloaded_dict = NULL;
+    struct TagItem *tags;
+    ULONG n;
+    Object *bObj;
+
+    /* Protect againts doubles */
+    if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
+        PyErr_SetString(PyExc_RuntimeError, "Already created BOOPSI Object");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s|OiO!:PyBOOPSIObject", &classid, &params, &isMCC, &PyDict_Type, &overloaded_dict)) /* BR */
+        return NULL;
+
+    DPRINT("ClassID: '%s', isMCC: %d\n", classid, isMCC);
+
+    /* Parse params sequence and convert it into tagitem's */
+    fast = PySequence_Fast(params, "object tags shall be convertible into tuple or list"); /* NR */
+    if (NULL == fast)
+        return NULL;
+
+    n = PySequence_Fast_GET_SIZE(fast);
+    if (n > 0) {
+        PyObject **tuples = PySequence_Fast_ITEMS(fast);
+        ULONG i;
+
+        tags = PyMem_Malloc(sizeof(struct TagItem) * n);
+        if (NULL == tags) {
+            Py_DECREF(fast);
+            return PyErr_NoMemory();
+        }
+
+        for (i=0; i < n; i++) {
+            PyObject *tag_id = PyTuple_GetItem(tuples[i], 0);
+            PyObject *tag_value = PyTuple_GetItem(tuples[i], 0);
+
+            if ((NULL == tag_id) || (NULL == tag_value))
+                break;
+
+            tags[i].ti_Tag = PyLong_AsUnsignedLongMask(tag_id);
+            py2long(tag_value, &(tags[i].ti_Data));
+
+            if (PyErr_Occurred())
+                break;
+           
+            DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, (LONG)tags[i].ti_Data, (ULONG)tags[i].ti_Data, tags[i].ti_Data);
+        }
+        
+        if (PyErr_Occurred()) {
+            Py_DECREF(fast);
+            PyMem_Free(tags);
+            return NULL;
+        }
+        
+        Py_DECREF(fast);
+    } else
+        tags = NULL;
+
+    /* Creating the BOOPSI/MUI object */
+    if (PyMUIObject_Check(self)) {
+        bObj = MUI_NewObjectA(classid, tags);
+    } else {
+        bObj = NewObjectA(NULL, classid, tags);
+    }
+
+    if (NULL != tags)
+        PyMem_Free(tags);
+
+    if (NULL != bObj) {
+        DPRINT("New %s object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
+
+        /* Add to the Objects database */
+        if (objdb_add(bObj, self)) {
+            if (PyMUIObject_Check(self))
+                MUI_DisposeObject(bObj);
+            else
+                DisposeObject(bObj);
+        }
+
+        PyBOOPSIObject_SET_OBJECT(self, bObj);
+        PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+
+        Py_RETURN_NONE;
+    }
+
+    return PyErr_Format(PyExc_SystemError, "Failed to create BOOPSI object of class %s", classid);
+}
+//-
 
 static PyGetSetDef boopsi_getseters[] = {
     {"_object", (getter)boopsi_get_object, NULL, "BOOPSI object address", NULL},
@@ -478,7 +647,10 @@ static PyNumberMethods boopsi_as_number = {
 };
 
 static struct PyMethodDef boopsi_methods[] = {
-    {"_loosed", (PyCFunction) boopsi__loosed, METH_NOARGS, NULL},
+    {"_loosed", (PyCFunction) boopsi__loosed, METH_NOARGS, boopsi__loosed_doc},
+    {"_addchild", (PyCFunction) boopsi__addchild, METH_VARARGS, boopsi__addchild_doc},
+    {"_remchild", (PyCFunction) boopsi__remchild, METH_VARARGS, boopsi__remchild_doc},
+    {"_create", (PyCFunction) boopsi__create, METH_VARARGS, boopsi__create_doc},
 
     {NULL, NULL} /* sentinel */
 };

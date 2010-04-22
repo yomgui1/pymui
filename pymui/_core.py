@@ -329,22 +329,17 @@ class MMethod(property):
 
 #===============================================================================
 
-class MUIMetaClass(type):
+class BOOPSIMetaClass(type):
     def __new__(metacl, name, bases, dct):
         clid = dct.pop('CLASSID', None)
         if not clid:
-            clid = [ base._mclassid for base in bases if hasattr(base, '_mclassid') ]
+            clid = [ base._mclassid for base in bases if hasattr(base, '_bclassid') ]
             if not len(clid):
-                raise TypeError("No valid MUI class name found")
+                raise TypeError("No valid BOOPSI class name found")
             clid = clid[0]
 
-        dct['_mclassid'] = clid
-        dct['isMCC'] = bool(dct.pop('MCC', False))
+        dct['_bclassid'] = clid
 
-        if dct['isMCC']:
-            if not any(hasattr(base, '__pymui_overloaded__') for base in bases):
-                dct['__pymui_overloaded__'] = {}
-            
         # cache attributes/methods
         attrs = {}
         attrs_id = {}
@@ -370,11 +365,22 @@ class MUIMetaClass(type):
            dct[name+'_'+k] = v
         for k, v in meths.iteritems():
            dct[name+'_'+k] = v
-
+        
         return type.__new__(metacl, name, bases, dct)
+        
+
+class MUIMetaClass(BOOPSIMetaClass):
+    def __new__(metacl, name, bases, dct):
+        dct['isMCC'] = bool(dct.pop('MCC', False))
+
+        if dct['isMCC']:
+            if not any(hasattr(base, '__pymui_overloaded__') for base in bases):
+                dct['__pymui_overloaded__'] = {}
+
+        return BOOPSIMetaClass.__new__(metacl, name, bases, dct)
 
     def __init__(cl, name, bases, dct):
-        type.__init__(cl, name, bases, dct)
+        BOOPSIMetaClass.__init__(cl, name, bases, dct)
 
         # register MUI overloaded methods
         d = dct.get('__pymui_overloaded__')
