@@ -26,6 +26,7 @@
 
 import ctypes as _ct
 from ctypes import addressof, string_at
+from pymui._muimaster import _ptr2pyobj, _CHook
 
 class PyMUICType(object):
     __ptr_dict = {}
@@ -59,7 +60,7 @@ class PyMUICType(object):
 
 class PyMUICSimpleType(PyMUICType):
     def __long__(self):
-        return self.value
+        return self.value or 0
 
     def FromLong(self, v):
         self.value = v
@@ -90,15 +91,18 @@ class c_UBYTE(_ct.c_ubyte, PyMUICSimpleType): pass
 class c_BYTE(_ct.c_byte, PyMUICSimpleType): pass
 class c_CHAR(_ct.c_char, PyMUICSimpleType): pass
 
-class c_APTR(_ct.c_void_p, PyMUICPointerType):
+class c_APTR(_ct.c_void_p, PyMUICSimpleType):
     def __long__(self):
         return self.value
 
-class c_CONST_STRPTR(_ct.c_char_p, PyMUICPointerType):
+class c_CONST_STRPTR(_ct.c_char_p, PyMUICSimpleType):
+    def __long__(self):
+        return _ct.cast(self, _ct.c_void_p).value or 0
+
     def __getitem__(self, i):
         return self.value[i]
 
-class c_STRPTR(_ct.c_char_p, PyMUICPointerType):
+class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
     def __new__(cl, x=0):
         if isinstance(x, str):
             o = c_CONST_STRPTR.__new__(c_CONST_STRPTR)
@@ -106,6 +110,9 @@ class c_STRPTR(_ct.c_char_p, PyMUICPointerType):
             o= _ct.c_char_p.__new__(cl)
         o.value = x
         return o
+
+    def __long__(self):
+        return _ct.cast(self, _ct.c_void_p).value or 0
     
     def __getitem__(self, i):
         return self.value[i]
@@ -113,9 +120,15 @@ class c_STRPTR(_ct.c_char_p, PyMUICPointerType):
     def __setitem__(self, i, v):
         _ct.POINTER(_ct.c_char).from_address(addressof(self))[i] = v
 
-class c_pPyObject(_ct.py_object, PyMUICPointerType):
+class c_PyObject(_ct.py_object, PyMUICSimpleType):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
+
+    def FromLong(self, v):
+        self.value = _ptr2pyobj(v)
+
+    def __getitem__(self, i):
+        return self.value[i]
 
 c_STRUCTURE = _ct.Structure
 c_ARRAY = _ct.Array
@@ -130,8 +143,61 @@ def PointerOn(x):
 ################################################################################
 
 class c_TagItem(c_STRUCTURE):
-    _fields_ = [('ti_Tag', c_ULONG),
-                ('ti_Data', c_ULONG)]
+    _fields_ = [ ('ti_Tag', c_ULONG),
+                 ('ti_Data', c_ULONG) ]
+
+class c_BOOL(c_LONG): pass
+
+class c_Hook(c_PyObject):
+    _argtypes_ = (long, long)
+
+    def __new__(cl, *args, **kwds):
+        return c_PyObject.__new__(cl)
+
+    def __init__(self, x=None, argstypes=None):
+        if x:
+            if argstypes is None:
+                argstypes = self._argtypes_
+
+            if argstypes[0] is None:
+                if argstypes[1] is None:
+                    f = lambda a, b: x()
+                elif argstypes[1] is long:
+                    f = lambda a, b: x(b)
+                else:
+                    f = lambda a, b: x(argstypes[1].FromLong(b))
+            elif argstypes[1] is None:
+                if argstypes[0] is long:
+                    f = lambda a, b: x(a)
+                else:
+                    f = lambda a, b: x(argstypes[0].FromLong(a))
+            else:
+                if argstypes[0] is long:
+                    if argstypes[1] is long:
+                        f = lambda a, b: x(a, b)
+                    else:
+                        f = lambda a, b: x(a, argstypes[1].FromLong(b))
+                elif argstypes[1] is long:
+                    f = lambda a, b: x(argstypes[0].FromLong(a), b)
+                else:
+                    f = lambda a, b: x(argstypes[0].FromLong(a), argstypes[1].FromLong(b))
+
+            c_PyObject.__init__(self, _CHook(f))
+        else:
+            c_PyObject.__init__(self)
+
+    def __long__(self):
+        x = self.value
+        return (0 if x is None else x.address)
+
+    @classmethod
+    def FromLong(cl, v):
+        return cl(_CHook(v))
+
+c_pSTRPTR = c_STRPTR.PointerType()
+
+class c_pList(c_APTR): pass
+class c_pMinList(c_APTR): pass
 
 ################################################################################
 #### Test-suite
@@ -140,7 +206,7 @@ class c_TagItem(c_STRUCTURE):
 if __name__ == '__main__':
     o = c_STRPTR('toto') # Shall return a CONST_STRPTR
     assert isinstance(o, PyMUICType)
-    assert isinstance(o, PyMUICPointerType)
+    assert isinstance(o, PyMUICSimpleType)
     assert isinstance(o, c_CONST_STRPTR)
     assert o[0] == 't'
     try:

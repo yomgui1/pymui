@@ -61,8 +61,34 @@ TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 ##
 
-# tuple of possibles ctypes types used in PyMUI
-__ct_tb = tuple(type(x) for x in (c_LONG, c_pSTRPTR, c_STRUCTURE, c_ARRAY, c_UNION))
+class c_Object(_ct.py_object, PyMUICSimpleType):
+    def __new__(cl, x=None):
+        o = _ct.py_object.__new__(cl)
+        if x is not None:
+            assert isinstance(x, PyBOOPSIObject)
+            o.value = x
+        return o
+
+    def __long__(self):
+        return self.value._object
+
+    def FromLong(self, v):
+        self.value = _muimaster._ptr2pyboopsi(v)
+
+class c_MUIObject(_ct.py_object, PyMUICSimpleType):
+    def __new__(cl, x=None):
+        o = _ct.py_object.__new__(cl)
+        if x is not None:
+            assert isinstance(x, PyMUIObject)
+            o.value = x
+        return o
+
+    def __long__(self):
+        return self.value._object
+
+    def FromLong(self, v):
+        self.value = _muimaster._ptr2pymui(v)
+
 
 ################################################################################
 #### PyMUI internal base classes and routines
@@ -111,7 +137,7 @@ class MAttribute(property):
     """
     
     def __init__(self, id, isg, ctype, keep=None, **kwds):
-        assert isinstance(ctype, __ct_tb)
+        assert issubclass(ctype, PyMUICType)
         
         self.__isg = isg
         self.__id = id
@@ -301,7 +327,7 @@ class BOOPSIMetaClass(type):
     def __new__(metacl, name, bases, dct):
         clid = dct.pop('CLASSID', None)
         if not clid:
-            clid = [ base._mclassid for base in bases if hasattr(base, '_bclassid') ]
+            clid = [ base._bclassid for base in bases if hasattr(base, '_bclassid') ]
             if not len(clid):
                 raise TypeError("No valid BOOPSI class name found")
             clid = clid[0]
@@ -508,7 +534,7 @@ class BOOPSIRootClass(PyBOOPSIObject, BOOPSIMixin):
 
 #===============================================================================
 
-class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR._PointerType())
+class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR.PointerType())
 
 class Notify(PyMUIObject, BOOPSIMixin):
     """rootclass for all MUI sub-classes.
@@ -553,7 +579,7 @@ class Notify(PyMUIObject, BOOPSIMixin):
         # convert given keywords as long
         muiargs = [(self._getMAByName(k).id, v) for k,v in kwds] + extra
         
-        self._create(muiargs)
+        self._create(self._bclassid, muiargs)
         
 #===============================================================================
 
@@ -599,7 +625,7 @@ class Application(Notify): # TODO: unfinished
     ##DefaultConfigItem
     InputBuffered    = MMethod(MUIM_Application_InputBuffered)
     Load             = MMethod(MUIM_Application_Load,             [ ('name', c_STRPTR) ])
-    #NewInput         = MMethod(MUIM_Application_NewInput,         [ ('signal', c_ULONG._PointerType()) ])
+    #NewInput         = MMethod(MUIM_Application_NewInput,         [ ('signal', c_ULONG.PointerType()) ])
     OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow, [ ('flags', c_ULONG),
                                                                     ('classid', c_STRPTR) ])
     PushMethod       = MMethod(MUIM_Application_PushMethod,       [ ('dest', c_MUIObject),

@@ -201,6 +201,14 @@ typedef struct PyMUIObject_STRUCT {
     PyBOOPSIObject base;
 } PyMUIObject;
 
+typedef struct CHookObject_STRUCT {
+    PyObject_HEAD
+
+    struct Hook * hook;
+    struct Hook   _hook;
+    PyObject *    callable;
+} CHookObject;
+
 
 /*
 ** Private Variables
@@ -212,6 +220,7 @@ static struct Library *LayersBase;
 
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
+static PyTypeObject CHookObject_Type;
 
 static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
@@ -327,6 +336,50 @@ py2long(PyObject *obj, LONG *value)
     return 1;
 }
 //-
+//+ callpython
+static ULONG
+callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
+{
+    CHookObject *self = hook->h_Data;
+    PyGILState_STATE gstate;
+    PyObject *res;
+    ULONG result;
+
+    DPRINT("hook: %p, self: %p\n", hook, self);
+
+    if (!gModuleIsValid) {
+        dprintf("Warning: PyMUI CHookObject called during PyMUI closing.");
+        return 0;
+    }
+
+    if ((NULL == self) || (NULL == self->callable)) {
+        dprintf("Warning: Bad PyMUI call: NULL hook or callable (CHook=%p)\n", self);
+        return 0;
+    }
+
+    gstate = PyGILState_Ensure();
+
+    DPRINT("Callable: %p, values: [%x, %x]\n", self->callable, a2_value, a1_value);
+
+    Py_INCREF(self);
+    res = PyObject_CallFunction(self->callable, "kk", a2_value, a1_value); /* NR */
+    if (NULL != res) {
+        if (!py2long(res, &result))
+            result = 0;
+        Py_DECREF(res);
+    }
+
+    Py_DECREF(self);
+
+    if (PyErr_Occurred() && (NULL != gApp))
+        DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+
+    PyGILState_Release(gstate);
+
+    return result;
+}
+//-
+
 
 /*******************************************************************************************
 ** PyBOOPSIObject_Type
@@ -723,6 +776,95 @@ static PyTypeObject PyMUIObject_Type = {
 };
 
 /*******************************************************************************************
+** CHookObject_Type
+*/
+
+//+ chook_new
+static PyObject *
+chook_new(PyTypeObject *type, PyObject *args)
+{
+    CHookObject *self;
+    PyObject *v;
+
+    self = (CHookObject *)type->tp_alloc(type, 0); /* NR */
+    if (NULL != self) {
+        if (PyArg_ParseTuple(args, "O", &v)) {
+            DPRINT("HookObject: %p, func: %p-'%s' (callable? %s)\n", self, v, OBJ_TNAME(v), PyCallable_Check(v)?"yes":"no");
+
+            if (PyCallable_Check(v)) {
+                self->hook = &self->_hook;
+                INIT_HOOK(self->hook, callpython);
+                self->callable = v; Py_INCREF(v);
+                self->_hook.h_Data = self;
+            } else {
+                ULONG x;
+
+                if (!py2long(v, &x)) {
+                    Py_CLEAR(self);
+                    return NULL;
+                }
+
+                self->hook = (APTR)x;
+            }
+
+            DPRINT("Hook: %p, callable: %p\n", self->hook, self->callable);
+            return (PyObject *)self;
+        }
+
+        Py_CLEAR(self);
+    }
+
+    return NULL;
+}
+//-
+//+ chook_traverse
+static int
+chook_traverse(CHookObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->callable);
+    return 0;
+}
+//-
+//+ chook_clear
+static int
+chook_clear(CHookObject *self)
+{
+    Py_CLEAR(self->callable);
+    return 0;
+}
+//-
+//+ chook_dealloc
+static void
+chook_dealloc(CHookObject *self)
+{
+    DPRINT("HookObject: %p\n", self);
+    chook_clear(self);
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+
+static PyMemberDef chook_members[] = {
+    {"address", T_ULONG, offsetof(CHookObject, hook), RO, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject CHookObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster._CHook",
+    tp_basicsize    : sizeof(CHookObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    tp_doc          : "_CHook Objects",
+
+    tp_new          : (newfunc)chook_new,
+    tp_traverse     : (traverseproc)chook_traverse,
+    tp_clear        : (inquiry)chook_clear,
+    tp_dealloc      : (destructor)chook_dealloc,
+
+    tp_members      : chook_members,
+};
+
+/*******************************************************************************************
 ** Module Functions
 **
 ** List of functions exported by this module reside here
@@ -804,10 +946,106 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 }
 //-
 #endif
+//+ _muimaster_pyobjfromptr
+static PyObject *
+_muimaster_pyobjfromptr(PyObject *self, PyObject *args)
+{
+    ULONG value;
+    PyObject *pyo;
+
+    if (!PyArg_ParseTuple(args, "I", &value))
+        return NULL;
+
+    pyo = (PyObject *)value;
+    DPRINT("pyo = %p\n", pyo);
+    if (NULL == pyo)
+        Py_RETURN_NONE;
+
+    /* Small check */
+    if (!TypeOfMem(pyo))
+        return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pyo);
+
+    Py_INCREF(pyo);
+    return pyo;
+}
+//-
+//+ _muimaster_ptr2pyboopsi
+static PyObject *
+_muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
+{
+    ULONG value;
+    Object *bObj;
+    PyObject *pObj;
+
+    if (!PyArg_ParseTuple(args, "I", &value))
+        return NULL;
+
+    bObj = (Object *)value;
+    DPRINT("bObj: %p\n", bObj);
+    if (NULL != bObj) {
+        /* Check if the object is owned by a valid PyBOOPSIObject object */
+        pObj = objdb_get(bObj);
+        DPRINT("pObj: %p\n", pObj);
+        if (NULL != pObj) {
+            if (!TypeOfMem(pObj))
+                return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pObj);
+            return pObj;
+        }
+    }
+
+    /* NULL Object or owner not known */
+    pObj = (PyObject *)PyObject_New(PyBOOPSIObject, &PyBOOPSIObject_Type);
+    if (NULL != pObj) {
+        PyBOOPSIObject_SET_OBJECT(pObj, bObj);
+        ((PyBOOPSIObject *)pObj)->flags = 0;
+    }
+
+    return pObj;
+}
+//-
+//+ _muimaster_ptr2pymui
+static PyObject *
+_muimaster_ptr2pymui(PyObject *self, PyObject *args)
+{
+    ULONG value;
+    Object *bObj;
+    PyObject *pObj;
+
+    if (!PyArg_ParseTuple(args, "I", &value))
+        return NULL;
+
+    bObj = (Object *)value;
+    DPRINT("bObj: %p\n", bObj);
+    if (NULL != bObj) {
+        /* Check if the object is owned by a valid PyMUIObject object */
+        pObj = objdb_get(bObj);
+        DPRINT("pObj: %p\n", pObj);
+        if (NULL != pObj) {
+            if (!TypeOfMem(pObj))
+                return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pObj);
+            if (!PyMUIObject_Check(pObj))
+                return PyErr_Format(PyExc_TypeError, "value '%x' doesn't refer to a PyMUIObject instance", (unsigned int)pObj);
+            return pObj;
+        }
+    }
+
+    /* NULL Object or owner not known */
+    pObj = (PyObject *)PyObject_New(PyMUIObject, &PyMUIObject_Type);
+    if (NULL != pObj) {
+        PyBOOPSIObject_SET_OBJECT(pObj, bObj);
+        ((PyBOOPSIObject *)pObj)->flags = 0;
+    }
+
+    return pObj;
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
     //{"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"_ptr2pyobj", _muimaster_pyobjfromptr, METH_VARARGS, NULL},
+    {"_ptr2pyboopsi", _muimaster_ptr2pyboopsi, METH_VARARGS, NULL},
+    {"_ptr2pymui", _muimaster_ptr2pymui, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -873,16 +1111,20 @@ INITFUNC(void) {
                     /* New Python types initialization */
                     if (!PyType_Ready(&PyBOOPSIObject_Type)) {
                         if (!PyType_Ready(&PyMUIObject_Type)) {
-                            /* Module creation/initialization */
-                            m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
-                            if (!all_ins(m)) {
-                                ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
-                                ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
-                                PyModule_AddObject(m, "_obj_dict", d);
-                                
-                                gBOOPSI_Objects_Dict = d;
-                                gModuleIsValid = TRUE;
-                                return;
+                            if (!PyType_Ready(&CHookObject_Type)) {
+                                /* Module creation/initialization */
+                                m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
+                                if (!all_ins(m)) {
+                                    ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
+                                    ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
+                                    ADD_TYPE(m, "_CHook", &CHookObject_Type);
+
+                                    PyModule_AddObject(m, "_obj_dict", d);
+                                    
+                                    gBOOPSI_Objects_Dict = d;
+                                    gModuleIsValid = TRUE;
+                                    return;
+                                }
                             }
                         }
                     }
