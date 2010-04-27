@@ -234,6 +234,7 @@ for more information on calls.");
 ** Private Functions
 */
 
+//+ objdb_add
 static int objdb_add(Object *bObj, PyObject *pObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj); /* NR */
@@ -245,7 +246,8 @@ static int objdb_add(Object *bObj, PyObject *pObj)
 
     return res;
 }
-
+//-
+//+ objdb_remove
 static void objdb_remove(Object *bObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj);
@@ -253,7 +255,8 @@ static void objdb_remove(Object *bObj)
     PyDict_DelItem(gBOOPSI_Objects_Dict, key);
     Py_XDECREF(key);
 }
-
+//-
+//+ objdb_get
 static PyObject *objdb_get(Object *bObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj);
@@ -264,7 +267,7 @@ static PyObject *objdb_get(Object *bObj)
 
     return PyWeakref_GetObject(wref);
 }
-
+//-
 //+ PyBOOPSIObject_GetObject
 static Object *
 PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
@@ -278,7 +281,6 @@ PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
     return NULL;
 }
 //-
-
 //+ PyBOOPSIObject_DisposeObject
 static int
 PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
@@ -620,7 +622,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         DPRINT("New %s object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
 
         /* Add to the Objects database */
-        if (objdb_add(bObj, self)) {
+        if (objdb_add(bObj, (PyObject *) self)) {
             if (PyMUIObject_Check(self))
                 MUI_DisposeObject(bObj);
             else
@@ -648,6 +650,7 @@ static PyNumberMethods boopsi_as_number = {
 
 static struct PyMethodDef boopsi_methods[] = {
     {"_loosed", (PyCFunction) boopsi__loosed, METH_NOARGS, boopsi__loosed_doc},
+    {"_dispose", (PyCFunction) boopsi__dispose, METH_NOARGS, boopsi__dispose_doc},
     {"_addchild", (PyCFunction) boopsi__addchild, METH_VARARGS, boopsi__addchild_doc},
     {"_remchild", (PyCFunction) boopsi__remchild, METH_VARARGS, boopsi__remchild_doc},
     {"_create", (PyCFunction) boopsi__create, METH_VARARGS, boopsi__create_doc},
@@ -692,7 +695,6 @@ muiobject_new(PyTypeObject *type, PyObject *args)
     return (PyObject *)self;
 }
 //-
-
 //+ muiobject_dealloc
 static void
 muiobject_dealloc(PyMUIObject *self)

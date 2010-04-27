@@ -132,6 +132,10 @@ def PointerOn(x):
 class c_TagItem(c_STRUCTURE):
     _fields_ = [('ti_Tag', c_ULONG),
                 ('ti_Data', c_ULONG)]
+
+################################################################################
+#### Test-suite
+################################################################################
     
 if __name__ == '__main__':
     o = c_STRPTR('toto') # Shall return a CONST_STRPTR
@@ -156,15 +160,15 @@ if __name__ == '__main__':
 
     # Python hacking!
     addr = long(o[1])
-    print addr
+    assert addr > 0
     x = c_STRPTR(addr)
-    print x
-    print x.value
+    assert isinstance(x, c_STRPTR)
+    assert x.value == o[1].value
     x[0] = 'p'
-    print x.value
-    print x.value == o[1].value
+    assert x[0] == 'p'
+    assert x.value == 'poto'
     s = 'toto'
-    assert s[0] == 'p' # 't' == 'p', Funny, isn't ?
+    assert ord(s[0]) == 112 ### 't' == 'p', Funny, isn't ?
 
     o = c_BYTE(255)
     assert long(o) == -1
@@ -174,3 +178,4 @@ if __name__ == '__main__':
     assert isinstance(p, PyMUICPointerType)
     assert p[0].value == -1
     
+    print "Everything is OK"
