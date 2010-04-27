@@ -40,6 +40,7 @@ from _muimaster import *
 from defines import *
 from types import *
 import ctypes as _ct
+from ctypes import addressof, string_at
 
 MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
@@ -60,37 +61,8 @@ TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 ##
 
-################################################################################
-#### Usefull types
-################################################################################
-
-class c_BOOPSIObject(c_ULONG):
-    def __init__(self, x=0):
-        if isinstance(x, PyBOOPSIObject):
-            x = x._object
-            
-        super(c_BoopsiObject, self).__init__(x)
-            
-    @property
-    def bind(self, cl=None):
-        if cl:
-            return cl(_address=_muimaster._BOOPSI2Python(self.value))
-        return _muimaster._BOOPSI2Python(self.value)
-
-    @staticmethod
-    def keep(x):
-        if isinstance(x, PyBOOPSIObject) and x._owned:
-            return x
-        return None
-
-class c_MUIObject(c_BOOPSIObject): pass
-
-class c_TagItem(CStructure):
-    _fields_ = [('ti_Tag', c_ULONG),
-                ('ti_Data', c_ULONG)]
-
-c_pTagItem = c_TagItem._PointerType()
-
+# tuple of possibles ctypes types used in PyMUI
+__ct_tb = tuple(type(x) for x in (c_LONG, c_pSTRPTR, c_STRUCTURE, c_ARRAY, c_UNION))
 
 ################################################################################
 #### PyMUI internal base classes and routines
@@ -139,7 +111,7 @@ class MAttribute(property):
     """
     
     def __init__(self, id, isg, ctype, keep=None, **kwds):
-        assert issubclass(ctype, PyMUICType)
+        assert isinstance(ctype, __ct_tb)
         
         self.__isg = isg
         self.__id = id
@@ -147,23 +119,19 @@ class MAttribute(property):
 
         if 'i' in isg:
             def _init(obj, x):
-                v = (x if isinstance(x, ctype) else ctype(x))
-                if keep or (keep is None and v._iskeep):
-                    obj._keep_dict[id] = ctype.keep(x)
-                return long(v)
+                x = (x if isinstance(x, ctype) else ctype(x))
+                return c_ULONG.from_address(addressof(x)).value
         else:
             def _init(*args):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
 
         if 's' in isg:
             def _setter(obj, x, nn=False):
-                v = (x if isinstance(x, ctype) else ctype(x))
-                if keep or (keep is None and v._iskeep):
-                    obj._keep_dict[id] = ctype.keep(x)
+                x = c_ULONG.from_address(addressof(x if isinstance(x, ctype) else ctype(x))).value
                 if nn:
-                    obj._nnset(id, v)
+                    obj._nnset(id, x)
                 else:
-                    obj._set(id, v)
+                    obj._set(id, x)
         else:
             _setter = None
 
@@ -249,7 +217,7 @@ class MMethod(property):
             self.__retconv = rettype.FromLong
         
         if fields:
-            self.__msgtype = type('c_MUIP_%x' % id, (CStructure,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
+            self.__msgtype = type('c_MUIP_%x' % id, (c_STRUCTURE,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
             buftp = (_ct.c_ulong * (len(fields)+1))
 
             if not varargs:
@@ -297,7 +265,7 @@ class MMethod(property):
                         msg[i+1] = long(o)
                     return self.__retconv(obj._do(msg, args))
         else:
-            self.__msgtype = type('c_MUIP_%x' % id, (CStructure,), {'_fields_': [ ('MethodID', c_ULONG) ]})
+            self.__msgtype = type('c_MUIP_%x' % id, (c_STRUCTURE,), {'_fields_': [ ('MethodID', c_ULONG) ]})
 
             if not varargs:
                 def cb(obj):
