@@ -192,6 +192,15 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 
 #define NODE_FLAG_MUI (1<<0)
 
+enum {
+    PYMUI_DATA_MLEFT  = 0,
+    PYMUI_DATA_MRIGHT,
+    PYMUI_DATA_MTOP,
+    PYMUI_DATA_MBOTTOM,
+    PYMUI_DATA_MWIDTH,
+    PYMUI_DATA_MHEIGHT
+};
+
 
 /*
 ** Private Types and Structures
@@ -836,6 +845,124 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 //-
+//+ boopsi__do
+PyDoc_STRVAR(boopsi__do_doc,
+"_do(msg, *extra_args) -> long\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+boopsi__do(PyBOOPSIObject *self, PyObject *args) {
+    Object *obj;
+    ULONG result;
+    Msg msg;
+    int msg_length;
+    PyObject *extra_args = NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "s#|O:_do", &msg, &msg_length, &extra_args)) /* BR */
+        return NULL;
+
+    DPRINT("DoMethod(obj=%p, msg=%p (%u bytes), 0x%08x)\n", obj, msg, msg_length, msg->MethodID);
+
+    /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
+     * even if this call cause some Python code to be executed causing a DECREF of these objects.
+     * This is protected by the fact that objects have their ref counter increased until they remains
+     * inside the argument tuple of this function.
+     * So here there is no need to INCREF argument python objects.
+     */
+
+    /* Collect extra arguments (for variable arguments methods) */
+    if (NULL != extra_args) {
+        PyObject *fast;
+        Msg final_msg;
+        ULONG final_length;
+        int n;
+
+        fast = PySequence_Fast(extra_args, "Method optional arguments should be convertible into tuple or list"); /* NR */
+        if (NULL == fast)
+            return NULL;
+
+        n = PySequence_Fast_GET_SIZE(fast);
+        final_length = msg_length + n * sizeof(ULONG);
+
+        DPRINT("#  Extra Args count: %d, final msg len: %lu bytes\n", n, final_length);
+
+        final_msg = PyMem_Malloc(final_length);
+        if (NULL == final_msg) {
+            Py_DECREF(fast);
+            return PyErr_NoMemory();
+        }
+
+        /* copy the user msg base first */
+        CopyMem(msg, final_msg, msg_length);
+
+        if (n > 0) {
+            PyObject **data = PySequence_Fast_ITEMS(fast);
+            ULONG i, *ptr = (ULONG *)(((char *)final_msg) + msg_length);
+
+            for (i=0; i < n; i++, ptr++) {
+                if (!py2long(data[i], ptr))
+                    break;
+
+                DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, *ptr, (ULONG)*ptr, *ptr);
+            }
+        }
+
+        Py_DECREF(fast);
+
+        /* Catch possible exceptions during py2long() calls */
+        if (PyErr_Occurred()) {
+            PyMem_Free(msg);
+            return NULL;
+        }
+
+        result = DoMethodA(obj, final_msg);
+
+        PyMem_Free(final_msg);
+    } else
+        result = DoMethodA(obj, msg);
+
+    DPRINT("DoMethod(obj=%p, 0x%08x) = (%ld, %lu, %lx)\n", obj, msg->MethodID, (LONG)result, result, result);
+
+    /* Methods can call Python ... check against exception here also */
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(result);
+}
+//-
+//+ boopsi__do1
+PyDoc_STRVAR(boopsi__do1_doc,
+"_do1(method, arg) -> int\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
+    Object *obj;
+    ULONG meth;
+    LONG value;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "IO&", &meth, py2long, &value)) /* BR */
+        return NULL;
+
+    DPRINT("DoMethod(obj=%p, meth=0x%08x, value=0x%08x):\n", obj, meth, value);
+    value = DoMethod(obj, meth, value);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(value);
+}
+//-
 
 static PyGetSetDef boopsi_getseters[] = {
     {"_object", (getter)boopsi_get_object, NULL, "BOOPSI object address", NULL},
@@ -854,6 +981,8 @@ static struct PyMethodDef boopsi_methods[] = {
     {"_create", (PyCFunction) boopsi__create, METH_VARARGS, boopsi__create_doc},
     {"_get",    (PyCFunction) boopsi__get,    METH_VARARGS, boopsi__get_doc},
     {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
+    {"_do",     (PyCFunction) boopsi__do, METH_VARARGS, boopsi__do_doc},
+    {"_do1",    (PyCFunction) boopsi__do1,    METH_VARARGS, boopsi__do1_doc},
 
     {NULL, NULL} /* sentinel */
 };
@@ -902,6 +1031,188 @@ muiobject_dealloc(PyMUIObject *self)
     boopsi_dealloc((PyBOOPSIObject *)self);
 }
 //-
+//+ muiobject__nnset
+PyDoc_STRVAR(muiobject__nnset_doc,
+"_nnset(attr, value) -> None\n\
+\n\
+Like BOOPSIObject._set() but without triggering notification (MUI objects only).");
+
+static PyObject *
+muiobject__nnset(PyMUIObject *self, PyObject *args)
+{
+    Object *obj;
+    ULONG attr;
+    LONG value;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "IO&", &attr, py2long, &value)) /* BR */
+        return NULL;
+
+    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    nnset(obj, attr, value);
+    DPRINT("done\n");
+
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject_redraw
+PyDoc_STRVAR(muiobject_redraw_doc,
+"_redraw(flags) -> None\n\
+\n\
+Just direct call to MUI_Redraw(flags).");
+
+static PyObject *
+muiobject_redraw(PyMUIObject *self, PyObject *args)
+{
+    Object *obj;
+    ULONG flags = MADF_DRAWOBJECT;
+
+    if (!PyArg_ParseTuple(args, "|I", &flags))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    MUI_Redraw(obj, flags);
+
+    Py_RETURN_NONE;
+}
+//-
+
+//+ muiobject_redraw
+PyDoc_STRVAR(muiobject_redraw_doc,
+"_redraw(flags) -> None\n\
+\n\
+Just direct call to MUI_Redraw(flags).");
+
+static PyObject *
+muiobject_redraw(PyMUIObject *self, PyObject *args)
+{
+    Object *obj;
+    ULONG flags = MADF_DRAWOBJECT;
+
+    if (!PyArg_ParseTuple(args, "|I", &flags))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    MUI_Redraw(obj, flags);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject_get_data
+static PyObject *
+muiobject_get_data(PyObject *self, void *closure)
+{
+    Object *obj;
+    LONG data;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    switch ((int)closure) {
+        case PYMUI_DATA_MLEFT:   data = _mleft(obj); break;
+        case PYMUI_DATA_MRIGHT:  data = _mright(obj); break;
+        case PYMUI_DATA_MTOP:    data = _mtop(obj); break;
+        case PYMUI_DATA_MBOTTOM: data = _mbottom(obj); break;
+        case PYMUI_DATA_MWIDTH:  data = _mwidth(obj); break;
+        case PYMUI_DATA_MHEIGHT: data = _mheight(obj); break;
+
+        default:
+            return PyErr_Format(PyErr_SystemError, "[INTERNAL ERROR] bad closure given to muiobject_get_data()");
+    }
+    
+    return PyInt_FromLong(data);
+}
+//-
+//+ muiobject_get_mbox
+static PyObject *
+muiobject_get_mbox(PyObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    return Py_BuildValue("HHHH", _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj));
+}
+//-
+//+ muiobject_get_sdim
+static PyObject *
+muiobject_get_sdim(PyObject *self, void *closure)
+{
+    Object *obj;
+    struct Screen *scr;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    scr = _screen(obj);
+    if (NULL == scr) {
+        PyErr_SetString(PyExc_SystemError, "No valid Screen structure found");
+        return NULL;
+    }
+
+    if (0 == closure)
+        return PyInt_FromLong(scr->Width);
+    else
+        return PyInt_FromLong(scr->Height);
+}
+//-
+//+ muiobject_get_srange
+static PyObject *
+muiobject_get_srange(PyObject *self, void *closure)
+{
+    Object *obj;
+    struct Screen *scr;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    scr = _screen(obj);
+    if (NULL == scr) {
+        PyErr_SetString(PyExc_SystemError, "No valid Screen structure found");
+        return NULL;
+    }
+
+    if (0 == closure)
+        return PyInt_FromLong(scr->Width-1);
+    else
+        return PyInt_FromLong(scr->Height-1);
+}
+//-
+
+static PyGetSetDef muiobject_getseters[] = {
+    {"MLeft",   (getter)muiobject_get_data, NULL, "_mleft(obj)",   (APTR) PYMUI_DATA_MLEFT},
+    {"MRight",  (getter)muiobject_get_data, NULL, "_mright(obj)",  (APTR) PYMUI_DATA_MRIGHT},
+    {"MTop",    (getter)muiobject_get_data, NULL, "_mtop(obj)",    (APTR) PYMUI_DATA_MTOP},
+    {"MBottom", (getter)muiobject_get_data, NULL, "_mbottom(obj)", (APTR) PYMUI_DATA_MBOTTOM},
+    {"MWidth",  (getter)muiobject_get_data, NULL, "_mwidth(obj)",  (APTR) PYMUI_DATA_MWIDTH},
+    {"MHeight", (getter)muiobject_get_data, NULL, "_mheight(obj)", (APTR) PYMUI_DATA_MHEIGHT},
+    {"MBox",    (getter)muiobject_get_mbox,    NULL, "4-Tuple of the bounded box object values", NULL},
+    {"SWidth",  (getter)muiobject_get_sdim,    NULL, "Screen Width",   (APTR) 0},
+    {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
+    {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
+    {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
+    {NULL} /* sentinel */
+};
+
+static struct PyMethodDef muiobject_methods[] = {
+    {"_nnset", (PyCFunction) muiobject__nnset, METH_VARARGS, muiobject__nnset_doc},
+    {"Redraw", (PyCFunction) muiobject_redraw, METH_O, muiobject_redraw_doc},
+    {NULL} /* sentinel */
+};
 
 static PyTypeObject PyMUIObject_Type = {
     PyObject_HEAD_INIT(NULL)
@@ -917,9 +1228,9 @@ static PyTypeObject PyMUIObject_Type = {
     //tp_clear        : (inquiry)muiobject_clear,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
-    //tp_methods      : muiobject_methods,
+    tp_methods      : muiobject_methods,
     //tp_members      : muiobject_members,
-    //tp_getset       : muiobject_getseters,
+    tp_getset       : muiobject_getseters,
 };
 
 /*******************************************************************************************
