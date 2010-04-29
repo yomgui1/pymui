@@ -106,6 +106,10 @@ class c_Hook(c_PyObject):
     _argtypes_ = (long, long)
 
     def __new__(cl, *args, **kwds):
+        if len(args) == 1:
+            x = args[0]
+            if isinstance(x, (int, long)):
+                return x
         return c_PyObject.__new__(cl)
 
     def __init__(self, x=None, argstypes=None):
@@ -1640,11 +1644,11 @@ class List(Group): # TODO: unfinished
 
     @InsertSingle.alias
     def InsertSingle(self, meth, entry, pos=MUIV_List_Insert_Bottom):
-        return meth(self, x, pos)
+        return meth(self, entry, pos)
 
-    def InsertStrings(self, meth, s, pos=MUIV_List_Insert_Bottom):
+    def InsertSingleString(self, s, pos=MUIV_List_Insert_Bottom):
         x = c_STRPTR(s) # keep valid the ctypes object until the return
-        return meth(self, long(x), pos)
+        return self.InsertSingle(long(x), pos)
 
     cols = property(fget=lambda self: self.Format.value.count(',')+1)
 
