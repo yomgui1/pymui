@@ -1,2 +1,11 @@
+0.4:
+ - Complete re-write, API a bit changed.
+
+0.3:
+ - MCC, Hooks and aliases.
+
+0.2:
+ - more types and MCC
+
 0.1:
  - First public release
