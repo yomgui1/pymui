@@ -244,3 +244,71 @@ de destruction (DisposeObject(), ...) si l'objet Python est propriétaire.
 
 5) pb de la complexité d'implémentations des méthodes comme MUIM_List_Display avec des arguments aux types très variables.
 => à revoir.
+
+**********************************************************************************************************************************************************
+
+Comme d'hab.. j'ai tout ré-écris pour la v0.4!
+
+J'ai voulus trop 'gérer' les problèmes de destructions des objects, résultant un code trop complexe.
+Bien que c'est une ré-écriture (surtout du code C et des types), l'API vu de l'utilisateur reprend beaucoup de la v0.3.
+
+Quoi de neuf?
+
+1) Les conteneurs Python (PyBOOPSIObject et PyMUIObject) posséde un flag 'OWNER' si l'objet BOOPSI
+affecté a été créé par la méthode _create().
+
+On considère donc que ce flag permet de savoir si un objet n'est lié ** d'aucunes façons ** par
+un autre objet BOOPSI (dans ce cas cet objet sera responsable de détruire l'objet BOOPSI référé).
+
+Ce flag est perdu dans les cas suivant:
+- L'appel à la méthode '_loosed' du conteneur.
+- L'utilisation de la méthode '_addchild' d'un autre conteneur, pour créer une lisaison parent-enfant.
+
+Reste aux classes de pymui et aux utilisateurs d'appeler correctement ces fonctions pour indiquer
+à pymui si un objet doit ou non être détruit par lui.
+
+2) Les références des objet BOOPSI (ou MUI), créés par le module, sont gardés dans une liste comme avant.
+Lors du cleanup du module les objets de cette liste seront simplement détruits, à l'exception
+des objets MUI: une vérification est faite pour voir si il ne sont pas liés à un objet parent ou à une application.
+Les objets applications sont détruit en dernier (par définition, les applications n'ont pas de parent).
+
+3) En plus du flag OWNER mis, l'objet conteneur est gardé dans un dictionnaire liant un 'weakref'
+de cet objet (valeur) à l'adresse de l'objet BOOPSI (clé).
+
+L'entrée est enlévée si il y a perte du flag OWNER.
+
+Ce dictionnaire sera utile pour les Hooks (gestions méthode MUIM_CallHook et notifications).
+
+3) La liaison parent-enfant n'est plus sauvé en interne, vu que les noeuds objets ne reste que si
+l'objet n'est pas lié.
+
+4) Le flags OWNER n'est jamais redonné une fois perdu!
+Cela implique qu'à la suite de l'appel à la méthode '_remchild', l'objet BOOPSI peut se retrouvé
+perdu et non détruit à jamais si on n'appel pas '_addchild' ou '_dispose' sur le conteneur rapidement.
+Cela arrivera aussi si une exception intervient avant ces appels!
+=> Une solution pourra être trouvé par la suite... mais cela va forcement rendre plus complexe le code.
+
+5) Donc un objet BOOPSI ne sera disposé par le module que:
+
+- par l'appel explicite à la méthode '_dispose' (non conditionnel, attention donc !)
+- pendant la destruction du conteneur, si et seulement si le flag OWNER existe.
+- pendant le cleanup du module si l'objet est toujours dans la liste des objets non liés.
+et si l'objet est réellement non lié, pour les objets MUI uniquement.
+
+6) Les références des conteneurs ne sont toujours pas changées lors des utilisations dans
+les _set, _create et _do.
+
+7) Le système de 'keep' a changer:
+- soit l'utilisateur s'en occupte.
+- les classes définissant des attributs ayant besoins de garder l'objet source lors d'une affectation
+doivent l'indiquer dans la déclaration de l'attribut par l'appel à MAttribute().
+
+Mais les types C (PyMUIObject) n'interviennent plus dans le processus.
+
+=======
+
+Tout ceci à des impactes positives, par exemple l'ajout d'un 'RootObject' à une fenêtre
+n'implique plus de garder une référence au conteneur comme avant. '_loose()' est automatiquement
+appelé, le conteneur pert donc l'objet, il peut donc être détruit tranquillement ensuite.
+=> plus de mémoire, moins de perte inutile.
+=> c'est en plus le comportement 'logique' auquel on s'attend.

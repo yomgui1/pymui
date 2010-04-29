@@ -307,12 +307,13 @@ static void loose(PyBOOPSIObject *pObj)
     Object *bObj = PyBOOPSIObject_GET_OBJECT(pObj);
 
     if (PyBOOPSIObject_ISOWNER(pObj)) {
-        objdb_remove(bObj);
-
-        /* we suppose that loosing the owning supposes object to be disposed elsewhere */
-        dispose_node(pObj);
-
         PyBOOPSIObject_REM_FLAGS(pObj, FLAG_OWNER);
+
+        objdb_remove(bObj);
+        PyErr_Clear();
+
+        /* really loose it! */
+        dispose_node(pObj);
 
         DPRINT("PyObj %p-'%s' flags: $%08x\n", pObj, OBJ_TNAME(pObj), pObj->flags);
     }
@@ -356,7 +357,8 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
         DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
 
         /* Now delete the attached node */
-        dispose_node(pObj);
+        if (NULL != pObj->node) /* checked because the OWNER flag may have beem forced */
+            dispose_node(pObj);
     } else
         DPRINT("BOOPSI object not disposed (not owner)\n");
 
@@ -523,12 +525,16 @@ boopsi_get_object(PyBOOPSIObject *self)
 PyDoc_STRVAR(boopsi__dispose_doc,
 "_dispose() -> int\n\
 \n\
-If the Python owns the BOOPSI object, this method disposes it.\n\
-If not owner, it's a no-op.");
+This method force the BOOPSI object dispose.\n\
+Use it only if you know what you are doing!\n\
+This object may be disposed elsewhere, not neccessary by you your code...");
 
 static PyObject *
 boopsi__dispose(PyBOOPSIObject *self)
 {
+    /* Force the OWNER flag (removed during the disposing) */
+    PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+
     if (PyBOOPSIObject_DisposeObject(self))
         return NULL;
 
@@ -1214,7 +1220,7 @@ PyMorphOS_CloseModule(void)
             /* Python is not perfect, PyMUI not also and user design even less :-P
              * If PyMUI user has forgotten to 'loose' the owner flag or if Python hasn't
              * disposed all Python objects when module is cleaned, the object node is here.
-             * In anycases, the BOOPSI object is considered as owned and diposable.
+             * In anycase, the BOOPSI object is considered as owned and diposable.
              * But for MUIA_Parentobject, we can check if the object is really a child or not.
              * If it's a child, the object is not disposed.
              */

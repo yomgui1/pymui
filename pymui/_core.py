@@ -95,7 +95,7 @@ class c_MUIObject(_ct.py_object, PyMUICSimpleType):
 ################################################################################
 
 class MAttribute(property):
-    """MAttribute(id, isg, ctype, keep=None, doc=None, **kwds) -> instance
+    """MAttribute(id, isg, ctype, doc=None, **kwds) -> instance
 
     This class generates class properties to define MUI attributes when you wrap
     a MUI class with PyMUI. Just use it as the property Python class.
@@ -113,11 +113,8 @@ class MAttribute(property):
     Use the dot when the corresponding flags is not avaible, in the same way as
     documented in the library/mui.h file. Order doesn't matter, just presence or not.
     - ctype: [PyMUICType class] a PyMUICType class used to handle the MUI attribute value.
-    - keep: [bool or None] use it to force or not the object tracking scheme
-    (incref a Python object related the input value given during the init or set of
-    the attribute). None to let the atribute type decide what to do. True or False
-    to force to track or not track something related to the input
-
+    - keep: [bool] True if during an affectation the affected object shall be kept into
+    the contenainer _keep_db dict.
 
     Optional keywords:
 
@@ -136,7 +133,7 @@ class MAttribute(property):
     Other keywords are directly given to the property class __init__ constructor.
     """
     
-    def __init__(self, id, isg, ctype, keep=None, **kwds):
+    def __init__(self, id, isg, ctype, keep=False, **kwds):
         assert issubclass(ctype, PyMUICType)
         
         self.__isg = isg
@@ -145,18 +142,21 @@ class MAttribute(property):
 
         if 'i' in isg:
             def _init(obj, x):
-                return long(x if isinstance(x, ctype) else ctype(x))
+                x = x if isinstance(x, ctype) else ctype(x)
+                if keep: self._keep_db[id] = x
+                return long(x)
         else:
             def _init(*args):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
 
         if 's' in isg:
             def _setter(obj, x, nn=False):
-                x = long(x if isinstance(x, ctype) else ctype(x))
+                x = x if isinstance(x, ctype) else ctype(x)
+                if keep: self._keep_db[id] = x
                 if nn:
-                    obj._nnset(id, x)
+                    obj._nnset(id, long(x))
                 else:
-                    obj._set(id, x)
+                    obj._set(id, long(x))
         else:
             _setter = None
 
@@ -283,7 +283,7 @@ class MMethod(property):
                     msg[0] = id # MethodID
 
                     args = list(args)
-                    keep = []
+                    keep = [] # to keep valid temporary objets during the _do call.
                     for i, field in enumerate(fields):
                         o = args.pop(0)
                         if not isinstance(o, field[1]):
@@ -531,6 +531,7 @@ class BOOPSIRootClass(PyBOOPSIObject, BOOPSIMixin):
         return PyBOOPSIObject.__new__(cl, kwds.pop('_address', 0))
 
     def __init__(self, **kwds):
+        self._keep_db = {}
         PyBOOPSIObject.__init__(self)
 
 #===============================================================================
@@ -547,7 +548,7 @@ class Notify(PyMUIObject, BOOPSIMixin):
     ApplicationObject = MAttribute(MUIA_ApplicationObject, '..g', c_MUIObject)
     AppMessage        = MAttribute(MUIA_AppMessage,        '..g', c_APTR)
     HelpLine          = MAttribute(MUIA_HelpLine,          'isg', c_LONG)
-    HelpNode          = MAttribute(MUIA_HelpNode,          'isg', c_STRPTR)
+    HelpNode          = MAttribute(MUIA_HelpNode,          'isg', c_STRPTR, keep=True)
     NoNotify          = MAttribute(MUIA_NoNotify,          '.s.', c_BOOL)
     NoNotifyMethod    = MAttribute(MUIA_NoNotifyMethod,    '.s.', c_ULONG)
     ObjectID          = MAttribute(MUIA_ObjectID,          'isg', c_ULONG)
@@ -568,6 +569,7 @@ class Notify(PyMUIObject, BOOPSIMixin):
         self.postcreate(**kwds)
         
     def precreate(self, **kwds):
+        self._keep_db = {}
         PyMUIObject.__init__(self)
         
     def postcreate(self, **kwds): pass
@@ -591,34 +593,34 @@ class Application(Notify): # TODO: unfinished
     CLASSID = MUIC_Application
 
     Active         = MAttribute(MUIA_Application_Active,         'isg', c_BOOL)
-    Author         = MAttribute(MUIA_Application_Author,         'i.g', c_STRPTR)
-    Base           = MAttribute(MUIA_Application_Base,           'i.g', c_STRPTR)
+    Author         = MAttribute(MUIA_Application_Author,         'i.g', c_STRPTR, keep=True)
+    Base           = MAttribute(MUIA_Application_Base,           'i.g', c_STRPTR, keep=True)
     Broker         = MAttribute(MUIA_Application_Broker,         '..g', c_APTR)
-    BrokerHook     = MAttribute(MUIA_Application_BrokerHook,     'isg', c_Hook)
+    BrokerHook     = MAttribute(MUIA_Application_BrokerHook,     'isg', c_Hook, keep=True)
     BrokerPort     = MAttribute(MUIA_Application_BrokerPort,     '..g', c_APTR)
     BrokerPri      = MAttribute(MUIA_Application_BrokerPri,      'i.g', c_LONG)
-    Commands       = MAttribute(MUIA_Application_Commands,       'isg', c_APTR)
-    Copyright      = MAttribute(MUIA_Application_Copyright,      'i.g', c_STRPTR)
-    Description    = MAttribute(MUIA_Application_Description,    'i.g', c_STRPTR)
-    DiskObject     = MAttribute(MUIA_Application_DiskObject,     'isg', c_APTR)
+    Commands       = MAttribute(MUIA_Application_Commands,       'isg', c_APTR, keep=True)
+    Copyright      = MAttribute(MUIA_Application_Copyright,      'i.g', c_STRPTR, keep=True)
+    Description    = MAttribute(MUIA_Application_Description,    'i.g', c_STRPTR, keep=True)
+    DiskObject     = MAttribute(MUIA_Application_DiskObject,     'isg', c_APTR, keep=True)
     DoubleStart    = MAttribute(MUIA_Application_DoubleStart,    '..g', c_BOOL)
     DropObject     = MAttribute(MUIA_Application_DropObject,     'is.', c_MUIObject, postSet=postset_child)
     ForceQuit      = MAttribute(MUIA_Application_ForceQuit,      '..g', c_BOOL)
-    HelpFile       = MAttribute(MUIA_Application_HelpFile,       'isg', c_STRPTR)
+    HelpFile       = MAttribute(MUIA_Application_HelpFile,       'isg', c_STRPTR, keep=True)
     Iconified      = MAttribute(MUIA_Application_Iconified,      '.sg', c_BOOL)
     MenuAction     = MAttribute(MUIA_Application_MenuAction,     '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp,       '..g', c_ULONG)
     Menustrip      = MAttribute(MUIA_Application_Menustrip,      'i..', c_MUIObject, postSet=postset_child)
-    RexxHook       = MAttribute(MUIA_Application_RexxHook,       'isg', c_Hook)
+    RexxHook       = MAttribute(MUIA_Application_RexxHook,       'isg', c_Hook, keep=True)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg,        '..g', c_APTR)
-    RexxString     = MAttribute(MUIA_Application_RexxString,     '.s.', c_STRPTR)
+    RexxString     = MAttribute(MUIA_Application_RexxString,     '.s.', c_STRPTR, keep=True)
     SingleTask     = MAttribute(MUIA_Application_SingleTask,     'i..', c_BOOL)
     Sleep          = MAttribute(MUIA_Application_Sleep,          '.s.', c_BOOL)
-    Title          = MAttribute(MUIA_Application_Title,          'i.g', c_STRPTR)
+    Title          = MAttribute(MUIA_Application_Title,          'i.g', c_STRPTR, keep=True)
     UseCommodities = MAttribute(MUIA_Application_UseCommodities, 'i..', c_BOOL)
-    UsedClasses    = MAttribute(MUIA_Application_UsedClasses,    'isg', c_pSTRPTR)
+    UsedClasses    = MAttribute(MUIA_Application_UsedClasses,    'isg', c_pSTRPTR, keep=True)
     UseRexx        = MAttribute(MUIA_Application_UseRexx,        'i..', c_BOOL)
-    Version        = MAttribute(MUIA_Application_Version,        'i.g', c_STRPTR)
+    Version        = MAttribute(MUIA_Application_Version,        'i.g', c_STRPTR, keep=True)
     Window         = MAttribute(MUIA_Application_Window,         'i..', c_MUIObject, postSet=postset_child)
     WindowList     = MAttribute(MUIA_Application_WindowList,     '..g', c_pList)
 
@@ -707,16 +709,16 @@ class Window(Notify): # TODO: unfinished
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
-    PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
-    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject)
+    PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR, keep=True)
+    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject, keep=True)
     RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=postset_child)
-    Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
-    ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
+    Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR, keep=True)
+    ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR, keep=True)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
     SizeRight               = MAttribute(MUIA_Window_SizeRight               , 'i..', c_BOOL)
     Sleep                   = MAttribute(MUIA_Window_Sleep                   , '.sg', c_BOOL)
     TabletMessages          = MAttribute(MUIA_Window_TabletMessages          , 'i.g', c_BOOL)
-    Title                   = MAttribute(MUIA_Window_Title                   , 'isg', c_STRPTR)
+    Title                   = MAttribute(MUIA_Window_Title                   , 'isg', c_STRPTR, keep=True)
     TopEdge                 = MAttribute(MUIA_Window_TopEdge                 , 'i.g', c_LONG)
     UseBottomBorderScroller = MAttribute(MUIA_Window_UseBottomBorderScroller , 'isg', c_BOOL)
     UseLeftBorderScroller   = MAttribute(MUIA_Window_UseLeftBorderScroller   , 'isg', c_BOOL)
@@ -901,7 +903,7 @@ class c_EventHandlerNode(c_STRUCTURE):
 class Area(Notify): # TODO: unfinished
     CLASSID = MUIC_Area
 
-    Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR)
+    Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR, keep=True)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
     ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=postset_child)
     ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
@@ -913,14 +915,14 @@ class Area(Notify): # TODO: unfinished
     Dropable           = MAttribute(MUIA_Dropable           , 'isg', c_BOOL)
     FillArea           = MAttribute(MUIA_FillArea           , 'is.', c_BOOL)
     FixHeight          = MAttribute(MUIA_FixHeight          , 'i..', c_LONG)
-    FixHeightTxt       = MAttribute(MUIA_FixHeightTxt       , 'i..', c_STRPTR)
+    FixHeightTxt       = MAttribute(MUIA_FixHeightTxt       , 'i..', c_STRPTR, keep=True)
     FixWidth           = MAttribute(MUIA_FixWidth           , 'i..', c_LONG)
-    FixWidthTxt        = MAttribute(MUIA_FixWidthTxt        , 'i..', c_STRPTR)
-    Font               = MAttribute(MUIA_Font               , 'i.g', c_pTextFont)
+    FixWidthTxt        = MAttribute(MUIA_FixWidthTxt        , 'i..', c_STRPTR, keep=True)
+    Font               = MAttribute(MUIA_Font               , 'i.g', c_pTextFont, keep=True)
     Frame              = MAttribute(MUIA_Frame              , 'i..', c_LONG)
     FrameDynamic       = MAttribute(MUIA_FrameDynamic       , 'isg', c_BOOL)
     FramePhantomHoriz  = MAttribute(MUIA_FramePhantomHoriz  , 'i..', c_BOOL)
-    FrameTitle         = MAttribute(MUIA_FrameTitle         , 'i..', c_STRPTR)
+    FrameTitle         = MAttribute(MUIA_FrameTitle         , 'i..', c_STRPTR, keep=True)
     FrameVisible       = MAttribute(MUIA_FrameVisible       , 'isg', c_BOOL)
     Height             = MAttribute(MUIA_Height             , '..g', c_LONG)
     HorizDisappear     = MAttribute(MUIA_HorizDisappear     , 'isg', c_LONG)
@@ -936,7 +938,7 @@ class Area(Notify): # TODO: unfinished
     Pressed            = MAttribute(MUIA_Pressed            , '..g', c_BOOL)
     RightEdge          = MAttribute(MUIA_RightEdge          , '..g', c_LONG)
     Selected           = MAttribute(MUIA_Selected           , 'isg', c_BOOL)
-    ShortHelp          = MAttribute(MUIA_ShortHelp          , 'isg', c_STRPTR)
+    ShortHelp          = MAttribute(MUIA_ShortHelp          , 'isg', c_STRPTR, keep=True)
     ShowMe             = MAttribute(MUIA_ShowMe             , 'isg', c_BOOL)
     ShowSelState       = MAttribute(MUIA_ShowSelState       , 'i..', c_BOOL)
     Timer              = MAttribute(MUIA_Timer              , '..g', c_LONG)
@@ -1006,7 +1008,7 @@ class Area(Notify): # TODO: unfinished
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
 
-    Name = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR)
+    Name = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
 
     def __init__(self, Name=None, **kwds):
         if Name: kwds['Name'] = Name
@@ -1017,7 +1019,7 @@ class Dtpic(Area):
 class Rectangle(Area):
     CLASSID = MUIC_Rectangle
 
-    BarTitle = MAttribute(MUIA_Rectangle_BarTitle, 'i.g', c_STRPTR)
+    BarTitle = MAttribute(MUIA_Rectangle_BarTitle, 'i.g', c_STRPTR, keep=True)
     HBar     = MAttribute(MUIA_Rectangle_HBar,     'i.g', c_BOOL)
     VBar     = MAttribute(MUIA_Rectangle_VBar,     'i.g', c_BOOL)
 
