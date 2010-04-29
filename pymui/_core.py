@@ -473,7 +473,7 @@ def postset_child(self, attr, o):
 
 #===============================================================================
 
-class BOOPSIMixin:
+class PyMUIBase:
     @classmethod
     def _getMA(cl, o):
         if isinstance(o, str):
@@ -566,6 +566,10 @@ class BOOPSIMixin:
     def Dispose(self):
         self._dispose()
 
+    def Coerce(self, cl):
+        assert isinstance(cl, PyMUIBase)
+        return cl(_address=self._object)
+
 
 ################################################################################
 #### Official Public Classes
@@ -573,7 +577,7 @@ class BOOPSIMixin:
 
 #===============================================================================
 
-class BOOPSIRootClass(PyBOOPSIObject, BOOPSIMixin):
+class BOOPSIRootClass(PyBOOPSIObject, PyMUIBase):
     """rootclass for all BOOPSI sub-classes.
 
     ATTENTION: You can't create instance of this class!
@@ -594,7 +598,7 @@ class BOOPSIRootClass(PyBOOPSIObject, BOOPSIMixin):
 
 class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR.PointerType())
 
-class Notify(PyMUIObject, BOOPSIMixin):
+class Notify(PyMUIObject, PyMUIBase):
     """rootclass for all MUI sub-classes.
     """
     
