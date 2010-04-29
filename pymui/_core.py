@@ -649,8 +649,19 @@ class Notify(PyMUIObject, PyMUIBase):
                      self.__class__._MCC_,
                      getattr(self.__class__, '__pymui_overloaded__', {}))
 
+    def NNSet(self, attr, v):
+        self._getMA(attr).setter(self, v, nn=True)
+
     def KillApp(self):
-        self.ApplicationObject.value.Quit()
+        app = self.ApplicationObject.value
+        assert isinstance(app, Application)
+        app.Quit()
+
+    def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *args, **kwds):
+        # TODO
+        assert callable(callback)
+        attr = self._getMA(attr)
+        assert 's' in attr.isg or 'g' in attr.isg
         
 #===============================================================================
 

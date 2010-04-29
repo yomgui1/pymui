@@ -248,6 +248,7 @@ static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
 static struct MinList gObjectList;
+static struct Hook OnAttrChangedHook;
 
 
 /*
@@ -410,7 +411,7 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 
     DPRINT("hook: %p, self: %p\n", hook, self);
 
-    if (!gModuleIsValid) {
+    if (!ATOMIC_FETCH(&gModuleIsValid)) {
         dprintf("Warning: PyMUI CHookObject called during PyMUI closing.");
         return 0;
     }
@@ -440,6 +441,44 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
     PyGILState_Release(gstate);
 
     return result;
+}
+//-
+//+ OnAttrChanged
+static void
+OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
+    PyObject *pyo = (PyObject *)args[0];
+    ULONG attr = args[1];
+    ULONG value = args[2];
+
+    /* As notifications are not removed, they can occures during the module cleanup
+     * caused during objects disposing (strange, but ...).
+     * So, we protect the code aginst that.
+     */
+    if (!ATOMIC_FETCH(&gModuleIsValid))
+        pyo = NULL;
+
+    /* In case of the Python object die before the MUI object */
+    if (NULL != pyo) {
+        PyObject *res;
+        PyGILState_STATE gstate;
+
+        gstate = PyGILState_Ensure();
+        Py_INCREF(pyo); /* to prevent that our object was deleted during methods calls */
+
+        DPRINT("{%#lx} Py=%p-%s, MUI=%p, value=(%ld, %lu, %p)\n",
+               attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
+
+        res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, value, ~value); /* NR */
+        DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
+
+        if (PyErr_Occurred() && (NULL != gApp))
+            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+
+        Py_XDECREF(res);
+        Py_DECREF(pyo);
+
+        PyGILState_Release(gstate);
+    }
 }
 //-
 
@@ -1082,6 +1121,43 @@ muiobject_redraw(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ muiobject__notify
+PyDoc_STRVAR(muiobject__notify_doc,
+"_notify(trigattr, trigvalue) -> None\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+muiobject__notify(PyMUIObject *self, PyObject *args)
+{
+    ULONG trigattr, trigvalue, value;
+    Object *mo;
+
+    mo = PyBOOPSIObject_GetObject((PyObject *)self);
+    if (NULL == mo)
+        return NULL;
+
+    trigvalue = MUIV_EveryTime;
+    if (!PyArg_ParseTuple(args, "I|I", &trigattr, &trigvalue)) /* BR */
+        return NULL;
+
+    DPRINT("MO: %p, trigattr: %#lx, trigvalue: %ld, %lu, %#lx\n",
+           mo, trigattr, (LONG)trigvalue, trigvalue, trigvalue);
+
+    if (MUIV_EveryTime == trigvalue)
+        value = MUIV_TriggerValue;
+    else
+        value = trigvalue;
+
+    DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
+             MUIV_Notify_Self, 5,
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) /*TODO*/, trigattr, value);
+
+    DPRINT("done\n");
+
+    Py_RETURN_NONE;
+}
+//-
 
 //+ muiobject_redraw
 PyDoc_STRVAR(muiobject_redraw_doc,
@@ -1619,6 +1695,7 @@ INITFUNC(void) {
     PyObject *m, *d;
 
     NEWLIST((struct List *)&gObjectList);
+    INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
 
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL != MUIMasterBase) {
