@@ -1,7 +1,5 @@
-# Raw way to use PyMUI
-
 ###############################################################################
-# Copyright (c) 2009 Guillaume Roguez
+# Copyright (c) 2009-2010 Guillaume Roguez
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -25,30 +23,42 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
+## Functional usage of PyMUI 
+#
+# This example just open a window with only a text button gadget inside.
+#
+# Quit the program by closing the window or send CTRLC signal in the console.
+#
+
+# Importing all pymui API
 from pymui import *
 
-app = Application()  
+### Objects creation ###
 
-button = Text(MUIX_C + "Ok",
-              Background  = MUII_ButtonBack,
-              InputMode   = MUIV_InputMode_RelVerify,
-              Frame       = MUIV_Frame_Button,
-              Font        = MUIV_Font_Button,
-              HiChar      = 'o',
-              ControlChar = 'o')
-button.Notify(MUIA_Pressed, False, app.Quit)
+# A little button
+but = SimpleButton('Hello, World!')
 
-win = Window("HelloWorld window",
+# The window (using the previous button as root object)
+win = Window('HelloWorld window - functionnal version - PyMUI demo test',
+             CloseOnReq = True, # Close the window if window close button is pressed
              LeftEdge   = MUIV_Window_LeftEdge_Moused,
              TopEdge    = MUIV_Window_TopEdge_Moused,
-             RootObject = button,
+             RootObject = but,
              Width      = 320,
-             Height     = 240)
+             Height     = 64)
 
-app.AddWindow(win)
+# Creating an Application object
+# Adding the previous created window as the main window of the application
+# A main window closes the application when the window is closed.
+app = Application(MainWindow=win,
+                  Title="HelloWorld",
+                  Author = "Guillaume ROGUEZ",
+                  Description="Simple functional usage of PyMUI",
+                  Copyright="(c) 2009-2010, Guillaume ROGUEZ",
+                  Base="PyMUI_HelloWorld")
 
-win.Notify(MUIA_Window_CloseRequest, MUIV_EveryTime, app.Quit)
-win.Open()
+# Open it
+win.Open = True
 
+# Run the mainloop
 app.Run()
-del app

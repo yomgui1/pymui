@@ -305,6 +305,9 @@ doivent l'indiquer dans la déclaration de l'attribut par l'appel à MAttribute().
 
 Mais les types C (PyMUIObject) n'interviennent plus dans le processus.
 
+8) Par design il ne doit être possible de créer un conteneur sans le flag OWNER, si
+un conteneur ayant ce flag pour le même objet BOOPSI existe.
+
 =======
 
 Tout ceci à des impactes positives, par exemple l'ajout d'un 'RootObject' à une fenêtre

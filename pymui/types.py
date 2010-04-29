@@ -26,7 +26,6 @@
 
 import ctypes as _ct
 from ctypes import addressof, string_at
-from pymui._muimaster import _ptr2pyobj, _CHook
 
 class PyMUICType(object):
     __ptr_dict = {}
@@ -35,7 +34,8 @@ class PyMUICType(object):
     def __long__(self):
         raise NotImplemented("type doesn't implement __long__ method")
 
-    def FromLong(self, v):
+    @classmethod
+    def FromLong(cl, v):
         raise NotImplemented("type doesn't implement FromLong method")
 
     @classmethod
@@ -62,15 +62,17 @@ class PyMUICSimpleType(PyMUICType):
     def __long__(self):
         return self.value or 0
 
-    def FromLong(self, v):
-        self.value = v
+    @classmethod
+    def FromLong(cl, v):
+        return cl(v)
 
 class PyMUICPointerType(PyMUICType):
     def __long__(self):
         return _ct.cast(self, _ct.c_void_p).value or 0
 
-    def FromLong(self, v):
-        _ct.cast(self, _ct.c_void_p).value = v
+    @classmethod
+    def FromLong(cl, v):
+        return cl(v)
 
 class PyMUICArrayType(PyMUICType):
     def __long__(self):
@@ -118,16 +120,6 @@ class c_CONST_STRPTR(c_STRPTR):
     def __setitem__(self, i, v):
         raise NotImplemented("CONST_STRPRT cannot be changed")
 
-class c_PyObject(_ct.py_object, PyMUICSimpleType):
-    def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
-
-    def FromLong(self, v):
-        self.value = _ptr2pyobj(v)
-
-    def __getitem__(self, i):
-        return self.value[i]
-
 class c_STRUCTURE(_ct.Structure, PyMUICType): pass
 class c_UNION(_ct.Union, PyMUICType): pass
 
@@ -144,52 +136,6 @@ class c_TagItem(c_STRUCTURE):
                  ('ti_Data', c_ULONG) ]
 
 class c_BOOL(c_LONG): pass
-
-class c_Hook(c_PyObject):
-    _argtypes_ = (long, long)
-
-    def __new__(cl, *args, **kwds):
-        return c_PyObject.__new__(cl)
-
-    def __init__(self, x=None, argstypes=None):
-        if x:
-            if argstypes is None:
-                argstypes = self._argtypes_
-
-            if argstypes[0] is None:
-                if argstypes[1] is None:
-                    f = lambda a, b: x()
-                elif argstypes[1] is long:
-                    f = lambda a, b: x(b)
-                else:
-                    f = lambda a, b: x(argstypes[1].FromLong(b))
-            elif argstypes[1] is None:
-                if argstypes[0] is long:
-                    f = lambda a, b: x(a)
-                else:
-                    f = lambda a, b: x(argstypes[0].FromLong(a))
-            else:
-                if argstypes[0] is long:
-                    if argstypes[1] is long:
-                        f = lambda a, b: x(a, b)
-                    else:
-                        f = lambda a, b: x(a, argstypes[1].FromLong(b))
-                elif argstypes[1] is long:
-                    f = lambda a, b: x(argstypes[0].FromLong(a), b)
-                else:
-                    f = lambda a, b: x(argstypes[0].FromLong(a), argstypes[1].FromLong(b))
-
-            c_PyObject.__init__(self, _CHook(f))
-        else:
-            c_PyObject.__init__(self)
-
-    def __long__(self):
-        x = self.value
-        return (0 if x is None else x.address)
-
-    @classmethod
-    def FromLong(cl, v):
-        return cl(_CHook(v))
 
 c_pSTRPTR = c_STRPTR.PointerType()
 
@@ -218,6 +164,8 @@ class c_Message(c_STRUCTURE):
 ################################################################################
     
 if __name__ == '__main__':
+    from sys import getrefcount as rc
+    
     o = c_STRPTR('toto') # Shall return a CONST_STRPTR
     assert isinstance(o, PyMUICType)
     assert isinstance(o, PyMUICSimpleType)
@@ -257,5 +205,11 @@ if __name__ == '__main__':
     assert isinstance(p, PyMUICType)
     assert isinstance(p, PyMUICPointerType)
     assert p[0].value == -1
+
+    o = c_STRPTR('tutu')
+    cnt = rc(o)
+    p = c_APTR(long(o))
+    assert long(p) == long(o)
+    assert rc(o) == cnt
     
     print "Everything is OK"
