@@ -23,7 +23,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ******************************************************************************/
 
-// Dev Notes:
+// Dev Notes (outdated):
 //
 // ** Fundamentables in design **
 //
@@ -1318,24 +1318,31 @@ INITFUNC(void) {
                 /* object -> pyobject database */
                 d = PyDict_New(); /* NR */
                 if (NULL != d) {
-                    /* New Python types initialization */
-                    if (!PyType_Ready(&PyBOOPSIObject_Type)) {
-                        if (!PyType_Ready(&PyMUIObject_Type)) {
-                            if (!PyType_Ready(&CHookObject_Type)) {
-                                /* Module creation/initialization */
-                                m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
-                                if (!all_ins(m)) {
-                                    ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
-                                    ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
-                                    ADD_TYPE(m, "_CHook", &CHookObject_Type);
+                    int error = 0;
 
-                                    PyModule_AddObject(m, "_obj_dict", d);
-                                    
-                                    gBOOPSI_Objects_Dict = d;
-                                    gModuleIsValid = TRUE;
-                                    return;
-                                }
+                    /* New Python types initialization */
+                    error |= PyType_Ready(&PyBOOPSIObject_Type);
+                    error |= PyType_Ready(&PyMUIObject_Type);
+                    error |= PyType_Ready(&CHookObject_Type);
+
+                    if (!error) {
+                        /* Module creation/initialization */
+                        m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
+                        if (NULL != m) {
+                            error = all_ins(m);
+                            if (!error) {
+                                ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
+                                ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
+                                ADD_TYPE(m, "_CHook", &CHookObject_Type);
+                        
+                                PyModule_AddObject(m, "_obj_dict", d);
+                        
+                                gBOOPSI_Objects_Dict = d;
+                                gModuleIsValid = TRUE;
+                                return;
                             }
+
+                            Py_DECREF(m);
                         }
                     }
 

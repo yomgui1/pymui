@@ -220,9 +220,7 @@ class MAttribute(property):
 
         if 'g' in isg:
             def _getter(obj):
-                o = ctype()
-                o.FromLong(obj._get(id))
-                return o
+                return ctype.FromLong(obj._get(id))
         else:
             _getter = None
 
@@ -424,9 +422,9 @@ class BOOPSIMetaClass(type):
 
 class MUIMetaClass(BOOPSIMetaClass):
     def __new__(metacl, name, bases, dct):
-        dct['isMCC'] = bool(dct.pop('MCC', False))
+        dct['_MCC_'] = bool(dct.pop('_MCC_', False))
 
-        if dct['isMCC']:
+        if dct['_MCC_']:
             if not any(hasattr(base, '__pymui_overloaded__') for base in bases):
                 dct['__pymui_overloaded__'] = {}
 
@@ -643,7 +641,9 @@ class Notify(PyMUIObject, BOOPSIMixin):
             attr = self._getMAByName(k)
             muiargs.append( (attr.id, attr.init(self, v)) )
         
-        self._create(self._bclassid, muiargs + extra)
+        self._create(self._bclassid, muiargs + extra,
+                     self.__class__._MCC_,
+                     getattr(self.__class__, '__pymui_overloaded__', {}))
 
     def KillApp(self):
         self.ApplicationObject.value.Quit()

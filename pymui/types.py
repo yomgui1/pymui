@@ -211,5 +211,9 @@ if __name__ == '__main__':
     p = c_APTR(long(o))
     assert long(p) == long(o)
     assert rc(o) == cnt
+
+    x = id('bla')
+    o = c_STRPTR(x)
+    assert long(o) == x
     
     print "Everything is OK"
