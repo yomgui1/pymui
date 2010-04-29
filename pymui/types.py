@@ -72,7 +72,7 @@ class PyMUICPointerType(PyMUICType):
 
     @classmethod
     def FromLong(cl, v):
-        return cl(v)
+        return _ct.cast(_ct.c_void_p(v), cl)
 
 class PyMUICArrayType(PyMUICType):
     def __long__(self):
@@ -137,7 +137,18 @@ class c_TagItem(c_STRUCTURE):
 
 class c_BOOL(c_LONG): pass
 
-c_pSTRPTR = c_STRPTR.PointerType()
+class c_pSTRPTR(c_STRPTR.PointerType()):
+    _type_ = c_STRPTR
+
+    def __init__(self, x=None):
+        # Accept tuple/list as initiator
+        if isinstance(x, (list, tuple)):
+            x = c_STRPTR.ArrayType(len(x))(*x)
+            super(c_pSTRPTR, self).__init__(x[0])
+        elif x is not None:
+            super(c_pSTRPTR, self).__init__(x)
+        else:
+            super(c_pSTRPTR, self).__init__()
 
 class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
@@ -215,5 +226,12 @@ if __name__ == '__main__':
     x = id('bla')
     o = c_STRPTR(x)
     assert long(o) == x
-    
+
+    x = ['one', 'two', 'three', None]
+    o = c_pSTRPTR(x)
+    assert long(o) != 0
+    v = o[:4]
+    assert len(v) == 4
+    assert [o.value for o in v] == x
+
     print "Everything is OK"

@@ -66,8 +66,8 @@ class c_PyObject(_ct.py_object, PyMUICSimpleType):
         return _ct.c_ulong.from_address(addressof(self)).value
 
     @classmethod
-    def FromLong(self, v):
-        return _muimaster._ptr2pyobj(v)
+    def FromLong(cl, v):
+        return cl(_muimaster._ptr2pyobj(v))
 
     def __getitem__(self, i):
         return self.value[i]
@@ -84,8 +84,8 @@ class c_Object(_ct.py_object, PyMUICSimpleType):
         return self.value._object
 
     @classmethod
-    def FromLong(self, v):
-        return _muimaster._ptr2pyboopsi(v)
+    def FromLong(cl, v):
+        return cl(_muimaster._ptr2pyboopsi(v))
 
 class c_MUIObject(_ct.py_object, PyMUICSimpleType):
     def __new__(cl, x=None):
@@ -99,8 +99,8 @@ class c_MUIObject(_ct.py_object, PyMUICSimpleType):
         return self.value._object
 
     @classmethod
-    def FromLong(self, v):
-        return _muimaster._ptr2pymui(v)
+    def FromLong(cl, v):
+        return cl(_muimaster._ptr2pymui(v))
 
 class c_Hook(c_PyObject):
     _argtypes_ = (long, long)
@@ -147,6 +147,7 @@ class c_Hook(c_PyObject):
     @classmethod
     def FromLong(cl, v):
         return cl(_muimaster._CHook(v))
+
 
 ################################################################################
 #### PyMUI internal base classes and routines
@@ -201,7 +202,7 @@ class MAttribute(property):
         if 'i' in isg:
             def _init(obj, x):
                 x = x if isinstance(x, ctype) else ctype(x)
-                if keep: self._keep_db[id] = x
+                if keep: obj._keep_db[id] = x
                 return long(x)
         else:
             def _init(*args):
@@ -210,7 +211,7 @@ class MAttribute(property):
         if 's' in isg:
             def _setter(obj, x, nn=False):
                 x = x if isinstance(x, ctype) else ctype(x)
-                if keep: self._keep_db[id] = x
+                if keep: obj._keep_db[id] = x
                 if nn:
                     obj._nnset(id, long(x))
                 else:
@@ -260,11 +261,11 @@ class MAttribute(property):
                 preGet(obj, self)
                 return postGet(obj, self, _getter(obj))
         elif preGet:
-            def getter(obj, v):
+            def getter(obj):
                 preGet(obj, self)
                 return _getter(obj)
         elif postGet:
-            def getter(obj, v):
+            def getter(obj):
                 return postGet(obj, self, _getter(obj))
         else:
             getter = _getter
@@ -1604,22 +1605,23 @@ class List(Group): # TODO: unfinished
     SelectChange     = MAttribute(MUIA_List_SelectChange,   '..g', c_BOOL)
     ShowDropMarks    = MAttribute(MUIA_List_ShowDropMarks,  'isg', c_BOOL)
     SourceArray      = MAttribute(MUIA_List_SourceArray,    'i..', c_APTR)
-    Title            = MAttribute(MUIA_List_Title,          'isg', c_ListTitle, keep=True)
+    Title            = MAttribute(MUIA_List_Title,          'isg', c_STRPTR, keep=True)
     TitleClick       = MAttribute(MUIA_List_TitleClick,     '..g', c_LONG)
     Visible          = MAttribute(MUIA_List_Visible,        '..g', c_LONG)
 
     Clear              = MMethod(MUIM_List_Clear)
-    CreateImage        = MMethod(MUIM_List_CreateImage,  [ ('obj', c_MUIObject), ('flags', c_ULONG) ], retype=c_APTR)
-    DeleteImage        = MMethod(MUIM_List_DeleteImage,  [ ('listimg', c_APTR) ])
     Compare            = MMethod(MUIM_List_Compare,      [ ('entry1', c_APTR), ('entry2', c_APTR) ], rettype=c_LONG)
     Construct          = MMethod(MUIM_List_Construct,    [ ('entry', c_APTR), ('pool', c_APTR) ], rettype=c_APTR)
+    CreateImage        = MMethod(MUIM_List_CreateImage,  [ ('obj', c_MUIObject), ('flags', c_ULONG) ], retype=c_APTR)
+    DeleteImage        = MMethod(MUIM_List_DeleteImage,  [ ('listimg', c_APTR) ])
     Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
     Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
+    GetEntry           = MMethod(MUIM_List_GetEntry,     [ ('pos', c_LONG), ('entry', c_APTR.PointerType()) ])
     Insert             = MMethod(MUIM_List_Insert,       [ ('entries', c_APTR), ('count', c_LONG), ('pos', c_LONG) ])
     InsertSingle       = MMethod(MUIM_List_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ])
     Jump               = MMethod(MUIM_List_Jump,         [ ('pos', c_LONG) ])
+    Remove             = MMethod(MUIM_List_Remove,       [ ('pos', c_LONG) ])
     Sort               = MMethod(MUIM_List_Sort)
-    GetEntry           = MMethod(MUIM_List_GetEntry,     [ ('pos', c_LONG), ('entry', c_APTR._PointerType()) ])
 
     def __init__(self, **kwds):
         kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
@@ -1637,7 +1639,10 @@ class List(Group): # TODO: unfinished
         return meth(self, long(x), n, pos)
 
     @InsertSingle.alias
-    def InsertSingleString(self, meth, s, pos=MUIV_List_Insert_Bottom):
+    def InsertSingle(self, meth, entry, pos=MUIV_List_Insert_Bottom):
+        return meth(self, x, pos)
+
+    def InsertStrings(self, meth, s, pos=MUIV_List_Insert_Bottom):
         x = c_STRPTR(s) # keep valid the ctypes object until the return
         return meth(self, long(x), pos)
 
@@ -1821,7 +1826,7 @@ class Listview(Group):
     DoubleClick    = MAttribute(MUIA_Listview_DoubleClick,    'i.g', c_BOOL)
     DragType       = MAttribute(MUIA_Listview_DragType,       'isg', c_LONG)
     Input          = MAttribute(MUIA_Listview_Input,          'i..', c_BOOL)
-    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=_postSet_Child)
+    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=postset_child)
     MultiSelect    = MAttribute(MUIA_Listview_MultiSelect,    'i..', c_LONG)
     ScollerPos     = MAttribute(MUIA_Listview_ScrollerPos,    'i..', c_BOOL)
     SelectChange   = MAttribute(MUIA_Listview_SelectChange,   '..g', c_BOOL)
@@ -1861,7 +1866,7 @@ class Coloradjust(Group):
 
 #===============================================================================
 
-class c_PaletteEntry(CStructure):
+class c_PaletteEntry(c_STRUCTURE):
     _fields_ = [ ('mpe_ID', c_LONG),
                  ('mpe_Red', c_ULONG),
                  ('mpe_Green', c_ULONG),
@@ -1880,10 +1885,10 @@ class Palette(Group):
 class Popstring(Group):
     CLASSID = MUIC_Popstring
 
-    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=_postSet_Child)
+    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=postset_child)
     CloseHook = MAttribute(MUIA_Popstring_CloseHook, 'isg', c_Hook)
     OpenHook  = MAttribute(MUIA_Popstring_OpenHook , 'isg', c_Hook)
-    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=_postSet_Child)
+    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=postset_child)
     Toggle    = MAttribute(MUIA_Popstring_Toggle   , 'isg', c_BOOL)
 
     Close = MMethod(MUIM_Popstring_Close, [ ('result', c_LONG) ])
@@ -1962,25 +1967,28 @@ class Popasl(Popstring):
 
 #===============================================================================
 
+# TODO
 # XXX: this class isn't very usefull on Python
-class Semaphore(rootclass):
-    CLASSID = MUIC_Semaphore
-
-    Attempt       = MMethod(MUIM_Semaphore_Attempt)
-    AttemptShared = MMethod(MUIM_Semaphore_AttemptShared)
-    Obtain        = MMethod(MUIM_Semaphore_Obtain)
-    ObtainShared  = MMethod(MUIM_Semaphore_ObtainShared)
-    Release       = MMethod(MUIM_Semaphore_Release)
-
-#===============================================================================
-
-class Applist(Semaphore):
-    CLASSID = MUIC_Applist
+#class Semaphore():
+#    CLASSID = MUIC_Semaphore
+#
+#    Attempt       = MMethod(MUIM_Semaphore_Attempt)
+#    AttemptShared = MMethod(MUIM_Semaphore_AttemptShared)
+#    Obtain        = MMethod(MUIM_Semaphore_Obtain)
+#    ObtainShared  = MMethod(MUIM_Semaphore_ObtainShared)
+#    Release       = MMethod(MUIM_Semaphore_Release)
 
 #===============================================================================
 
-class Cclist(Semaphore):
-    CLASSID = MUIC_Cclist
+# TODO
+#class Applist(Semaphore):
+#    CLASSID = MUIC_Applist
+
+#===============================================================================
+
+#TODO
+#class Cclist(Semaphore):
+#    CLASSID = MUIC_Cclist
 
 #===============================================================================
 
@@ -1990,13 +1998,15 @@ class Cclist(Semaphore):
 
 #===============================================================================
 
-class Configdata(Dataspace):
-    CLASSID = MUIC_Configdata
+# TODO
+#class Configdata(Dataspace):
+#    CLASSID = MUIC_Configdata
 
 #===============================================================================
 
-class Screenspace(Dataspace):
-    CLASSID = MUIC_Screenspace
+# TODO
+#class Screenspace(Dataspace):
+#    CLASSID = MUIC_Screenspace
 
 #===============================================================================
 
@@ -2055,8 +2065,9 @@ class Colorring(Group):
 
 #===============================================================================
 
-class Aboutpage(Mccprefs):
-    CLASSID = MUIC_Aboutpage
+# TODO
+#class Aboutpage(Mccprefs):
+#    CLASSID = MUIC_Aboutpage
 
 ################################################################################
 #################################  END OF FILE  ################################

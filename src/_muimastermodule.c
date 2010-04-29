@@ -898,7 +898,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
     int msg_length;
     PyObject *extra_args = NULL;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject(self);
     if (NULL == obj)
         return NULL;
 
@@ -986,7 +986,7 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
     ULONG meth;
     LONG value;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject(self);
     if (NULL == obj)
         return NULL;
 
@@ -1013,15 +1013,15 @@ static PyNumberMethods boopsi_as_number = {
 };
 
 static struct PyMethodDef boopsi_methods[] = {
-    {"_loosed", (PyCFunction) boopsi__loosed, METH_NOARGS, boopsi__loosed_doc},
-    {"_dispose", (PyCFunction) boopsi__dispose, METH_NOARGS, boopsi__dispose_doc},
+    {"_loosed",   (PyCFunction) boopsi__loosed,   METH_NOARGS,  boopsi__loosed_doc},
+    {"_dispose",  (PyCFunction) boopsi__dispose,  METH_NOARGS,  boopsi__dispose_doc},
     {"_addchild", (PyCFunction) boopsi__addchild, METH_VARARGS, boopsi__addchild_doc},
     {"_remchild", (PyCFunction) boopsi__remchild, METH_VARARGS, boopsi__remchild_doc},
-    {"_create", (PyCFunction) boopsi__create, METH_VARARGS, boopsi__create_doc},
-    {"_get",    (PyCFunction) boopsi__get,    METH_VARARGS, boopsi__get_doc},
-    {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
-    {"_do",     (PyCFunction) boopsi__do, METH_VARARGS, boopsi__do_doc},
-    {"_do1",    (PyCFunction) boopsi__do1,    METH_VARARGS, boopsi__do1_doc},
+    {"_create",   (PyCFunction) boopsi__create,   METH_VARARGS, boopsi__create_doc},
+    {"_get",      (PyCFunction) boopsi__get,      METH_VARARGS, boopsi__get_doc},
+    {"_set",      (PyCFunction) boopsi__set,      METH_VARARGS, boopsi__set_doc},
+    {"_do",       (PyCFunction) boopsi__do,       METH_VARARGS, boopsi__do_doc},
+    {"_do1",      (PyCFunction) boopsi__do1,      METH_VARARGS, boopsi__do1_doc},
 
     {NULL, NULL} /* sentinel */
 };
@@ -1083,7 +1083,7 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
     ULONG attr;
     LONG value;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1097,14 +1097,14 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
-//+ muiobject_redraw
-PyDoc_STRVAR(muiobject_redraw_doc,
+//+ muiobject__redraw
+PyDoc_STRVAR(muiobject__redraw_doc,
 "_redraw(flags) -> None\n\
 \n\
 Just direct call to MUI_Redraw(flags).");
 
 static PyObject *
-muiobject_redraw(PyMUIObject *self, PyObject *args)
+muiobject__redraw(PyMUIObject *self, PyObject *args)
 {
     Object *obj;
     ULONG flags = MADF_DRAWOBJECT;
@@ -1112,7 +1112,7 @@ muiobject_redraw(PyMUIObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "|I", &flags))
         return NULL;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1133,7 +1133,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
     ULONG trigattr, trigvalue, value;
     Object *mo;
 
-    mo = PyBOOPSIObject_GetObject((PyObject *)self);
+    mo = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == mo)
         return NULL;
 
@@ -1151,7 +1151,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 
     DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
              MUIV_Notify_Self, 5,
-             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) /*TODO*/, trigattr, value);
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) NULL, trigattr, value);
 
     DPRINT("done\n");
 
@@ -1159,38 +1159,14 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 }
 //-
 
-//+ muiobject_redraw
-PyDoc_STRVAR(muiobject_redraw_doc,
-"_redraw(flags) -> None\n\
-\n\
-Just direct call to MUI_Redraw(flags).");
-
-static PyObject *
-muiobject_redraw(PyMUIObject *self, PyObject *args)
-{
-    Object *obj;
-    ULONG flags = MADF_DRAWOBJECT;
-
-    if (!PyArg_ParseTuple(args, "|I", &flags))
-        return NULL;
-
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
-    if (NULL == obj)
-        return NULL;
-
-    MUI_Redraw(obj, flags);
-
-    Py_RETURN_NONE;
-}
-//-
 //+ muiobject_get_data
 static PyObject *
-muiobject_get_data(PyObject *self, void *closure)
+muiobject_get_data(PyMUIObject *self, void *closure)
 {
     Object *obj;
     LONG data;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1203,7 +1179,7 @@ muiobject_get_data(PyObject *self, void *closure)
         case PYMUI_DATA_MHEIGHT: data = _mheight(obj); break;
 
         default:
-            return PyErr_Format(PyErr_SystemError, "[INTERNAL ERROR] bad closure given to muiobject_get_data()");
+            return PyErr_Format(PyExc_SystemError, "[INTERNAL ERROR] bad closure given to muiobject_get_data()");
     }
     
     return PyInt_FromLong(data);
@@ -1211,11 +1187,11 @@ muiobject_get_data(PyObject *self, void *closure)
 //-
 //+ muiobject_get_mbox
 static PyObject *
-muiobject_get_mbox(PyObject *self, void *closure)
+muiobject_get_mbox(PyMUIObject *self, void *closure)
 {
     Object *obj;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1224,12 +1200,12 @@ muiobject_get_mbox(PyObject *self, void *closure)
 //-
 //+ muiobject_get_sdim
 static PyObject *
-muiobject_get_sdim(PyObject *self, void *closure)
+muiobject_get_sdim(PyMUIObject *self, void *closure)
 {
     Object *obj;
     struct Screen *scr;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1247,12 +1223,12 @@ muiobject_get_sdim(PyObject *self, void *closure)
 //-
 //+ muiobject_get_srange
 static PyObject *
-muiobject_get_srange(PyObject *self, void *closure)
+muiobject_get_srange(PyMUIObject *self, void *closure)
 {
     Object *obj;
     struct Screen *scr;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)self);
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
 
@@ -1286,7 +1262,7 @@ static PyGetSetDef muiobject_getseters[] = {
 
 static struct PyMethodDef muiobject_methods[] = {
     {"_nnset", (PyCFunction) muiobject__nnset, METH_VARARGS, muiobject__nnset_doc},
-    {"Redraw", (PyCFunction) muiobject_redraw, METH_O, muiobject_redraw_doc},
+    {"Redraw", (PyCFunction) muiobject__redraw, METH_O, muiobject__redraw_doc},
     {NULL} /* sentinel */
 };
 
