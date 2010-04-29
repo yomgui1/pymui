@@ -179,6 +179,10 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyBOOPSIObject_REM_FLAGS(o, x) (((PyBOOPSIObject *)(o))->flags &= ~(x))
 #define PyBOOPSIObject_ISOWNER(o) (0 != (((PyBOOPSIObject *)(o))->flags & FLAG_OWNER))
 
+#define PyBOOPSIObject_SET_NODE(o, n) ({ \
+    PyBOOPSIObject *_o = (PyBOOPSIObject *)(o); \
+    ObjectNode *_n = (ObjectNode *)(n); \
+    _o->node = _n; _n->obj = PyBOOPSIObject_GET_OBJECT(_o); })
 
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
@@ -186,14 +190,23 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define ID_BREAK 0xABADDEAD
 #define FLAG_OWNER (1<<0) /* bObject has been created by the PyObject */
 
+#define NODE_FLAG_MUI (1<<0)
+
 
 /*
 ** Private Types and Structures
 */
 
+typedef struct ObjectNode_STRUCT {
+    struct MinNode node;
+    Object * obj;
+    LONG flags;
+} ObjectNode;
+
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
     Object *       bObject;
+    ObjectNode *   node;
     ULONG          flags;
 } PyBOOPSIObject;
 
@@ -225,6 +238,7 @@ static PyTypeObject CHookObject_Type;
 static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
+static struct MinList gObjectList;
 
 
 /*
@@ -243,6 +257,15 @@ for more information on calls.");
 ** Private Functions
 */
 
+//+ dispose_node
+static void dispose_node(PyBOOPSIObject *pObj)
+{
+    ObjectNode *node = pObj->node;
+
+    pObj->node = NULL;
+    FreeMem(REMOVE(node), sizeof(*node));
+}
+//-
 //+ objdb_add
 static int objdb_add(Object *bObj, PyObject *pObj)
 {
@@ -250,6 +273,7 @@ static int objdb_add(Object *bObj, PyObject *pObj)
     PyObject *wref = PyWeakref_NewRef(pObj, NULL); /* NR */
     int res;
 
+    /* BOOPSI -> Python relation */
     res = PyDict_SetItem(gBOOPSI_Objects_Dict, key, wref);
     Py_XDECREF(wref);
 
@@ -277,6 +301,23 @@ static PyObject *objdb_get(Object *bObj)
     return PyWeakref_GetObject(wref);
 }
 //-
+//+ loose
+static void loose(PyBOOPSIObject *pObj)
+{
+    Object *bObj = PyBOOPSIObject_GET_OBJECT(pObj);
+
+    if (PyBOOPSIObject_ISOWNER(pObj)) {
+        objdb_remove(bObj);
+
+        /* we suppose that loosing the owning supposes object to be disposed elsewhere */
+        dispose_node(pObj);
+
+        PyBOOPSIObject_REM_FLAGS(pObj, FLAG_OWNER);
+
+        DPRINT("PyObj %p-'%s' flags: $%08x\n", pObj, OBJ_TNAME(pObj), pObj->flags);
+    }
+}
+//-
 //+ PyBOOPSIObject_GetObject
 static Object *
 PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
@@ -296,19 +337,30 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 {
     Object *bObj = PyBOOPSIObject_GetObject(pObj);
 
-    if (NULL != bObj)
+    if (NULL == bObj) {
+        PyErr_SetString(PyExc_TypeError, "No valid BOOPSI object found");
         return -1;
-    
+    }
+
     /* remove from BOOPSI objects db */
     objdb_remove(bObj);
+    PyErr_Clear();
 
-    /* BOOPSI/MUI destroy */
-    DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
-    if (PyMUIObject_Check(pObj))
-        MUI_DisposeObject(bObj);
-    else
-        DisposeObject(bObj);
-    DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+    if (PyBOOPSIObject_ISOWNER(pObj)) {
+        /* BOOPSI/MUI destroy */
+        DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+        if (PyMUIObject_Check(pObj))
+            MUI_DisposeObject(bObj);
+        else
+            DisposeObject(bObj);
+        DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+
+        /* Now delete the attached node */
+        dispose_node(pObj);
+    } else
+        DPRINT("BOOPSI object not disposed (not owner)\n");
+
+    PyBOOPSIObject_SET_OBJECT(pObj, NULL);
 
     return 0;
 }
@@ -410,10 +462,10 @@ boopsi_dealloc(PyBOOPSIObject *self)
 {
     Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
 
-    DPRINT("self=%p, bObj=%p\n", self, bObj);
+    DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), bObj);
 
-    if ((NULL != bObj) && PyBOOPSIObject_ISOWNER(self))
-        PyBOOPSIObject_DisposeObject(self);
+    PyBOOPSIObject_DisposeObject(self);
+    PyErr_Clear(); /* Silent errors */
 
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
@@ -471,7 +523,8 @@ boopsi_get_object(PyBOOPSIObject *self)
 PyDoc_STRVAR(boopsi__dispose_doc,
 "_dispose() -> int\n\
 \n\
-Sorry, Not documented yet :-(");
+If the Python owns the BOOPSI object, this method disposes it.\n\
+If not owner, it's a no-op.");
 
 static PyObject *
 boopsi__dispose(PyBOOPSIObject *self)
@@ -496,10 +549,7 @@ boopsi__loosed(PyBOOPSIObject *self)
     if (NULL == bObj)
         return NULL;
 
-    if (PyBOOPSIObject_ISOWNER(self))
-        objdb_remove(bObj);
-
-    PyBOOPSIObject_REM_FLAGS(self, FLAG_OWNER);
+    loose(self);
 
     Py_RETURN_NONE;
 }
@@ -513,7 +563,8 @@ Sorry, Not documented yet :-(");
 static PyObject *
 boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
 {
-    PyObject *ret, *pychild;
+    PyObject *ret;
+    PyBOOPSIObject *pychild;
     Object *obj, *child;
     int lock = FALSE;
 
@@ -525,23 +576,21 @@ boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
         return NULL;
 
     /* Warning: no reference kept on arg object after return! */
-    child = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pychild);
+    child = PyBOOPSIObject_GetObject(pychild);
     if (NULL == child)
         return NULL;
 
-    if (PyBOOPSIObject_ISOWNER(pychild))
-        objdb_remove(child);
-
-    PyBOOPSIObject_REM_FLAGS(self, FLAG_OWNER);
+    /* Automatic OWNER flag loosing */
+    loose(pychild);
 
     if (lock) {
         DPRINT("Lock\n");    
         DoMethod(obj, MUIM_Group_InitChange);
     }
 
-    DPRINT("OM_ADDMEMBER: parent=%p, obj=%p\n", obj, child);         
+    DPRINT("OM_ADDMEMBER: parent=%p, child=%p\n", obj, child);
     ret = PyInt_FromLong(DoMethod(obj, OM_ADDMEMBER, (ULONG)child));
-    
+
     if (lock) {
         DPRINT("Unlock\n");        
         DoMethod(obj, MUIM_Group_ExitChange);
@@ -588,6 +637,8 @@ boopsi__remchild(PyBOOPSIObject *self, PyObject *args)
         DoMethod(obj, MUIM_Group_ExitChange);
     }
 
+    /* Note: object is not owned anymore! So user should re-attach it immediately or dispose it */
+
     return ret;
 }
 //-
@@ -607,6 +658,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     struct TagItem *tags;
     ULONG n;
     Object *bObj;
+    ObjectNode *node;
 
     /* Protect againts doubles */
     if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
@@ -637,7 +689,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
         for (i=0; i < n; i++) {
             PyObject *tag_id = PyTuple_GetItem(tuples[i], 0);
-            PyObject *tag_value = PyTuple_GetItem(tuples[i], 0);
+            PyObject *tag_value = PyTuple_GetItem(tuples[i], 1);
 
             if ((NULL == tag_id) || (NULL == tag_value))
                 break;
@@ -661,34 +713,121 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     } else
         tags = NULL;
 
+    /* Allocated a note to save the object reference.
+     * It will be used at module cleanup to flush BOOPSI/MUI.
+     * Note: PyMem_xxx() functions are not used here as the python context
+     * is not valid during this cleanup stage.
+     */
+    node = AllocMem(sizeof(ObjectNode), MEMF_PUBLIC | MEMF_CLEAR | MEMF_SEM_PROTECTED);
+    if (NULL == node) {
+        if (NULL != tags)
+            PyMem_Free(tags);
+        return PyErr_NoMemory();
+    }
+
+    DPRINT("Node created @ %p\n", node);
+
     /* Creating the BOOPSI/MUI object */
     if (PyMUIObject_Check(self)) {
         bObj = MUI_NewObjectA(classid, tags);
-    } else {
+        node->flags |= NODE_FLAG_MUI;
+    } else
         bObj = NewObjectA(NULL, classid, tags);
-    }
 
     if (NULL != tags)
         PyMem_Free(tags);
 
     if (NULL != bObj) {
-        DPRINT("New %s object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
+        DPRINT("New '%s' object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
 
-        /* Add to the Objects database */
+        /* Add to the BOOPSI objects database */
         if (objdb_add(bObj, (PyObject *) self)) {
             if (PyMUIObject_Check(self))
                 MUI_DisposeObject(bObj);
             else
                 DisposeObject(bObj);
+
+            FreeMem(node, sizeof(*node));
+            return NULL;
         }
 
         PyBOOPSIObject_SET_OBJECT(self, bObj);
         PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+        PyBOOPSIObject_SET_NODE(self, node);
+
+        ADDTAIL(&gObjectList, node);
 
         Py_RETURN_NONE;
     }
 
+    FreeMem(node, sizeof(*node));
     return PyErr_Format(PyExc_SystemError, "Failed to create BOOPSI object of class %s", classid);
+}
+//-
+//+ boopsi__get
+PyDoc_STRVAR(boopsi__get_doc,
+"_get(id) -> unsigned integer \n\
+\n\
+Call BOOPSI function GetAttr() on linked BOPPSI object with given attribute id.\n\
+Returns the stored value of GetAttr().");
+
+static PyObject *
+boopsi__get(PyBOOPSIObject *self, PyObject *args)
+{
+    Object *obj;
+    ULONG attr;
+    ULONG value;
+
+    obj = PyBOOPSIObject_GetObject(self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "I", &attr)) /* BR */
+        return NULL;
+
+    DPRINT("_get(0x%08x): Object=%p (%s)\n", attr, obj, OCLASS(obj)->cl_ID);
+    value = 0xdeadbeaf;
+    if (!GetAttr(attr, obj, &value))
+        return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08x) failed", (int)attr);
+    DPRINT("_get(0x%08x): value=(%d, %u, 0x%08lx)\n", attr, (LONG)value, value, value);
+
+    return PyLong_FromUnsignedLong(value);
+}
+//-
+//+ boopsi__set
+PyDoc_STRVAR(boopsi__set_doc,
+"_set(attr, value) -> None\n\
+\n\
+Try to set an attribute of the BOOPSI object by calling the BOOPSI function SetAttrs().\n\
+Value should be an interger representing pointer on the ULONG value to use with SetAttrs.\n\
+Note: No reference kept on the given value object!");
+
+static PyObject *
+boopsi__set(PyBOOPSIObject *self, PyObject *args) {
+    Object *obj;
+    ULONG attr;
+    ULONG value;
+    PyObject *v_obj;
+
+    obj = PyBOOPSIObject_GetObject(self);
+    if (NULL == obj)
+        return NULL;
+
+    if (!PyArg_ParseTuple(args, "IO", &attr, &v_obj)) /* BR */
+        return NULL;
+
+    if (!py2long(v_obj, &value))
+        return NULL;
+
+    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    set(obj, attr, value);
+    DPRINT("done\n");
+
+    /* Due to MUI notification system a Python code may have be called here */
+    if (PyErr_Occurred())
+        return NULL;
+
+    Py_RETURN_NONE;
 }
 //-
 
@@ -707,6 +846,8 @@ static struct PyMethodDef boopsi_methods[] = {
     {"_addchild", (PyCFunction) boopsi__addchild, METH_VARARGS, boopsi__addchild_doc},
     {"_remchild", (PyCFunction) boopsi__remchild, METH_VARARGS, boopsi__remchild_doc},
     {"_create", (PyCFunction) boopsi__create, METH_VARARGS, boopsi__create_doc},
+    {"_get",    (PyCFunction) boopsi__get,    METH_VARARGS, boopsi__get_doc},
+    {"_set", (PyCFunction) boopsi__set, METH_VARARGS, boopsi__set_doc},
 
     {NULL, NULL} /* sentinel */
 };
@@ -870,7 +1011,6 @@ static PyTypeObject CHookObject_Type = {
 ** List of functions exported by this module reside here
 */
 
-#if 0
 //+ _muimaster_mainloop
 PyDoc_STRVAR(_muimaster_mainloop_doc,
 "mainloop(app) -> None.\n\
@@ -893,7 +1033,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!:mainloop", &PyMUIObject_Type, &pyapp))
         return NULL;
 
-    app = PyBOOPSIObject_GetObject((PyObject *)pyapp);
+    app = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pyapp);
     if (NULL == app)
         return NULL;
 
@@ -945,7 +1085,6 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
-#endif
 //+ _muimaster_pyobjfromptr
 static PyObject *
 _muimaster_pyobjfromptr(PyObject *self, PyObject *args)
@@ -1018,13 +1157,15 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     DPRINT("bObj: %p\n", bObj);
     if (NULL != bObj) {
         /* Check if the object is owned by a valid PyMUIObject object */
-        pObj = objdb_get(bObj);
+        pObj = objdb_get(bObj); /* BR */
         DPRINT("pObj: %p\n", pObj);
         if (NULL != pObj) {
             if (!TypeOfMem(pObj))
                 return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pObj);
             if (!PyMUIObject_Check(pObj))
                 return PyErr_Format(PyExc_TypeError, "value '%x' doesn't refer to a PyMUIObject instance", (unsigned int)pObj);
+
+            Py_INCREF(pObj);
             return pObj;
         }
     }
@@ -1034,6 +1175,7 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     if (NULL != pObj) {
         PyBOOPSIObject_SET_OBJECT(pObj, bObj);
         ((PyBOOPSIObject *)pObj)->flags = 0;
+        ((PyBOOPSIObject *)pObj)->node = NULL;
     }
 
     return pObj;
@@ -1042,7 +1184,7 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
-    //{"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
+    {"mainloop", _muimaster_mainloop, METH_VARARGS, _muimaster_mainloop_doc},
     {"_ptr2pyobj", _muimaster_pyobjfromptr, METH_VARARGS, NULL},
     {"_ptr2pyboopsi", _muimaster_ptr2pyboopsi, METH_VARARGS, NULL},
     {"_ptr2pymui", _muimaster_ptr2pymui, METH_VARARGS, NULL},
@@ -1056,11 +1198,71 @@ static PyMethodDef _muimaster_methods[] = {
 
 //+ PyMorphOS_CloseModule
 void
-PyMorphOS_CloseModule(void) {
+PyMorphOS_CloseModule(void)
+{
+    ObjectNode *node;
+    APTR next;
 
     DPRINT("Closing module...\n");
 
     ATOMIC_STORE(&gModuleIsValid, FALSE);
+
+    ForeachNodeSafe(&gObjectList, node, next) {
+        Object *app, *obj = node->obj;
+
+        if (NULL != obj) {
+            /* Python is not perfect, PyMUI not also and user design even less :-P
+             * If PyMUI user has forgotten to 'loose' the owner flag or if Python hasn't
+             * disposed all Python objects when module is cleaned, the object node is here.
+             * In anycases, the BOOPSI object is considered as owned and diposable.
+             * But for MUIA_Parentobject, we can check if the object is really a child or not.
+             * If it's a child, the object is not disposed.
+             */
+            if (node->flags & NODE_FLAG_MUI) {
+                Object *parent;
+
+                DPRINT("Forgotten object [%p-'%s', node: %p]\n",
+                    obj, OCLASS(obj)->cl_ID?(char *)OCLASS(obj)->cl_ID:(char *)"<MCC>", node);
+
+                app = parent = NULL;
+                if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
+                    DPRINT("[%p] app=%p, parent=%p\n", obj, app, parent);
+
+                    /* Keep the application object disposal for later */
+                    if (obj == app) {
+                        DPRINT("[%p] Application => disposed later\n", obj);
+                        continue;
+                    }
+
+                    /* No parent object ? */
+                    if ((NULL == parent) && (NULL == app)) {
+                        DPRINT("[%p] Disposing a MUI object...\n", obj);
+                        MUI_DisposeObject(obj);
+                        DPRINT("[%p] Disposed\n", obj);
+                    } else
+                        DPRINT("[%p] Has a parent, let it dispose the object\n", obj);
+                } else
+                    DPRINT("[%p] Bad object!\n", obj);
+            } else {
+                DPRINT("[%p] Disposing a BOOPSI object ...\n", obj);
+                DisposeObject(obj);
+                DPRINT("[%p] Disposed\n", obj);
+            }
+        }
+
+        FreeMem(REMOVE(node), sizeof(*node));
+    }
+
+    /* Second round for applications objects */
+    ForeachNodeSafe(&gObjectList, node, next) {
+        Object *obj = node->obj;
+
+        DPRINT("[%p] Disposing application...\n", obj);
+        MUI_DisposeObject(obj);
+        DPRINT("[%p] Application disposed\n", obj);
+
+        FreeMem(node, sizeof(*node));
+    }   
 
     if (NULL != CyberGfxBase) {
         DPRINT("Closing cybergfx library...\n");
@@ -1098,6 +1300,8 @@ all_ins(PyObject *m) {
 PyMODINIT_FUNC
 INITFUNC(void) {
     PyObject *m, *d;
+
+    NEWLIST((struct List *)&gObjectList);
 
     MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
     if (NULL != MUIMasterBase) {

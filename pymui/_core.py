@@ -145,15 +145,14 @@ class MAttribute(property):
 
         if 'i' in isg:
             def _init(obj, x):
-                x = (x if isinstance(x, ctype) else ctype(x))
-                return c_ULONG.from_address(addressof(x)).value
+                return long(x if isinstance(x, ctype) else ctype(x))
         else:
             def _init(*args):
                 raise AttributeError("attribute %08x can't be used at init" % self.__id)
 
         if 's' in isg:
             def _setter(obj, x, nn=False):
-                x = c_ULONG.from_address(addressof(x if isinstance(x, ctype) else ctype(x))).value
+                x = long(x if isinstance(x, ctype) else ctype(x))
                 if nn:
                     obj._nnset(id, x)
                 else:
@@ -163,7 +162,9 @@ class MAttribute(property):
 
         if 'g' in isg:
             def _getter(obj):
-                return ctype(obj._get(id))
+                o = ctype()
+                o.FromLong(obj._get(id))
+                return o
         else:
             _getter = None
 
@@ -527,7 +528,7 @@ class BOOPSIRootClass(PyBOOPSIObject, BOOPSIMixin):
 
     # filter out parameters for the class C interface
     def __new__(cl, *args, **kwds):
-        return PyBOOPSIObject.__new__(cl)
+        return PyBOOPSIObject.__new__(cl, kwds.pop('_address', 0))
 
     def __init__(self, **kwds):
         PyBOOPSIObject.__init__(self)
@@ -577,9 +578,12 @@ class Notify(PyMUIObject, BOOPSIMixin):
         extra = kwds.pop('muiargs', [])
 
         # convert given keywords as long
-        muiargs = [(self._getMAByName(k).id, v) for k,v in kwds] + extra
+        muiargs = []
+        for k, v in kwds.iteritems():
+            attr = self._getMAByName(k)
+            muiargs.append( (attr.id, attr.init(self, v)) )
         
-        self._create(self._bclassid, muiargs)
+        self._create(self._bclassid, muiargs + extra)
         
 #===============================================================================
 
@@ -654,7 +658,7 @@ class Application(Notify): # TODO: unfinished
         assert isinstance(win, Window)
         super(Application, self).RemChild(win)
         win.Open = False
-        # win may be not owned anymore, let user decide to dispose it
+        # win may be not owned anymore, let user decide to dispose it or re-assign it
 
     def Run(self):
         _muimaster.mainloop(self)
@@ -666,6 +670,398 @@ class Application(Notify): # TODO: unfinished
     def AboutMUI(self, meth, refwin=None):
         meth(self, refwin)
 
+#===============================================================================
+
+class Window(Notify): # TODO: unfinished
+    CLASSID = MUIC_Window
+
+    def __checkForApp(self, attr, o):
+        if not self.ApplicationObject.value:
+            raise AttributeError("Window not linked to an application yet")
+        return o
+
+    Activate                = MAttribute(MUIA_Window_Activate                , 'isg', c_BOOL)
+    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_MUIObject) # XXX: what append if the object is not a child?
+    AltHeight               = MAttribute(MUIA_Window_AltHeight               , 'i.g', c_LONG)
+    AltLeftEdge             = MAttribute(MUIA_Window_AltLeftEdge             , 'i.g', c_LONG)
+    AltTopEdge              = MAttribute(MUIA_Window_AltTopEdge              , 'i.g', c_LONG)
+    AltWidth                = MAttribute(MUIA_Window_AltWidth                , 'i.g', c_LONG)
+    AppWindow               = MAttribute(MUIA_Window_AppWindow               , 'i..', c_BOOL)
+    Backdrop                = MAttribute(MUIA_Window_Backdrop                , 'i..', c_BOOL)
+    Borderless              = MAttribute(MUIA_Window_Borderless              , 'i..', c_BOOL)
+    CloseGadget             = MAttribute(MUIA_Window_CloseGadget             , 'i..', c_BOOL)
+    CloseRequest            = MAttribute(MUIA_Window_CloseRequest            , '..g', c_BOOL)
+    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_MUIObject) # XXX: what append if the object is not a child?
+    DepthGadget             = MAttribute(MUIA_Window_DepthGadget             , 'i..', c_BOOL)
+    DisableKeys             = MAttribute(MUIA_Window_DisableKeys             , 'isg', c_LONG)
+    DragBar                 = MAttribute(MUIA_Window_DragBar                 , 'i..', c_BOOL)
+    FancyDrawing            = MAttribute(MUIA_Window_FancyDrawing            , 'isg', c_BOOL)
+    Height                  = MAttribute(MUIA_Window_Height                  , 'i.g', c_LONG)
+    ID                      = MAttribute(MUIA_Window_ID                      , 'isg', c_ULONG)
+    InputEvent              = MAttribute(MUIA_Window_InputEvent              , '..g', c_APTR)
+    IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
+    LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
+    MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject, postSet=postset_child)
+    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_MUIObject)
+    NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
+    NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
+    Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
+    PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR)
+    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=postset_child)
+    Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR)
+    ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR)
+    SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
+    SizeRight               = MAttribute(MUIA_Window_SizeRight               , 'i..', c_BOOL)
+    Sleep                   = MAttribute(MUIA_Window_Sleep                   , '.sg', c_BOOL)
+    TabletMessages          = MAttribute(MUIA_Window_TabletMessages          , 'i.g', c_BOOL)
+    Title                   = MAttribute(MUIA_Window_Title                   , 'isg', c_STRPTR)
+    TopEdge                 = MAttribute(MUIA_Window_TopEdge                 , 'i.g', c_LONG)
+    UseBottomBorderScroller = MAttribute(MUIA_Window_UseBottomBorderScroller , 'isg', c_BOOL)
+    UseLeftBorderScroller   = MAttribute(MUIA_Window_UseLeftBorderScroller   , 'isg', c_BOOL)
+    UseRightBorderScroller  = MAttribute(MUIA_Window_UseRightBorderScroller  , 'isg', c_BOOL)
+    Width                   = MAttribute(MUIA_Window_Width                   , 'i.g', c_LONG)
+    Window                  = MAttribute(MUIA_Window_Window                  , '..g', c_APTR)
+
+    ToBack                  = MMethod(MUIM_Window_ToBack)
+    ToFront                 = MMethod(MUIM_Window_ToFront)
+
+    __idset = set()
+
+    __attr_map = { 'LeftEdge': { 'centered': MUIV_Window_LeftEdge_Centered,
+                                 'moused':   MUIV_Window_LeftEdge_Moused },
+                   'TopEdge' : { 'centered': MUIV_Window_TopEdge_Centered,
+                                 'moused':   MUIV_Window_TopEdge_Moused },
+                   'Height':   { 'default':  MUIV_Window_Height_Default,
+                                 'scaled':   MUIV_Window_Height_Scaled },
+                   'Width':    { 'default':  MUIV_Window_Width_Default,
+                                 'scaled':   MUIV_Window_Width_Scaled },
+                   }
+
+    @classmethod
+    def __new_ID(cl, i=-1):
+        if i == -1:
+            for i in xrange(1<<10):
+                if i not in cl.__idset:
+                    cl.__idset.add(i)
+                    return i
+            raise RuntimeError("No more availables IDs")
+        elif isinstance(i, str):
+            i = sum(ord(c) << (24-n*8) for n, c in enumerate(i[:4]))
+            if i in cl.__idset:
+                raise RuntimeError("ID %u already taken" % i)
+
+        cl.__idset.add(i)
+        return i
+
+    def __init__(self, Title=None, ID=None, **kwds):
+        """Window(Title=None, ID=None, **kwds) -> Window Instance.
+
+        Window MUI class.
+
+        === Specifics parameters ===
+
+        - Title: (optional) window title to use. None or not set doesn't touch the attribute.
+
+        - ID: (optional) can be an integer (LONG) or a string.
+          If not given, set to None, zero or empty string, ID attribute is not touched.
+          If set to -1, a new unique ID is automatically set for you.
+
+        === Special PyMUI attributes (optionals) ===
+
+        - LeftEdge      : positive integer as in MUI or a string: 'centered' or 'moused'.
+        - RightEdge     : window rigth edge on screen: integer [0-2147482648].
+        - TopEdge       : positive integer as in MUI or a string: 'centered' or 'moused'.
+        - TopDeltaEdge  : window appears n pixels below the screens title bar, n integer [0-996].
+        - BottomEdge    : window bottom edge on screen: integer [0-2147482648].
+        - Width         : positive integer as in MUI or a string: 'default' or 'scaled'.
+        - WidthMinMax   :
+        - WidthScreen   :
+        - WidthVisible  :
+        - Height        : positive integer as in MUI or a string: 'default' or 'scaled'.
+        - HeightMinMax  :
+        - HeightScreen  :
+        - HeightVisible :
+        - Position      : a 2-tuple for (LeftEdge, TopEdge) (overwritten by LeftEdge and TopEdge).
+        - Size          : a 2-tuple for (Width, Height) (overwritten by Width and Height).
+        - CloseOnRequest: Set it to True add a notification to close the window
+                          when CloseRequest attribute is set to True. False by default.
+
+        === Notes ===
+
+        A RootObject is mandatory to create a Window on MUI.
+        PyMUI uses a simple Rectangle object by default.
+        """
+        self.__app = None
+
+        # Auto Window ID handling
+        if ID:
+            kwds['ID'] = self.__new_ID(ID)
+
+        # A root object is mandatory to create the window
+        # Use a dummy rectangle if nothing given
+        if 'RootObject' not in kwds:
+            kwds['RootObject'] = Rectangle()
+
+        if Title is not None:
+            kwds['Title'] = Title
+
+        if 'Position' in kwds:
+            kwds['LeftEdge'], kwds['TopEdge'] = kwds.pop('Position')
+
+        if 'LeftEdge' in kwds:
+            x = kwds.get('LeftEdge')
+            d = self.__attr_map['LeftEdge']
+            kwds['LeftEdge'] = d[x] if x in d else x
+        elif 'RightEdge' in kwds:
+            kwds['LeftEdge'] = -1000 - kwds.pop('RightEdge')
+
+        if 'TopEdge' in kwds:
+            x = kwds.get('TopEdge')
+            d = self.__attr_map['TopEdge']
+            kwds['TopEdge'] = d[x] if x in d else x
+        elif 'BottomEdge' in kwds:
+            kwds['TopEdge'] = -1000 - kwds.pop('BottomEdge')
+        elif 'TopDeltaEdge' in kwds:
+            kwds['TopEdge'] = -3 - kwds.pop('TopDeltaEdge')
+
+        if 'Size' in kwds:
+            kwds['Width'], kwds['Height'] = kwds.pop('Size')
+
+        if 'Height' in kwds:
+            x = kwds.get('Height')
+            d = self.__attr_map['Height']
+            kwds['Height'] = d[x] if x in d else x
+        elif 'HeightMinMax' in kwds:
+            kwds['Height'] = 0 - max(min(kwds.pop('HeightMinMax'), 100), 0)
+        elif 'HeightScreen' in kwds:
+            kwds['Height'] = -200 - max(min(kwds.pop('HeightScreen'), 100), 0)
+        elif 'HeightVisible' in kwds:
+            kwds['Height'] = -100 - max(min(kwds.pop('HeightVisible'), 100), 0)
+
+        if 'Width' in kwds:
+            x = kwds.get('Width')
+            d = self.__attr_map['Width']
+            kwds['Width'] = d[x] if x in d else x
+        elif 'WidthMinMax' in kwds:
+            kwds['Width'] = 0 - max(min(kwds.pop('WidthMinMax'), 100), 0)
+        elif 'WidthScreen' in kwds:
+            kwds['Width'] = -200 - max(min(kwds.pop('WidthScreen'), 100), 0)
+        elif 'WidthVisible' in kwds:
+            kwds['Width'] = -100 - max(min(kwds.pop('WidthVisible'), 100), 0)
+
+        autoclose = kwds.pop('CloseOnReq', False)
+
+        super(Window, self).__init__(**kwds)
+
+        if autoclose:
+            self.Notify('CloseRequest', True, lambda e: self.CloseWindow())
+
+    def OpenWindow(self):
+        self.Open = True
+
+    def CloseWindow(self):
+        self.Open = False
+
+    #pointer = property(fset=_muimaster._setwinpointer, doc="Window mouse pointer")
+
+#===============================================================================
+
+class c_MinMax(c_STRUCTURE):
+    _fields_ = [ ('MinWidth', c_WORD),
+                 ('MinHeight', c_WORD),
+                 ('MaxWidth', c_WORD),
+                 ('MaxHeight', c_WORD),
+                 ('DefWidth', c_WORD),
+                 ('DefHeight', c_WORD) ]
+
+class c_IntuiMessage(c_STRUCTURE):
+    _fields_ = [ ('ExecMessage', c_Message),
+                 ('Class', c_ULONG),
+                 ('Code', c_UWORD),
+                 ('Qualifier', c_UWORD),
+                 ('IAddress', c_APTR),
+                 ('MouseX', c_WORD),
+                 ('MouseY', c_WORD),
+                 ('Seconds', c_ULONG),
+                 ('Micros', c_ULONG),
+                 ('IDCMPWindow', c_APTR),
+                 ('SpecialLink', c_APTR) ]
+
+class c_EventHandlerNode(c_STRUCTURE):
+    _fields_ = [ ('ehn_Node', c_MinNode),
+                 ('ehn_Reserved', c_BYTE),
+                 ('ehn_Priority', c_BYTE),
+                 ('ehn_Flags', c_UWORD),
+                 ('ehn_Object', c_MUIObject),
+                 ('ehn_Class', c_APTR),
+                 ('ehn_Events', c_ULONG) ]
+
+class Area(Notify): # TODO: unfinished
+    CLASSID = MUIC_Area
+
+    Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR)
+    BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=postset_child)
+    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
+    ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
+    CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
+    Disabled           = MAttribute(MUIA_Disabled           , 'isg', c_BOOL)
+    DoubleBuffer       = MAttribute(MUIA_DoubleBuffer       , 'isg', c_BOOL)
+    Draggable          = MAttribute(MUIA_Draggable          , 'isg', c_BOOL)
+    Dropable           = MAttribute(MUIA_Dropable           , 'isg', c_BOOL)
+    FillArea           = MAttribute(MUIA_FillArea           , 'is.', c_BOOL)
+    FixHeight          = MAttribute(MUIA_FixHeight          , 'i..', c_LONG)
+    FixHeightTxt       = MAttribute(MUIA_FixHeightTxt       , 'i..', c_STRPTR)
+    FixWidth           = MAttribute(MUIA_FixWidth           , 'i..', c_LONG)
+    FixWidthTxt        = MAttribute(MUIA_FixWidthTxt        , 'i..', c_STRPTR)
+    Font               = MAttribute(MUIA_Font               , 'i.g', c_pTextFont)
+    Frame              = MAttribute(MUIA_Frame              , 'i..', c_LONG)
+    FrameDynamic       = MAttribute(MUIA_FrameDynamic       , 'isg', c_BOOL)
+    FramePhantomHoriz  = MAttribute(MUIA_FramePhantomHoriz  , 'i..', c_BOOL)
+    FrameTitle         = MAttribute(MUIA_FrameTitle         , 'i..', c_STRPTR)
+    FrameVisible       = MAttribute(MUIA_FrameVisible       , 'isg', c_BOOL)
+    Height             = MAttribute(MUIA_Height             , '..g', c_LONG)
+    HorizDisappear     = MAttribute(MUIA_HorizDisappear     , 'isg', c_LONG)
+    HorizWeight        = MAttribute(MUIA_HorizWeight        , 'isg', c_LONG)
+    InnerBottom        = MAttribute(MUIA_InnerBottom        , 'i.g', c_LONG)
+    InnerLeft          = MAttribute(MUIA_InnerLeft          , 'i.g', c_LONG)
+    InnerRight         = MAttribute(MUIA_InnerRight         , 'i.g', c_LONG)
+    InnerTop           = MAttribute(MUIA_InnerTop           , 'i.g', c_LONG)
+    InputMode          = MAttribute(MUIA_InputMode          , 'i..', c_LONG)
+    LeftEdge           = MAttribute(MUIA_LeftEdge           , '..g', c_LONG)
+    MaxHeight          = MAttribute(MUIA_MaxHeight          , 'i..', c_LONG)
+    MaxWidth           = MAttribute(MUIA_MaxWidth           , 'i..', c_LONG)
+    Pressed            = MAttribute(MUIA_Pressed            , '..g', c_BOOL)
+    RightEdge          = MAttribute(MUIA_RightEdge          , '..g', c_LONG)
+    Selected           = MAttribute(MUIA_Selected           , 'isg', c_BOOL)
+    ShortHelp          = MAttribute(MUIA_ShortHelp          , 'isg', c_STRPTR)
+    ShowMe             = MAttribute(MUIA_ShowMe             , 'isg', c_BOOL)
+    ShowSelState       = MAttribute(MUIA_ShowSelState       , 'i..', c_BOOL)
+    Timer              = MAttribute(MUIA_Timer              , '..g', c_LONG)
+    TopEdge            = MAttribute(MUIA_TopEdge            , '..g', c_LONG)
+    VertDisappear      = MAttribute(MUIA_VertDisappear      , 'isg', c_LONG)
+    VertWeight         = MAttribute(MUIA_VertWeight         , 'isg', c_LONG)
+    Weight             = MAttribute(MUIA_Weight             , 'i..', c_LONG)
+    Width              = MAttribute(MUIA_Width              , '..g', c_LONG)
+    Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
+    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
+
+    AskMinMax   = MMethod(MUIM_AskMinMax,   [ ('MinMaxInfo', c_MinMax.PointerType()) ])
+    Cleanup     = MMethod(MUIM_Cleanup)
+    DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_MUIObject) ])
+    DragDrop    = MMethod(MUIM_DragDrop,    [ ('obj', c_MUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
+    Draw        = MMethod(MUIM_Draw,        [ ('flags', c_ULONG) ])
+    HandleEvent = MMethod(MUIM_HandleEvent, [ ('imsg', c_IntuiMessage.PointerType()),
+                                              ('muikey', c_LONG),
+                                              ('ehn', c_EventHandlerNode.PointerType()) ])
+    Setup       = MMethod(MUIM_Setup,       [ ('RenderInfo', c_APTR) ])
+
+    def __init__(self, **kwds):
+        v = kwds.pop('InnerSpacing', None)
+        if v is not None:
+            kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
+        g = globals()
+        frame = kwds.get('Frame', None)
+        if isinstance(frame, str):
+            try:
+                kwds['Frame'] = g['MUIV_Frame_'+frame]
+            except KeyError:
+                raise ValueError("Unknown Frame name: MUIV_Frame_%s" % frame)
+        imode = kwds.get('InputMode', None)
+        if isinstance(imode, str):
+            try:
+                kwds['InputMode'] = g['MUIV_InputMode_'+imode]
+            except KeyError:
+                raise ValueError("Unknown InputMode name: MUIV_InputMode_%s" % imode)
+        bg = kwds.get('Background', None)
+        if isinstance(bg, str) and 'MUII_'+bg in g:
+            kwds['Background'] = g['MUII_'+bg]
+
+        super(Area, self).__init__(**kwds)
+
+    def AddClipping(self):
+        """AddClipping() -> None
+
+        Call MUI_AddClipping() for the full area.
+
+        This function shall be called during MUIM_Draw method call.
+        And method RemoveClipping shall be called before leaving the MUIM_Draw method.
+        """
+
+        self.__cliphandle =_muimaster._AddClipping(self)
+
+    def RemoveClipping(self):
+        """RemoveClipping(self) -> None
+
+        Call MUI_RemoveClipping(). Must be called after a call to AddClipping and before
+        the end of the MUIM_Draw method.
+        """
+
+        _muimaster._RemoveClipping(self, self.__cliphandle)
+
+#===============================================================================
+
+class Dtpic(Area):
+    CLASSID = MUIC_Dtpic
+
+    Name = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR)
+
+    def __init__(self, Name=None, **kwds):
+        if Name: kwds['Name'] = Name
+        super(Dtpic, self).__init__(**kwds)
+
+#===============================================================================
+
+class Rectangle(Area):
+    CLASSID = MUIC_Rectangle
+
+    BarTitle = MAttribute(MUIA_Rectangle_BarTitle, 'i.g', c_STRPTR)
+    HBar     = MAttribute(MUIA_Rectangle_HBar,     'i.g', c_BOOL)
+    VBar     = MAttribute(MUIA_Rectangle_VBar,     'i.g', c_BOOL)
+
+    # Factory class methods
+
+    @classmethod
+    def mkHVSpace(cl):
+        return cl()
+
+    @classmethod
+    def mkHSpace(cl, x):
+        return cl(VertWeight=x)
+
+    @classmethod
+    def mkVSpace(cl, x):
+        return cl(HorizWeight=x)
+
+    @classmethod
+    def mkHCenter(cl, o, **kwds):
+        g = Group.HGroup(Spacing=0, **kwds)
+        g.AddChild(cl.mkHSpace(0), o, cl.mkHSpace(0))
+        return g
+
+    @classmethod
+    def mkVCenter(cl, o, **kwds):
+        g = Group.VGroup(Spacing=0, **kwds)
+        g.AddChild(cl.mkVSpace(0), o, cl.mkVSpace(0))
+        return g
+
+    @classmethod
+    def mkHBar(cl, space):
+        return cl(HBar=True, InnerTop=space, InnerBottom=space, VertWeight=0)
+
+    @classmethod
+    def mkVBar(cl, space):
+        return cl(VBar=True, InnerLeft=space, InnerRight=space, HorizWeight=0)
+
+HVSpace = Rectangle.mkHVSpace
+HSpace  = Rectangle.mkHSpace
+VSpace  = Rectangle.mkVSpace
+HCenter = Rectangle.mkHCenter
+VCenter = Rectangle.mkVCenter
+HBar    = Rectangle.mkHBar
+VBar    = Rectangle.mkVBar
 
 ################################################################################
 #################################  END OF FILE  ################################

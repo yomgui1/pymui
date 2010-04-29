@@ -86,7 +86,8 @@ class PyMUICUnionType(PyMUICType):
 
 class c_ULONG(_ct.c_ulong, PyMUICSimpleType): pass
 class c_LONG(_ct.c_long, PyMUICSimpleType): pass
-class c_WORD( _ct.c_short, PyMUICSimpleType): pass
+class c_UWORD(_ct.c_ushort, PyMUICSimpleType): pass
+class c_WORD(_ct.c_short, PyMUICSimpleType): pass
 class c_UBYTE(_ct.c_ubyte, PyMUICSimpleType): pass
 class c_BYTE(_ct.c_byte, PyMUICSimpleType): pass
 class c_CHAR(_ct.c_char, PyMUICSimpleType): pass
@@ -95,19 +96,12 @@ class c_APTR(_ct.c_void_p, PyMUICSimpleType):
     def __long__(self):
         return self.value
 
-class c_CONST_STRPTR(_ct.c_char_p, PyMUICSimpleType):
-    def __long__(self):
-        return _ct.cast(self, _ct.c_void_p).value or 0
-
-    def __getitem__(self, i):
-        return self.value[i]
-
 class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
     def __new__(cl, x=0):
         if isinstance(x, str):
             o = c_CONST_STRPTR.__new__(c_CONST_STRPTR)
         else:
-            o= _ct.c_char_p.__new__(cl)
+            o = _ct.c_char_p.__new__(cl)
         o.value = x
         return o
 
@@ -120,6 +114,10 @@ class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
     def __setitem__(self, i, v):
         _ct.POINTER(_ct.c_char).from_address(addressof(self))[i] = v
 
+class c_CONST_STRPTR(c_STRPTR):
+    def __setitem__(self, i, v):
+        raise NotImplemented("CONST_STRPRT cannot be changed")
+
 class c_PyObject(_ct.py_object, PyMUICSimpleType):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
@@ -130,9 +128,8 @@ class c_PyObject(_ct.py_object, PyMUICSimpleType):
     def __getitem__(self, i):
         return self.value[i]
 
-c_STRUCTURE = _ct.Structure
-c_ARRAY = _ct.Array
-c_UNION = _ct.Union
+class c_STRUCTURE(_ct.Structure, PyMUICType): pass
+class c_UNION(_ct.Union, PyMUICType): pass
 
 def PointerOn(x):
     return x.PointerType()(x)
@@ -196,8 +193,25 @@ class c_Hook(c_PyObject):
 
 c_pSTRPTR = c_STRPTR.PointerType()
 
+class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
+
+class c_Node(c_STRUCTURE): pass
+c_Node._fields_ = [ ('ln_Succ', c_Node.PointerType()),
+                    ('ln_Pred', c_Node.PointerType()),
+                    ('ln_Type', c_UBYTE),
+                    ('ln_Pri', c_BYTE),
+                    ('ln_Name', c_STRPTR) ]
+
+class c_MinNode(c_STRUCTURE): pass
+c_MinNode._fields_ = [ ('mln_Succ', c_MinNode.PointerType()),
+                       ('mln_Pred', c_MinNode.PointerType()) ]
+
+class c_Message(c_STRUCTURE):
+    _fields_ = [ ('mn_Node', c_Node),
+                 ('mn_ReplyPort', c_APTR),
+                 ('mn_Length', c_UWORD) ]
 
 ################################################################################
 #### Test-suite
