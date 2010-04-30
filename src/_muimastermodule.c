@@ -249,6 +249,7 @@ static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
 static struct MinList gObjectList;
 static struct Hook OnAttrChangedHook;
+static APTR gMemPool;
 
 
 /*
@@ -303,12 +304,16 @@ static void objdb_remove(Object *bObj)
 static PyObject *objdb_get(Object *bObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj);
-    PyObject *wref;
+    PyObject *wref, *pyo;
 
     wref = PyDict_GetItem(gBOOPSI_Objects_Dict, key); /* BR */
     Py_XDECREF(key);
 
-    return PyWeakref_GetObject(wref);
+    pyo = PyWeakref_GET_OBJECT(wref); /* BR */
+    if (Py_None == pyo)
+        return NULL;
+
+    return pyo;
 }
 //-
 //+ loose
@@ -446,39 +451,45 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 //+ OnAttrChanged
 static void
 OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
-    PyObject *pyo = (PyObject *)args[0];
+    PyObject **wref_storage = (PyObject **)args[0];
+    PyObject *pyo;
+    PyGILState_STATE gstate;
     ULONG attr = args[1];
-    ULONG value = args[2];
 
     /* As notifications are not removed, they can occures during the module cleanup
      * caused during objects disposing (strange, but ...).
-     * So, we protect the code aginst that.
+     * So, we protect the code against that.
      */
-    if (!ATOMIC_FETCH(&gModuleIsValid))
-        pyo = NULL;
+    if (!ATOMIC_FETCH(&gModuleIsValid) || (NULL == *wref_storage))
+        return;
 
-    /* In case of the Python object die before the MUI object */
-    if (NULL != pyo) {
+    gstate = PyGILState_Ensure();
+
+    pyo = PyWeakref_GET_OBJECT(*wref_storage); /* BR */
+    if (Py_None != pyo) {
         PyObject *res;
-        PyGILState_STATE gstate;
+        ULONG v = args[2];
 
-        gstate = PyGILState_Ensure();
-        Py_INCREF(pyo); /* to prevent that our object was deleted during methods calls */
+        DPRINT("{%#lx} pyo=%p-'%s', MUI=%p, value=(%ld, %lu, $%X)\n",
+               attr, pyo, OBJ_TNAME(pyo), mo, v, v, (APTR)v);
 
-        DPRINT("{%#lx} Py=%p-%s, MUI=%p, value=(%ld, %lu, %p)\n",
-               attr, pyo, OBJ_TNAME_SAFE(pyo), mo, (LONG)value, value, (APTR)value);
+        Py_INCREF(pyo);
 
-        res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, value, ~value); /* NR */
+        res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
         DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
 
-        if (PyErr_Occurred() && (NULL != gApp))
-            DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+        if (PyErr_Occurred() && (NULL != _app(mo)))
+            DoMethod(_app(mo), MUIM_Application_ReturnID, ID_BREAK);
 
         Py_XDECREF(res);
         Py_DECREF(pyo);
-
-        PyGILState_Release(gstate);
+    } else {
+        DPRINT("Dead python object for MUI obj %p, attribute $%08x\n", mo, attr);
+        Py_DECREF(*wref_storage);
+        *wref_storage = NULL;
     }
+
+    PyGILState_Release(gstate);
 }
 //-
 
@@ -1130,28 +1141,42 @@ Sorry, Not documented yet :-(");
 static PyObject *
 muiobject__notify(PyMUIObject *self, PyObject *args)
 {
-    ULONG trigattr, trigvalue, value;
+    ULONG trigattr;
     Object *mo;
+    PyObject **wref_storage;
 
     mo = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == mo)
         return NULL;
 
-    trigvalue = MUIV_EveryTime;
-    if (!PyArg_ParseTuple(args, "I|I", &trigattr, &trigvalue)) /* BR */
+    if (!PyArg_ParseTuple(args, "I", &trigattr)) /* BR */
         return NULL;
 
-    DPRINT("MO: %p, trigattr: %#lx, trigvalue: %ld, %lu, %#lx\n",
-           mo, trigattr, (LONG)trigvalue, trigvalue, trigvalue);
+    /* The hook will be called using a weakref on the python object.
+     * So if the python object is destroyed the weakref gives NULL.
+     * In this last case the hook will destroy also the weakref.
+     * But we can't give directly to the hook this weakref as parameter
+     * as it will be invalid, so we use a mempool to store this ptr.
+     * The storage will be NULLed when weakref die.
+     * The storage memory is freed globaly by using a mempool.
+     */
 
-    if (MUIV_EveryTime == trigvalue)
-        value = MUIV_TriggerValue;
-    else
-        value = trigvalue;
+    wref_storage = AllocPooled(gMemPool, sizeof(*wref_storage));
+    if (NULL == wref_storage)
+        return PyErr_NoMemory();
 
-    DoMethod(mo, MUIM_Notify, trigattr, trigvalue,
+    *wref_storage = PyWeakref_NewRef((PyObject *)self, NULL); /* NR */
+    if (NULL == *wref_storage) {
+        FreePooled(gMemPool, wref_storage, sizeof(*wref_storage));
+        return NULL;
+    }
+
+    DPRINT("MO: %p, WRef ptr: %p on %p-'%s', trigattr: %#lx\n",
+           mo, wref_storage, self, OBJ_TNAME(self), trigattr);
+
+    DoMethod(mo, MUIM_Notify, trigattr, MUIV_EveryTime,
              MUIV_Notify_Self, 5,
-             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) NULL, trigattr, value);
+             MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) wref_storage, trigattr, MUIV_TriggerValue);
 
     DPRINT("done\n");
 
@@ -1261,8 +1286,9 @@ static PyGetSetDef muiobject_getseters[] = {
 };
 
 static struct PyMethodDef muiobject_methods[] = {
-    {"_nnset", (PyCFunction) muiobject__nnset, METH_VARARGS, muiobject__nnset_doc},
-    {"Redraw", (PyCFunction) muiobject__redraw, METH_O, muiobject__redraw_doc},
+    {"_notify", (PyCFunction) muiobject__notify, METH_VARARGS, muiobject__notify_doc},
+    {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
+    {"Redraw",  (PyCFunction) muiobject__redraw, METH_O, muiobject__redraw_doc},
     {NULL} /* sentinel */
 };
 
@@ -1497,6 +1523,8 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
         if (NULL != pObj) {
             if (!TypeOfMem(pObj))
                 return PyErr_Format(PyExc_ValueError, "value '%x' is not a valid system pointer", (unsigned int)pObj);
+
+            Py_INCREF(pObj);
             return pObj;
         }
     }
@@ -1506,6 +1534,7 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
     if (NULL != pObj) {
         PyBOOPSIObject_SET_OBJECT(pObj, bObj);
         ((PyBOOPSIObject *)pObj)->flags = 0;
+        ((PyBOOPSIObject *)pObj)->node = NULL;
     }
 
     return pObj;
@@ -1651,6 +1680,11 @@ PyMorphOS_CloseModule(void)
         MUIMasterBase = NULL;
     }
 
+    if (NULL != gMemPool) {
+        DeletePool(gMemPool);
+        gMemPool = NULL;
+    }
+
     DPRINT("Bye\n");
 }
 //- PyMorphOS_CloseModule
@@ -1673,61 +1707,65 @@ INITFUNC(void) {
     NEWLIST((struct List *)&gObjectList);
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
 
-    MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
-    if (NULL != MUIMasterBase) {
-        LayersBase = OpenLibrary("layers.library", 50);
-        if (NULL != LayersBase) {
-            CyberGfxBase = OpenLibrary("cybergraphics.library", 50);
-            if (NULL != CyberGfxBase) {
-                /* object -> pyobject database */
-                d = PyDict_New(); /* NR */
-                if (NULL != d) {
-                    int error = 0;
+    gMemPool = CreatePool(MEMF_PUBLIC|MEMF_SEM_PROTECTED, 1024, 512);
+    if (NULL != gMemPool) {
+        MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
+        if (NULL != MUIMasterBase) {
+            LayersBase = OpenLibrary("layers.library", 50);
+            if (NULL != LayersBase) {
+                CyberGfxBase = OpenLibrary("cybergraphics.library", 50);
+                if (NULL != CyberGfxBase) {
+                    /* object -> pyobject database */
+                    d = PyDict_New(); /* NR */
+                    if (NULL != d) {
+                        int error = 0;
 
-                    /* New Python types initialization */
-                    error |= PyType_Ready(&PyBOOPSIObject_Type);
-                    error |= PyType_Ready(&PyMUIObject_Type);
-                    error |= PyType_Ready(&CHookObject_Type);
+                        /* New Python types initialization */
+                        error |= PyType_Ready(&PyBOOPSIObject_Type);
+                        error |= PyType_Ready(&PyMUIObject_Type);
+                        error |= PyType_Ready(&CHookObject_Type);
 
-                    if (!error) {
-                        /* Module creation/initialization */
-                        m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
-                        if (NULL != m) {
-                            error = all_ins(m);
-                            if (!error) {
-                                ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
-                                ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
-                                ADD_TYPE(m, "_CHook", &CHookObject_Type);
-                        
-                                PyModule_AddObject(m, "_obj_dict", d);
-                        
-                                gBOOPSI_Objects_Dict = d;
-                                gModuleIsValid = TRUE;
-                                return;
+                        if (!error) {
+                            /* Module creation/initialization */
+                            m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
+                            if (NULL != m) {
+                                error = all_ins(m);
+                                if (!error) {
+                                    ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
+                                    ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
+                                    ADD_TYPE(m, "_CHook", &CHookObject_Type);
+                            
+                                    PyModule_AddObject(m, "_obj_dict", d);
+                            
+                                    gBOOPSI_Objects_Dict = d;
+                                    gModuleIsValid = TRUE;
+                                    return;
+                                }
+
+                                Py_DECREF(m);
                             }
-
-                            Py_DECREF(m);
                         }
-                    }
 
-                    Py_DECREF(d);
+                        Py_DECREF(d);
+                    } else
+                        DPRINT("Failed to create object->pyobject dict\n");
+
+                    CloseLibrary(CyberGfxBase);
+                    CyberGfxBase = NULL;
                 } else
-                    DPRINT("Failed to create object->pyobject dict\n");
+                    DPRINT("Can't open library %s, V%u.\n", "cybergraphics.library", 50);
 
-                CloseLibrary(CyberGfxBase);
-                CyberGfxBase = NULL;
+                CloseLibrary(LayersBase);
+                LayersBase = NULL;
             } else
-                DPRINT("Can't open library %s, V%u.\n", "cybergraphics.library", 50);
+                DPRINT("Can't open library %s, V%u.\n", "layers.library", 50);
 
-            CloseLibrary(LayersBase);
-            LayersBase = NULL;
+            CloseLibrary(MUIMasterBase);
+            MUIMasterBase = NULL;
         } else
-            DPRINT("Can't open library %s, V%u.\n", "layers.library", 50);
-
-        CloseLibrary(MUIMasterBase);
-        MUIMasterBase = NULL;
+            DPRINT("Can't open library %s, V%u.\n", MUIMASTER_NAME, MUIMASTER_VLATEST);
     } else
-        DPRINT("Can't open library %s, V%u.\n", MUIMASTER_NAME, MUIMASTER_VLATEST);
+        DPRINT("Failed to create a global memory pool\n");
 }
 //-
 

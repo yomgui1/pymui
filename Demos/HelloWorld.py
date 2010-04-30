@@ -50,7 +50,7 @@ win = Window('HelloWorld window - functionnal version - PyMUI demo test',
 # Creating an Application object
 # Adding the previous created window as the main window of the application
 # A main window closes the application when the window is closed.
-app = Application(MainWindow=win,
+app = Application(win,
                   Title="HelloWorld",
                   Author = "Guillaume ROGUEZ",
                   Description="Simple functional usage of PyMUI",

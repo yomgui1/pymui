@@ -580,8 +580,6 @@ class PyMUIBase:
 #### Official Public Classes
 ################################################################################
 
-#===============================================================================
-
 class BOOPSIRootClass(PyBOOPSIObject, PyMUIBase):
     """rootclass for all BOOPSI sub-classes.
 
@@ -602,6 +600,33 @@ class BOOPSIRootClass(PyBOOPSIObject, PyMUIBase):
 #===============================================================================
 
 class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR.PointerType())
+
+class Event(object):
+    def __init__(self, source):
+        self.Source = source
+
+    @staticmethod
+    def noevent(func):
+        @functools.wraps(func)
+        def wrapper(self, evt, *args):
+            return func(self, *args)
+        return wrapper
+
+class AttributeEvent(Event):
+    def __init__(self, source, value, not_value):
+        Event.__init__(self, source)
+        self.value = value
+        self.not_value = not_value
+
+class AttributeNotify:
+    def __init__(self, trigvalue, cb, args, kwds):
+        self.cb = cb
+        self.args = args
+        self.kwds = kwds
+        self.trigvalue = trigvalue # keep as it, specially it's an instance of PyMUICType
+
+    def __call__(self, e):
+        return self.cb(e, *self.args, **self.kwds)
 
 class Notify(PyMUIObject, PyMUIBase):
     """rootclass for all MUI sub-classes.
@@ -633,8 +658,16 @@ class Notify(PyMUIObject, PyMUIBase):
         self.create(**kwds)
         self.postcreate(**kwds)
         
+    def _notify_cb(self, a, v, nv):
+        attr = self._getMAByID(a)
+        e = AttributeEvent(self, attr.ctype.FromLong(v), nv)
+        for o in self.__notify_cbdict[a]:
+            if o.trigvalue == MUIV_EveryTime or long(o.trigvalue) == v:
+                if o(e): return
+
     def precreate(self, **kwds):
         self._keep_db = {}
+        self.__notify_cbdict = {}
         PyMUIObject.__init__(self)
         
     def postcreate(self, **kwds): pass
@@ -667,6 +700,12 @@ class Notify(PyMUIObject, PyMUIBase):
         assert callable(callback)
         attr = self._getMA(attr)
         assert 's' in attr.isg or 'g' in attr.isg
+        event = AttributeNotify(trigvalue, callback, args, kwds)
+        if attr.id in self.__notify_cbdict:
+            self.__notify_cbdict[attr.id].append(event)
+        else:
+            self.__notify_cbdict[attr.id] = [ event ]
+            self._notify(attr.id)
         
 #===============================================================================
 
@@ -729,9 +768,10 @@ class Application(Notify): # TODO: unfinished
     def __init__(self, mainwin=None, **kwds):
         super(Application, self).__init__(**kwds)
 
+        self.__mainwin = mainwin
         if mainwin:
             self.AddChild(mainwin)
-            mainwin.Notify(MUIA_Window_CloseRequest, False, lambda e: e.Source.KillApp())
+            mainwin.Notify(MUIA_Window_CloseRequest, True, lambda e: e.Source.KillApp())
 
     def AddChild(self, win):
         assert isinstance(win, Window)

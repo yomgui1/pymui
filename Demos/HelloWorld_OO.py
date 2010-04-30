@@ -47,8 +47,7 @@ class MainWindow(Window):
 class HelloWorld(Application):
     def __init__(self):
         win = MainWindow()
-        
-        super(MainWindow, self).__init__(MainWindow=win,
+        super(HelloWorld, self).__init__(win,
                                          Title="HelloWorld_OO",
                                          Author = "Guillaume ROGUEZ",
                                          Description="OO usage of PyMUI",
