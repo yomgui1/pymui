@@ -458,7 +458,7 @@ def muimethod(mid):
 
     The given MethodID argument can be a interger or an instance of MAttribute.
 
-    Note: an MCC class shall define 'MCC' class attribute to True to be used
+    Note: an MCC class shall define '_MCC_' class attribute to True to be used
     as an MCC with overloading methods and not as normal class.
     """
     def wrapper(func):
@@ -683,9 +683,7 @@ class Notify(PyMUIObject, PyMUIBase):
             attr = self._getMAByName(k)
             muiargs.append( (attr.id, attr.init(self, v)) )
         
-        self._create(self._bclassid, muiargs + extra,
-                     self.__class__._MCC_,
-                     getattr(self.__class__, '__pymui_overloaded__', {}))
+        self._create(self._bclassid, muiargs + extra, self.__class__._MCC_)
 
     def NNSet(self, attr, v):
         self._getMA(attr).setter(self, v, nn=True)

@@ -208,8 +208,8 @@ enum {
 
 typedef struct ObjectNode_STRUCT {
     struct MinNode node;
-    Object * obj;
-    LONG flags;
+    Object *       obj;
+    LONG           flags;
 } ObjectNode;
 
 typedef struct PyBOOPSIObject_STRUCT {
@@ -231,6 +231,26 @@ typedef struct CHookObject_STRUCT {
     PyObject *    callable;
 } CHookObject;
 
+typedef struct MCCData_STRUCT {
+    PyObject *wref;
+} MCCData;
+
+typedef struct MCCNode_STRUCT {
+    struct MinNode           node;
+    struct MUI_CustomClass * mcc;
+} MCCNode;
+
+typedef struct PyMethodMsgObject_STRUCT {
+    PyObject_HEAD
+
+    PyObject *      mmsg_PyMsg;
+    struct IClass * mmsg_Class;
+    Object *        mmsg_Object;
+    Msg             mmsg_Msg;
+    BOOL            mmsg_SuperCalled;
+    ULONG           mmsg_SuperResult;
+} PyMethodMsgObject;
+
 
 /*
 ** Private Variables
@@ -243,11 +263,13 @@ static struct Library *LayersBase;
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static PyTypeObject CHookObject_Type;
+static PyTypeObject PyMethodMsgObject_Type;
 
 static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
 static struct MinList gObjectList;
+static struct MinList gMCCList;
 static struct Hook OnAttrChangedHook;
 static APTR gMemPool;
 
@@ -485,14 +507,155 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
         Py_DECREF(pyo);
     } else {
         DPRINT("Dead python object for MUI obj %p, attribute $%08x\n", mo, attr);
-        Py_DECREF(*wref_storage);
-        *wref_storage = NULL;
+        Py_CLEAR(*wref_storage);
     }
 
     PyGILState_Release(gstate);
 }
 //-
+//+ PyMethodMsg_New
+static PyMethodMsgObject *
+PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
+{
+    PyMethodMsgObject *self;
 
+    self = PyObject_New(PyMethodMsgObject, &PyMethodMsgObject_Type); /* NR */
+    if (NULL != self) {
+        self->mmsg_PyMsg       = NULL;
+        self->mmsg_Class       = cl;
+        self->mmsg_Object      = obj;
+        self->mmsg_Msg         = msg;
+        self->mmsg_SuperCalled = FALSE;
+    }
+
+    return self;
+}
+//-
+
+
+/*******************************************************************************************
+** MCC MUI Object
+*/
+
+//+ mCheckPython
+static ULONG
+mCheckPython(struct IClass *cl, Object *obj, Msg msg)
+{
+    MCCData *data = INST_DATA(cl, obj);
+    PyGILState_STATE gstate;
+    PyObject *pyo;
+    BOOL super = FALSE;
+    ULONG result = 0;
+
+    if (!ATOMIC_FETCH(&gModuleIsValid) || (NULL == data->wref))
+        return DoSuperMethodA(cl, obj, msg);
+
+    gstate = PyGILState_Ensure();
+
+    pyo = PyWeakref_GET_OBJECT(data->wref); /* BR */
+    DPRINT("pyo: %p\n", pyo);
+    if (Py_None != (PyObject *)pyo) {
+        PyObject *overloaded_dict;
+
+        Py_INCREF(pyo);
+        overloaded_dict = PyObject_GetAttrString(pyo, "__pymui_overloaded__");
+        Py_DECREF(pyo);
+
+        if (NULL != overloaded_dict) {
+            PyObject *key, *value;
+            int pos = 0;
+
+            while (PyDict_Next(overloaded_dict, &pos, &key, &value)) { /* BR */
+                ULONG mid = PyLong_AsUnsignedLongMask(key);
+
+                if (PyErr_Occurred())
+                    break;
+
+                if (mid == msg->MethodID) {
+                    PyObject *o;
+                    PyMethodMsgObject *msg_obj;
+
+                    msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
+                    if (NULL != msg_obj) {
+                        DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
+                            pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
+
+                        Py_INCREF(value);
+                        o = PyObject_CallFunction(value, "ON", pyo, msg_obj);
+                        DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
+                        Py_DECREF(value);
+
+                        super = msg_obj->mmsg_SuperCalled;
+                        result = msg_obj->mmsg_SuperResult;
+
+                        if (NULL != o) {
+                            int ok = py2long(o, &result);
+
+                            Py_DECREF(o);
+                            if (!ok)
+                                goto check_super;
+
+                            goto bye;
+                        }
+                    }
+
+                    break;
+                }
+            }
+        } else
+            PyErr_Clear();
+    } else {
+        DPRINT("Dead python object for MUI obj %p, method $%08x\n", obj, msg->MethodID);
+        Py_CLEAR(data->wref);
+    }
+
+check_super:
+    if (!super)
+        result = DoSuperMethodA(cl, obj, msg);
+
+bye:
+    PyGILState_Release(gstate);
+
+    if (PyErr_Occurred()) {
+        Object *app = _app(pyo);
+        DPRINT("error, app=%p, obj=%p, MethodID=%x\n", app, obj, msg->MethodID);
+
+        if (NULL != app)
+            DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
+
+        result = 0;
+    }
+
+    return result;
+}
+//-
+//+ MCC Dispatcher
+DISPATCHER(mcc)
+{
+    ULONG result;
+
+    switch (msg->MethodID) {
+        /* Protect basic BOOPSI methods */
+        case OM_NEW:
+        case OM_DISPOSE:
+        case OM_ADDMEMBER:
+        case OM_REMMEMBER:
+        case OM_SET:
+        case OM_GET:
+        case OM_ADDTAIL:
+        case OM_REMOVE:
+        case OM_NOTIFY:
+        case OM_UPDATE:
+            result = DoSuperMethodA(cl, obj, msg);
+            break;
+
+        default: result = mCheckPython(cl, obj, (APTR)msg);
+    }
+
+    return result;
+}
+DISPATCHER_END
+//-
 
 /*******************************************************************************************
 ** PyBOOPSIObject_Type
@@ -717,13 +880,14 @@ static PyObject *
 boopsi__create(PyBOOPSIObject *self, PyObject *args)
 {
     UBYTE *classid;
-    LONG isMCC = FALSE;
-    PyObject *fast, *params = NULL;
-    PyObject *overloaded_dict = NULL;
+    PyObject *err = NULL, *fast, *params = NULL;
+    struct MUI_CustomClass *mcc = NULL;
     struct TagItem *tags;
-    ULONG n;
     Object *bObj;
     ObjectNode *node;
+    LONG isMCC = FALSE;
+    BOOL isMUI;
+    ULONG n;
 
     /* Protect againts doubles */
     if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
@@ -731,10 +895,16 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s|OiO!:PyBOOPSIObject", &classid, &params, &isMCC, &PyDict_Type, &overloaded_dict)) /* BR */
+    if (!PyArg_ParseTuple(args, "s|Oi:PyBOOPSIObject", &classid, &params, &isMCC)) /* BR */
         return NULL;
 
     DPRINT("ClassID: '%s', isMCC: %d\n", classid, isMCC);
+
+    isMUI = PyMUIObject_Check(self);
+    if (!isMUI && isMCC) {
+        PyErr_SetString(PyExc_TypeError, "MCC feature requested on a non-MUI object");
+        return NULL;
+    }
 
     /* Parse params sequence and convert it into tagitem's */
     fast = PySequence_Fast(params, "object tags shall be convertible into tuple or list"); /* NR */
@@ -785,22 +955,63 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
      */
     node = AllocMem(sizeof(ObjectNode), MEMF_PUBLIC | MEMF_CLEAR | MEMF_SEM_PROTECTED);
     if (NULL == node) {
-        if (NULL != tags)
-            PyMem_Free(tags);
-        return PyErr_NoMemory();
+        err = PyErr_NoMemory();
+        goto bye_err;
     }
 
     DPRINT("Node created @ %p\n", node);
 
+    /* Need to create a new MCC or a simple MUI object instance ? */
+    if (isMCC) {
+        MCCNode *node = NULL, *next;
+
+        DPRINT("Search for MCC based on: '%s'\n", classid);
+
+        ForeachNode(&gMCCList, next) {
+            if ((NULL != next->mcc->mcc_Super->cl_ID) && !strcmp(classid, next->mcc->mcc_Super->cl_ID)) {
+                node = next;
+                break;
+            }
+        }
+
+        if (NULL == node) {
+            node = AllocMem(sizeof(MCCNode), MEMF_PUBLIC | MEMF_SEM_PROTECTED | MEMF_CLEAR);
+            if (NULL == node) {
+                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+                goto bye_err;
+            }
+
+            mcc = MUI_CreateCustomClass(NULL, classid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
+            if (NULL == mcc) {
+                free(node);
+                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+                goto bye_err;
+            }
+
+            node->mcc = mcc;
+            ADDTAIL(&gMCCList, node);
+        } else
+            mcc = node->mcc;
+
+        DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->mcc->mcc_Super->cl_ID);
+    }
+
     /* Creating the BOOPSI/MUI object */
-    if (PyMUIObject_Check(self)) {
-        bObj = MUI_NewObjectA(classid, tags);
+    if (isMUI) {
+        if (NULL != mcc)
+            bObj = NewObjectA(mcc->mcc_Class, NULL, tags);
+        else
+            bObj = MUI_NewObjectA(classid, tags);
         node->flags |= NODE_FLAG_MUI;
-    } else
+    } else if (NULL != mcc)
+        bObj = NewObjectA(mcc->mcc_Class, NULL, tags);
+    else
         bObj = NewObjectA(NULL, classid, tags);
 
-    if (NULL != tags)
+    if (NULL != tags) {
         PyMem_Free(tags);
+        tags = NULL;
+    }
 
     if (NULL != bObj) {
         DPRINT("New '%s' object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
@@ -812,8 +1023,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             else
                 DisposeObject(bObj);
 
-            FreeMem(node, sizeof(*node));
-            return NULL;
+            goto bye_err;
         }
 
         PyBOOPSIObject_SET_OBJECT(self, bObj);
@@ -825,8 +1035,16 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         Py_RETURN_NONE;
     }
 
-    FreeMem(node, sizeof(*node));
-    return PyErr_Format(PyExc_SystemError, "Failed to create BOOPSI object of class %s", classid);
+    err = PyErr_Format(PyExc_SystemError, "Failed to create BOOPSI object of class %s", classid);
+
+bye_err:
+    if (NULL != tags)
+        PyMem_Free(tags);
+
+    if (NULL == node)
+        FreeMem(node, sizeof(*node));
+
+    return err;
 }
 //-
 //+ boopsi__get
@@ -1068,7 +1286,7 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
-        /**/
+        ;
     }
 
     return (PyObject *)self;
@@ -1298,7 +1516,7 @@ static PyTypeObject PyMUIObject_Type = {
     tp_base         : &PyBOOPSIObject_Type,
     tp_name         : "_muimaster.PyMUIObject",
     tp_basicsize    : sizeof(PyMUIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE/* | Py_TPFLAGS_HAVE_GC*/,
     tp_doc          : "MUI Objects",
 
     tp_new          : (newfunc)muiobject_new,
@@ -1398,6 +1616,92 @@ static PyTypeObject CHookObject_Type = {
     tp_dealloc      : (destructor)chook_dealloc,
 
     tp_members      : chook_members,
+};
+
+/*******************************************************************************************
+** MethodMsg_Type
+*/
+
+//+ mmsg__setup
+static PyObject *
+mmsg__setup(PyMethodMsgObject *self, PyObject *callable)
+{
+    if (!PyCallable_Check(callable)) {
+        PyErr_SetString(PyExc_TypeError, "bad internal call");
+        return NULL;
+    }
+
+    /* The argument shall be a callable that takes the pointer on the BOOPSI Msg
+     * and returns a PyMUICType object set with this message.
+     */
+    self->mmsg_PyMsg = PyObject_CallFunction(callable, "k", (ULONG)self->mmsg_Msg);
+    if (NULL == self->mmsg_PyMsg)
+        return NULL;
+
+    Py_INCREF(self);
+    return (PyObject *)self;
+}
+//-
+//+ mmsg_dosuper
+static PyObject *
+mmsg_dosuper(PyMethodMsgObject *self)
+{
+    struct IClass *cl;
+    Object *obj;
+    Msg msg;
+
+    msg = self->mmsg_Msg;
+
+    if (self->mmsg_SuperCalled)
+        return PyErr_Format(PyExc_RuntimeError, "SuperMethod already called for id 0x%08x", (unsigned int)msg->MethodID);
+
+    cl = self->mmsg_Class;
+    obj = self->mmsg_Object;
+
+    DPRINT("cl: %p, obj: %p, msg: %p (MethodID: 0x%08x)\n", cl, obj, msg, msg->MethodID);
+    self->mmsg_SuperCalled = TRUE; /* better to set it now */
+    self->mmsg_SuperResult = DoSuperMethodA((struct IClass *)cl, obj, msg);
+
+    if (PyErr_Occurred())
+        return NULL;
+
+    return PyLong_FromUnsignedLong(self->mmsg_SuperResult);
+}
+//-
+//+ mmsg_getattro
+static PyObject *
+mmsg_getattro(PyMethodMsgObject *self, PyObject *attr)
+{
+    PyObject *o;
+
+    o = PyObject_GenericGetAttr((PyObject *)self, attr); /* NR */
+    if ((NULL == o) && (NULL != self->mmsg_PyMsg)) {
+        PyErr_Clear();
+        DPRINT("PyMsg: %p\n", self->mmsg_PyMsg);
+        return PyObject_GetAttr(self->mmsg_PyMsg, attr);
+    }
+
+    return o;
+}
+//-
+
+static struct PyMethodDef mmsg_methods[] = {
+    {"_setup", (PyCFunction)mmsg__setup, METH_O, "PRIVATE. Don't call it."},
+    {"DoSuper", (PyCFunction)mmsg_dosuper, METH_NOARGS, "Call DoSuperMethod() using IClass and Msg in this object."},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyMethodMsgObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.MethodMsg",
+    tp_basicsize    : sizeof(PyMethodMsgObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT,
+    tp_doc          : "Method Message Objects",
+
+    tp_new          : (newfunc)PyType_GenericNew,
+    tp_getattro     : (getattrofunc)mmsg_getattro,
+    tp_methods      : mmsg_methods,
 };
 
 /*******************************************************************************************
@@ -1599,6 +1903,7 @@ void
 PyMorphOS_CloseModule(void)
 {
     ObjectNode *node;
+    MCCNode *mcc_node;
     APTR next;
 
     DPRINT("Closing module...\n");
@@ -1662,6 +1967,13 @@ PyMorphOS_CloseModule(void)
         FreeMem(node, sizeof(*node));
     }   
 
+    /* MCC disposing */
+    ForeachNodeSafe(&gMCCList, mcc_node, next) {
+        DPRINT("Disposing MCC node @ %p (mcc=%p-'%s')\n", mcc_node, mcc_node->mcc, mcc_node->mcc->mcc_Super->cl_ID);
+        MUI_DeleteCustomClass(mcc_node->mcc);
+        FreeMem(mcc_node, sizeof(*mcc_node));
+    }
+
     if (NULL != CyberGfxBase) {
         DPRINT("Closing cybergfx library...\n");
         CloseLibrary(CyberGfxBase);
@@ -1705,6 +2017,7 @@ INITFUNC(void) {
     PyObject *m, *d;
 
     NEWLIST((struct List *)&gObjectList);
+    NEWLIST(&gMCCList);
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
 
     gMemPool = CreatePool(MEMF_PUBLIC|MEMF_SEM_PROTECTED, 1024, 512);
@@ -1724,6 +2037,7 @@ INITFUNC(void) {
                         error |= PyType_Ready(&PyBOOPSIObject_Type);
                         error |= PyType_Ready(&PyMUIObject_Type);
                         error |= PyType_Ready(&CHookObject_Type);
+                        error |= PyType_Ready(&PyMethodMsgObject_Type);
 
                         if (!error) {
                             /* Module creation/initialization */
