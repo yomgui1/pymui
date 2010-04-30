@@ -303,14 +303,14 @@ for more information on calls.");
  * So at each instant, one BOOPSI object is always linked to only one Python object.
  * But at two different moments this Python object can be different.
  * The Python object reference itself is not saved, but only a weak reference of it.
- * In this way is to the user to 
+ * In this way the user needs to keep valid the object if it want to save its attributes.
  */
 
 //+ objdb_add
 static int objdb_add(Object *bObj, PyObject *pObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj); /* NR */
-    PyObject *wref = PyWeakref_NewRef(pObj, gKillDBEntry); /* NR */
+    PyObject *wref = PyWeakref_NewRef(pObj, NULL); /* NR */
     int res;
 
     /* BOOPSI -> Python relation */
@@ -2062,8 +2062,6 @@ INITFUNC(void) {
                         error |= PyType_Ready(&PyMethodMsgObject_Type);
 
                         if (!error) {
-                            gKillDBEntry = Py
-
                             /* Module creation/initialization */
                             m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
                             if (NULL != m) {
