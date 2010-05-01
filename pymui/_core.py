@@ -305,7 +305,7 @@ class MMethod(property):
             self.__retconv = rettype.FromLong
         
         if fields:
-            self.__msgtype = type('c_MUIP_%x' % id, (c_STRUCTURE,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
+            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
             buftp = (_ct.c_ulong * (len(fields)+1))
 
             if not varargs:
@@ -353,7 +353,7 @@ class MMethod(property):
                         msg[i+1] = long(o)
                     return self.__retconv(obj._do(msg, args))
         else:
-            self.__msgtype = type('c_MUIP_%x' % id, (c_STRUCTURE,), {'_fields_': [ ('MethodID', c_ULONG) ]})
+            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_fields_': [ ('MethodID', c_ULONG) ]})
 
             if not varargs:
                 def cb(obj):
@@ -823,14 +823,14 @@ class Window(Notify): # TODO: unfinished
     IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
     LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
     MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
-    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject, postSet=postset_child)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
     MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_MUIObject)
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR, keep=True)
     RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject, keep=True)
-    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=postset_child)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=postset_child, keep=True)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR, keep=True)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR, keep=True)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
@@ -1002,7 +1002,7 @@ class AboutMUI(Window):
  
 #===============================================================================
 
-class c_MinMax(c_STRUCTURE):
+class c_MinMax(PyMUICStructureType):
     _fields_ = [ ('MinWidth', c_WORD),
                  ('MinHeight', c_WORD),
                  ('MaxWidth', c_WORD),
@@ -1010,7 +1010,7 @@ class c_MinMax(c_STRUCTURE):
                  ('DefWidth', c_WORD),
                  ('DefHeight', c_WORD) ]
 
-class c_IntuiMessage(c_STRUCTURE):
+class c_IntuiMessage(PyMUICStructureType):
     _fields_ = [ ('ExecMessage', c_Message),
                  ('Class', c_ULONG),
                  ('Code', c_UWORD),
@@ -1023,7 +1023,7 @@ class c_IntuiMessage(c_STRUCTURE):
                  ('IDCMPWindow', c_APTR),
                  ('SpecialLink', c_APTR) ]
 
-class c_EventHandlerNode(c_STRUCTURE):
+class c_EventHandlerNode(PyMUICStructureType):
     _fields_ = [ ('ehn_Node', c_MinNode),
                  ('ehn_Reserved', c_BYTE),
                  ('ehn_Priority', c_BYTE),
@@ -1037,7 +1037,7 @@ class Area(Notify): # TODO: unfinished
 
     Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR, keep=True)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
-    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=postset_child)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=postset_child, keep=True)
     ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
     ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
@@ -1329,7 +1329,7 @@ class String(Area):
     Accept         = MAttribute(MUIA_String_Accept,         'isg', c_STRPTR, keep=True)
     Acknowledge    = MAttribute(MUIA_String_Acknowledge,    '..g', c_STRPTR)
     AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR,    'isg', c_BOOL)
-    AttachedList   = MAttribute(MUIA_String_AttachedList,   'isg', c_MUIObject, postSet=postset_child)
+    AttachedList   = MAttribute(MUIA_String_AttachedList,   'isg', c_MUIObject, postSet=postset_child, keep=True)
     BufferPos      = MAttribute(MUIA_String_BufferPos,      '.sg', c_LONG)
     Contents       = MAttribute(MUIA_String_Contents,       'isg', c_STRPTR, keep=True)
     DisplayPos     = MAttribute(MUIA_String_DisplayPos,     '.sg', c_LONG)
@@ -1843,7 +1843,7 @@ class Scrollgroup(Group):
     CLASSID = MUIC_Scrollgroup
 
     AutoBars     = MAttribute(MUIA_Scrollgroup_AutoBars,     'isg', c_BOOL)
-    Contents     = MAttribute(MUIA_Scrollgroup_Contents,     'i.g', c_MUIObject, postSet=postset_child)
+    Contents     = MAttribute(MUIA_Scrollgroup_Contents,     'i.g', c_MUIObject, postSet=postset_child, keep=True)
     FreeHoriz    = MAttribute(MUIA_Scrollgroup_FreeHoriz,    'i..', c_BOOL)
     FreeVert     = MAttribute(MUIA_Scrollgroup_FreeVert,     'i..', c_BOOL)
     HorizBar     = MAttribute(MUIA_Scrollgroup_HorizBar,     '..g', c_MUIObject)
@@ -1868,7 +1868,7 @@ class Listview(Group):
     DoubleClick    = MAttribute(MUIA_Listview_DoubleClick,    'i.g', c_BOOL)
     DragType       = MAttribute(MUIA_Listview_DragType,       'isg', c_LONG)
     Input          = MAttribute(MUIA_Listview_Input,          'i..', c_BOOL)
-    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=postset_child)
+    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=postset_child, keep=True)
     MultiSelect    = MAttribute(MUIA_Listview_MultiSelect,    'i..', c_LONG)
     ScollerPos     = MAttribute(MUIA_Listview_ScrollerPos,    'i..', c_BOOL)
     SelectChange   = MAttribute(MUIA_Listview_SelectChange,   '..g', c_BOOL)
@@ -1908,7 +1908,7 @@ class Coloradjust(Group):
 
 #===============================================================================
 
-class c_PaletteEntry(c_STRUCTURE):
+class c_PaletteEntry(PyMUICStructureType):
     _fields_ = [ ('mpe_ID', c_LONG),
                  ('mpe_Red', c_ULONG),
                  ('mpe_Green', c_ULONG),
@@ -1927,10 +1927,10 @@ class Palette(Group):
 class Popstring(Group):
     CLASSID = MUIC_Popstring
 
-    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=postset_child)
+    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
     CloseHook = MAttribute(MUIA_Popstring_CloseHook, 'isg', c_Hook)
     OpenHook  = MAttribute(MUIA_Popstring_OpenHook , 'isg', c_Hook)
-    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=postset_child)
+    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
     Toggle    = MAttribute(MUIA_Popstring_Toggle   , 'isg', c_BOOL)
 
     Close = MMethod(MUIM_Popstring_Close, [ ('result', c_LONG) ])
@@ -1960,7 +1960,7 @@ class Popobject(Popstring):
 
     Follow     = MAttribute(MUIA_Popobject_Follow,      'isg', c_BOOL)
     Light      = MAttribute(MUIA_Popobject_Light,       'isg', c_BOOL)
-    Object     = MAttribute(MUIA_Popobject_Object,      'i.g', c_MUIObject, postSet=postset_child)
+    Object     = MAttribute(MUIA_Popobject_Object,      'i.g', c_MUIObject, postSet=postset_child, keep=True)
     ObjStrHook = MAttribute(MUIA_Popobject_ObjStrHook , 'isg', c_Hook, keep=True)
     StrObjHook = MAttribute(MUIA_Popobject_StrObjHook,  'isg', c_Hook, keep=True)
     Volatile   = MAttribute(MUIA_Popobject_Volatile,    'isg', c_BOOL)

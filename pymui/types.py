@@ -36,7 +36,7 @@ class PyMUICType(object):
 
     @classmethod
     def FromLong(cl, v):
-        raise NotImplemented("type doesn't implement FromLong method")
+        raise NotImplementedError("type %s doesn't implement FromLong method" % cl.__name__)
 
     @classmethod
     def PointerType(cl):
@@ -78,13 +78,21 @@ class PyMUICArrayType(PyMUICType):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
 
-class PyMUICStructureType(PyMUICType):
+class PyMUICStructureType(_ct.Structure, PyMUICType):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
 
-class PyMUICUnionType(PyMUICType):
+    @classmethod
+    def FromLong(cl, v):
+        return cl.from_address(v)
+
+class PyMUICUnionType(_ct.Union, PyMUICType):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
+
+    @classmethod
+    def FromLong(cl, v):
+        return cl.from_address(v)
 
 class c_ULONG(_ct.c_ulong, PyMUICSimpleType): pass
 class c_LONG(_ct.c_long, PyMUICSimpleType): pass
@@ -120,9 +128,6 @@ class c_CONST_STRPTR(c_STRPTR):
     def __setitem__(self, i, v):
         raise NotImplemented("CONST_STRPRT cannot be changed")
 
-class c_STRUCTURE(_ct.Structure, PyMUICType): pass
-class c_UNION(_ct.Union, PyMUICType): pass
-
 def PointerOn(x):
     return x.PointerType()(x)
 
@@ -131,7 +136,7 @@ def PointerOn(x):
 #### Usefull types
 ################################################################################
 
-class c_TagItem(c_STRUCTURE):
+class c_TagItem(PyMUICStructureType):
     _fields_ = [ ('ti_Tag', c_ULONG),
                  ('ti_Data', c_ULONG) ]
 
@@ -154,18 +159,18 @@ class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
 
-class c_Node(c_STRUCTURE): pass
+class c_Node(PyMUICStructureType): pass
 c_Node._fields_ = [ ('ln_Succ', c_Node.PointerType()),
                     ('ln_Pred', c_Node.PointerType()),
                     ('ln_Type', c_UBYTE),
                     ('ln_Pri', c_BYTE),
                     ('ln_Name', c_STRPTR) ]
 
-class c_MinNode(c_STRUCTURE): pass
+class c_MinNode(PyMUICStructureType): pass
 c_MinNode._fields_ = [ ('mln_Succ', c_MinNode.PointerType()),
                        ('mln_Pred', c_MinNode.PointerType()) ]
 
-class c_Message(c_STRUCTURE):
+class c_Message(PyMUICStructureType):
     _fields_ = [ ('mn_Node', c_Node),
                  ('mn_ReplyPort', c_APTR),
                  ('mn_Length', c_UWORD) ]

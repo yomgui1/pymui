@@ -221,10 +221,12 @@ typedef struct PyBOOPSIObject_STRUCT {
     Object *       bObject;
     ObjectNode *   node;
     ULONG          flags;
+    PyObject *     wreflist;
 } PyBOOPSIObject;
 
 typedef struct PyMUIObject_STRUCT {
     PyBOOPSIObject base;
+    ULONG          dummy;
 } PyMUIObject;
 
 typedef struct CHookObject_STRUCT {
@@ -314,7 +316,16 @@ static int objdb_add(Object *bObj, PyObject *pObj)
     int res;
 
     /* BOOPSI -> Python relation */
-    res = PyDict_SetItem(gBOOPSI_Objects_Dict, key, wref);
+    DPRINT("bObj: %p => key: %p, pObj: %p => wref: %p\n", bObj, key, pObj, wref);
+    if ((NULL != key) && (NULL != wref)) {
+        res = PyDict_SetItem(gBOOPSI_Objects_Dict, key, wref);
+        DPRINT("PyDict_SetItem() = %d\n", res);
+    } else {
+        DPRINT("Error: %p\n", PyErr_Occurred());
+        res = -1;
+    }
+
+    Py_XDECREF(key);
     Py_XDECREF(wref);
 
     return res;
@@ -323,10 +334,12 @@ static int objdb_add(Object *bObj, PyObject *pObj)
 //+ objdb_remove
 static void objdb_remove(Object *bObj)
 {
-    PyObject *key = PyLong_FromVoidPtr(bObj);
+    PyObject *key = PyLong_FromVoidPtr(bObj); /* NR */
 
-    PyDict_DelItem(gBOOPSI_Objects_Dict, key);
+    if (!PyDict_DelItem(gBOOPSI_Objects_Dict, key))
+        DPRINT("Removed entry: bObj=%p\n", bObj);
     Py_XDECREF(key);
+    //PyErr_Clear();
 }
 //-
 //+ objdb_get
@@ -336,9 +349,15 @@ static PyObject *objdb_get(Object *bObj)
     PyObject *wref, *pyo;
 
     wref = PyDict_GetItem(gBOOPSI_Objects_Dict, key); /* BR */
+    DPRINT("bObj: %p => wref: %p\n", bObj, wref);
     Py_XDECREF(key);
 
+    if (NULL == wref)
+        return NULL;
+
     pyo = PyWeakref_GET_OBJECT(wref); /* BR */
+    DPRINT("pyo: %p\n", pyo);
+
     if (Py_None == pyo)
         return NULL;
 
@@ -360,8 +379,6 @@ static void dispose_node(PyBOOPSIObject *pObj)
 //+ loose
 static void loose(PyBOOPSIObject *pObj)
 {
-    Object *bObj = PyBOOPSIObject_GET_OBJECT(pObj);
-
     if (PyBOOPSIObject_ISOWNER(pObj)) {
         PyBOOPSIObject_REM_FLAGS(pObj, FLAG_OWNER);
 
@@ -503,28 +520,30 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
 
     gstate = PyGILState_Ensure();
 
-    /* TODO: to be changed to use the object DB */
-    pyo = PyWeakref_GET_OBJECT(*wref_storage); /* BR */
-    if (Py_None != pyo) {
-        PyObject *res;
-        ULONG v = args[2];
+    if (!PyErr_Occurred()) {
+        /* TODO: to be changed to use the object DB */
+        pyo = PyWeakref_GET_OBJECT(*wref_storage); /* BR */
+        if (Py_None != pyo) {
+            PyObject *res;
+            ULONG v = args[2];
 
-        DPRINT("{%#lx} pyo=%p-'%s', MUI=%p, value=(%ld, %lu, $%X)\n",
-               attr, pyo, OBJ_TNAME(pyo), mo, v, v, (APTR)v);
+            DPRINT("{%#lx} pyo=%p-'%s', MUI=%p, value=(%ld, %lu, $%X)\n",
+                   attr, pyo, OBJ_TNAME_SAFE(pyo), mo, v, v, (APTR)v);
 
-        Py_INCREF(pyo);
+            Py_INCREF(pyo);
 
-        res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
-        DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
+            res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
+            DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
 
-        if (PyErr_Occurred() && (NULL != _app(mo)))
-            DoMethod(_app(mo), MUIM_Application_ReturnID, ID_BREAK);
+            if (PyErr_Occurred() && (NULL != _app(mo)))
+                DoMethod(_app(mo), MUIM_Application_ReturnID, ID_BREAK);
 
-        Py_XDECREF(res);
-        Py_DECREF(pyo);
-    } else {
-        DPRINT("Dead python object for MUI obj %p, attribute $%08x\n", mo, attr);
-        Py_CLEAR(*wref_storage);
+            Py_XDECREF(res);
+            Py_DECREF(pyo);
+        } else {
+            DPRINT("Dead python object for MUI obj %p, attribute $%08x\n", mo, attr);
+            Py_CLEAR(*wref_storage);
+        }
     }
 
     PyGILState_Release(gstate);
@@ -558,7 +577,8 @@ PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 {
-    MCCData *data = INST_DATA(cl, obj);
+    //MCCData *data = INST_DATA(cl, obj);
+
     PyGILState_STATE gstate;
     PyObject *pyo, *erro;
     ULONG result = 0, resultok = FALSE;
@@ -568,66 +588,62 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 
     gstate = PyGILState_Ensure();
 
+    if (PyErr_Occurred())
+        goto bye;
+
     /* existing a python object for this MUI object ? */
     pyo = objdb_get(obj); /* BR */
-    DPRINT("pyo: %p-'%s'\n", pyo, OBJ_TNAME_SAFE(pyo));
+    DPRINT("pyo: %p-'%s', MID=$%08x\n", pyo, OBJ_TNAME_SAFE(pyo), msg->MethodID);
     if (NULL != pyo) {
         PyObject *overloaded_dict;
 
         Py_INCREF(pyo);
         overloaded_dict = PyObject_GetAttrString(pyo, "__pymui_overloaded__"); /* NR */
-
         if (NULL != overloaded_dict) {
-            PyObject *key, *value;
-            int pos = 0;
+            PyObject *key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
+            if (NULL != key) {
+                PyObject *value = PyDict_GetItem(overloaded_dict, key); /* BR */
+                Py_DECREF(key);
+                if (NULL != value) {
+                    PyMethodMsgObject *msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
+                    if (NULL != msg_obj) {
+                        PyObject *o;
+                        DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
+                               pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
 
-            while (PyDict_Next(overloaded_dict, &pos, &key, &value)) { /* BR */
-                ULONG mid = PyLong_AsUnsignedLongMask(key);
-                PyObject *o;
-                PyMethodMsgObject *msg_obj;
+                        Py_INCREF(value);
+                        o = PyObject_CallFunction(value, "ON", pyo, msg_obj);
+                        DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
+                        Py_DECREF(value);
 
-                if (PyErr_Occurred()) break;
-                if (mid != msg->MethodID) continue;
+                        resultok = TRUE;
 
-                msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
-                if (NULL == msg_obj) break;
+                        /* No Python errors */
+                        if (NULL != o) {
+                            int ok = py2long(o, &result);
 
-                DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
-                       pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
+                            Py_DECREF(o);
 
-                Py_INCREF(value);
-                o = PyObject_CallFunction(value, "NN", pyo, msg_obj);
-                DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
-                Py_DECREF(value);
-
-                resultok = TRUE;
-
-                /* No Python errors */
-                if (NULL != o) {
-                    int ok = py2long(o, &result);
-
-                    Py_DECREF(o);
-
-                    /* result convertion failed? */
-                    if (!ok)
-                        result = 0;
-                } else if (msg_obj->mmsg_SuperCalled)
-                    result = msg_obj->mmsg_SuperResult;
-                else
-                    resultok = FALSE;
-
-                Py_DECREF(msg_obj);
-                break;
+                            /* result convertion failed? */
+                            if (!ok)
+                                result = 0;
+                        } else if (msg_obj->mmsg_SuperCalled)
+                            result = msg_obj->mmsg_SuperResult;
+                        else
+                            resultok = FALSE;
+                    }
+                }
             }
 
             Py_DECREF(overloaded_dict);
         } else
             PyErr_Clear();
 
-        Py_CLEAR(pyo);
+        Py_DECREF(pyo);
     } else
         DPRINT("No python object for MUI obj %p (method $%08x)\n", obj, msg->MethodID);
 
+bye:
     erro = PyErr_Occurred();
     PyGILState_Release(gstate);
 
@@ -636,7 +652,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 
     if (erro) {
         Object *app = _app(obj);
-        DPRINT("python exception occured, app=%p, obj=%p, MethodID=%x\n", app, obj, msg->MethodID);
+        DPRINT("python exception occured (%p), app=%p, obj=%p, MethodID=%x\n", erro, app, obj, msg->MethodID);
 
         if (NULL != app)
             DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
@@ -692,6 +708,8 @@ boopsi_new(PyTypeObject *type, PyObject *args)
         if (PyArg_ParseTuple(args, "|I", &bObj)) {
             PyBOOPSIObject_SET_OBJECT(self, bObj);
             self->flags = 0;
+            self->node = NULL;
+            self->wreflist = NULL;
         }
     }
 
@@ -703,11 +721,22 @@ static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
     Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
+    PyObject *ptype, *pvalue, *ptb, *err;
 
     DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), bObj);
 
+    err = PyErr_Occurred();
+    if (NULL != err)
+        PyErr_Fetch(&ptype, &pvalue, &ptb);
+
     PyBOOPSIObject_DisposeObject(self);
-    PyErr_Clear(); /* Silent errors */
+    PyErr_Clear();
+
+    if (NULL != err)
+        PyErr_Restore(ptype, pvalue, ptb);
+
+    if (NULL != self->wreflist)
+        PyObject_ClearWeakRefs((PyObject *)self);
 
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
@@ -1120,9 +1149,9 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     if (!py2long(v_obj, &value))
         return NULL;
 
-    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
     set(obj, attr, value);
-    DPRINT("done\n");
+    DPRINT("- done\n");
 
     /* Due to MUI notification system a Python code may have be called here */
     if (PyErr_Occurred())
@@ -1283,7 +1312,8 @@ static PyTypeObject PyBOOPSIObject_Type = {
     
     tp_new          : (newfunc)boopsi_new,
     tp_dealloc      : (destructor)boopsi_dealloc,
-    
+    tp_weaklistoffset : offsetof(PyBOOPSIObject, wreflist),
+
     tp_repr         : (reprfunc)boopsi_repr,
     tp_methods      : boopsi_methods,
     tp_getset       : boopsi_getseters,
@@ -1856,6 +1886,7 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
     PyBOOPSIObject_SET_OBJECT(pObj, bObj);
     ((PyBOOPSIObject *)pObj)->flags = 0;
     ((PyBOOPSIObject *)pObj)->node = NULL;
+    ((PyBOOPSIObject *)pObj)->wreflist = NULL;
 
     /* record this new PyBOOPSIObject into the DB (Empty also) */
     if (objdb_add(bObj, pObj))
@@ -1893,10 +1924,15 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     }
 
     /* New PyBOOPSIObject */
-    pObj = (PyObject *)PyObject_New(PyMUIObject, &PyMUIObject_Type);
+    pObj = (PyObject *)PyObject_New(PyMUIObject, &PyMUIObject_Type); /* NR */
+    if (NULL == pObj)
+        return NULL;
+
+    DPRINT("New PyObject created @ %p for bObj %p\n", pObj, bObj);
     PyBOOPSIObject_SET_OBJECT(pObj, bObj);
     ((PyBOOPSIObject *)pObj)->flags = 0;
     ((PyBOOPSIObject *)pObj)->node = NULL;
+    ((PyBOOPSIObject *)pObj)->wreflist = NULL;
 
     /* record this new PyBOOPSIObject into the DB (Empty also) */
     if (objdb_add(bObj, pObj))
