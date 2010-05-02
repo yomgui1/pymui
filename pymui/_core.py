@@ -152,6 +152,8 @@ class c_Hook(c_PyObject):
     def FromLong(cl, v):
         return cl(_muimaster._CHook(v))
 
+class c_PenSpec(PyMUICStructureType):
+    _fields_ = [ ('buf', c_BYTE.ArrayType(32)) ]
 
 ################################################################################
 #### PyMUI internal base classes and routines
