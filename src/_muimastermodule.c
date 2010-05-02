@@ -177,6 +177,8 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyMUIObject_Check(op) PyObject_TypeCheck(op, &PyMUIObject_Type)
 #define PyMUIObject_CheckExact(op) ((op)->ob_type == &PyMUIObject_Type)
 
+#define PyMethodMsgObject_CheckExact(op) ((op)->ob_type == &PyMethodMsgObject_Type)
+
 #define PyBOOPSIObject_GET_OBJECT(o) (((PyBOOPSIObject *)(o))->bObject)
 #define PyBOOPSIObject_SET_OBJECT(o, x) (((PyBOOPSIObject *)(o))->bObject = (x))
 #define PyBOOPSIObject_ADD_FLAGS(o, x) (((PyBOOPSIObject *)(o))->flags |= (x))
@@ -257,6 +259,21 @@ typedef struct PyMethodMsgObject_STRUCT {
     ULONG           mmsg_SuperResult;
 } PyMethodMsgObject;
 
+typedef struct PyEventHandlerObject_STRUCT {
+    PyObject_HEAD
+
+    PyObject *                    self; /* used to found the Python object in mHandleEvent() */
+    struct MUI_EventHandlerNode   handler;
+    PyObject *                    window;
+    PyObject *                    target;
+    PyObject *                    TabletTagsList; /* a dict of tablet tags {Tag: Data} */
+    LONG                          muikey; /* copied from MUIP_HandleEvent msg */
+    struct IntuiMessage           imsg;   /* copied from MUIP_HandleEvent->imsg */
+    struct TabletData             tabletdata; /* copied from MUIP_HandleEvent msg */
+    BYTE                          inobject;
+    BYTE                          hastablet;
+} PyEventHandlerObject;
+
 
 /*
 ** Private Variables
@@ -270,6 +287,7 @@ static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
 static PyTypeObject CHookObject_Type;
 static PyTypeObject PyMethodMsgObject_Type;
+static PyTypeObject PyEventHandlerObject_Type;
 
 static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
@@ -568,6 +586,90 @@ PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 }
 //-
 
+//+ IntuiMsgFunc
+static void
+IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *imsg)
+{
+    if (IDCMP_REFRESHWINDOW == imsg->Class)
+        DoMethod(req->fr_UserData, MUIM_Application_CheckRefresh);
+}
+//-
+//+ getfilename
+/* Stolen from MUI psi.c demo */
+STRPTR
+getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL save)
+{
+    static char buf[MAXPATHLEN];
+    struct FileRequester *req;
+    struct Window *w = NULL;
+    static LONG left=-1,top=-1,width=-1,height=-1;
+    Object *app = NULL;
+    char *res = NULL;
+    static const struct Hook IntuiMsgHook;
+
+    INIT_HOOK(&IntuiMsgHook, IntuiMsgFunc)
+
+    get(win, MUIA_ApplicationObject, &app);
+    if (NULL != app) {
+        get(win, MUIA_Window_Window, &w);
+        if (NULL != win) {
+            if (-1 == left) {
+                left   = w->LeftEdge + w->BorderLeft + 2;
+                top    = w->TopEdge + w->BorderTop + 2;
+                width  = MAX(400, w->Width - w->BorderLeft - w->BorderRight - 4);
+                height = MAX(400, w->Height - w->BorderTop - w->BorderBottom - 4);
+            }
+
+            if (NULL == init_drawer)
+                init_drawer = "PROGDIR:";
+
+            if (NULL == init_pat)
+                init_pat = "#?";
+
+            req = MUI_AllocAslRequestTags(ASL_FileRequest,
+                                          ASLFR_Window         , (ULONG)w,
+                                          ASLFR_TitleText      , (ULONG)title,
+                                          ASLFR_InitialLeftEdge, left,
+                                          ASLFR_InitialTopEdge , top,
+                                          ASLFR_InitialWidth   , width,
+                                          ASLFR_InitialHeight  , height,
+                                          ASLFR_InitialDrawer  , (ULONG)init_drawer,
+                                          ASLFR_InitialPattern , (ULONG)init_pat,
+                                          ASLFR_DoSaveMode     , save,
+                                          ASLFR_DoPatterns     , TRUE,
+                                          ASLFR_RejectIcons    , TRUE,
+                                          ASLFR_UserData       , (ULONG)app,
+                                          ASLFR_IntuiMsgFunc   , (ULONG)&IntuiMsgHook,
+                                          TAG_DONE);
+            if (NULL != req) {
+                set(app, MUIA_Application_Sleep, TRUE);
+
+                if (MUI_AslRequestTags(req,TAG_DONE)) {
+                    if (NULL != req->fr_File) {
+                        res = buf;
+                        stccpy(buf, req->fr_Drawer, sizeof(buf));
+                        AddPart(buf, req->fr_File, sizeof(buf));
+                    }
+
+                    left   = req->fr_LeftEdge;
+                    top    = req->fr_TopEdge;
+                    width  = req->fr_Width;
+                    height = req->fr_Height;
+                }
+
+                MUI_FreeAslRequest(req);
+                set(app, MUIA_Application_Sleep, FALSE);
+            } else
+                PyErr_SetString(PyExc_SystemError, "MUI_AllocAslRequestTags() failed");
+        } else
+             PyErr_Format(PyExc_SystemError, "no Window for win obj %p", win);
+    } else
+         PyErr_Format(PyExc_SystemError, "no app for win obj %p", win);
+
+    return res;
+}
+//-
+
 
 /*******************************************************************************************
 ** MCC MUI Object
@@ -647,8 +749,10 @@ bye:
     erro = PyErr_Occurred();
     PyGILState_Release(gstate);
 
-    if (!resultok)
+    if (!resultok) {
+        DPRINT("DoSuper()...\n");
         result = DoSuperMethodA(cl, obj, msg);
+    }
 
     if (erro) {
         Object *app = _app(obj);
@@ -720,10 +824,9 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
-    Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
     PyObject *ptype, *pvalue, *ptb, *err;
 
-    DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), bObj);
+    DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), PyBOOPSIObject_GET_OBJECT(self));
 
     err = PyErr_Occurred();
     if (NULL != err)
@@ -1554,7 +1657,7 @@ static PyGetSetDef muiobject_getseters[] = {
 static struct PyMethodDef muiobject_methods[] = {
     {"_notify", (PyCFunction) muiobject__notify, METH_VARARGS, muiobject__notify_doc},
     {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
-    {"Redraw",  (PyCFunction) muiobject__redraw, METH_O, muiobject__redraw_doc},
+    {"Redraw",  (PyCFunction) muiobject__redraw, METH_VARARGS, muiobject__redraw_doc},
     {NULL} /* sentinel */
 };
 
@@ -1753,6 +1856,304 @@ static PyTypeObject PyMethodMsgObject_Type = {
 };
 
 /*******************************************************************************************
+** EventHandlerObject_Type
+*/
+
+//+ evthandler_new
+static PyObject *
+evthandler_new(PyTypeObject *type, PyObject *args)
+{
+    PyEventHandlerObject *self;
+
+    self = (PyEventHandlerObject *)type->tp_alloc(type, 0); /* NR */
+    if (NULL != self) {
+        self->self = (PyObject *)self;
+        return (PyObject *)self;
+    }
+
+    return NULL;
+}
+//-
+//+ evthandler_traverse
+static int
+evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->TabletTagsList);
+    Py_VISIT(self->window);
+    Py_VISIT(self->target);
+    return 0;
+}
+//-
+//+ evthandler_clear
+static int
+evthandler_clear(PyEventHandlerObject *self)
+{
+    if (NULL != self->window) {
+        Object *mo = PyBOOPSIObject_GET_OBJECT(self->window);
+
+        DPRINT("win=%p\n", mo);
+        if (NULL != mo)
+            DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
+
+    }
+
+    Py_CLEAR(self->TabletTagsList);
+    Py_CLEAR(self->window);
+    Py_CLEAR(self->target);
+    return 0;
+}
+//-
+//+ evthandler_dealloc
+static void
+evthandler_dealloc(PyEventHandlerObject *self)
+{
+    evthandler_clear(self);
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+//+ evthandler_install
+static PyObject *
+evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
+{
+    PyObject *pyo_win, *pyo_tgt;
+    static CONST_STRPTR kwlist[] = {"target", "idcmp", "flags", "prio", NULL};
+    Object *win, *target;
+
+    if (NULL != self->window) {
+        PyErr_SetString(PyExc_TypeError, "Already installed handler, remove it before");
+        return NULL;
+    }
+
+    self->handler.ehn_Flags = 0;
+    self->handler.ehn_Priority = 0;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!I|Hb", (char **)kwlist,
+            &PyMUIObject_Type, &pyo_tgt,
+            &self->handler.ehn_Events,
+            &self->handler.ehn_Flags,
+            &self->handler.ehn_Priority)) /* BR */
+        return NULL;
+
+    target = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pyo_tgt);
+    if (NULL == target)
+        return NULL;
+
+    win = _win(target);
+    DPRINT("window obj: %p\n", win);
+    if (NULL == win) {
+        PyErr_SetString(PyExc_SystemError, "no window found");
+        return NULL;
+    }
+
+    pyo_win = objdb_get(win);
+    DPRINT("window py obj: %p\n", pyo_win);
+    if (NULL == pyo_win) {
+       PyErr_SetString(PyExc_TypeError, "events handler object must be installed on MUI Window object only");
+        return NULL;
+    }
+
+    self->window = pyo_win; Py_INCREF(pyo_win);
+    self->target = pyo_tgt; Py_INCREF(pyo_tgt);
+
+    self->handler.ehn_Object = target;
+    self->handler.ehn_Class = OCLASS(target);
+
+    DPRINT("install handler  %p on win %p: target=%p idcmp=%p, flags=%u, prio=%d\n",
+        &self->handler, win, target,
+        self->handler.ehn_Events,
+        self->handler.ehn_Flags,
+        self->handler.ehn_Priority);
+
+    DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)&self->handler);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ evthandler_uninstall
+static PyObject *
+evthandler_uninstall(PyEventHandlerObject *self)
+{
+    Object *win;
+
+    if (NULL == self->window) {
+        PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
+        return NULL;
+    }
+
+    win = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self->window);
+    if (NULL == win)
+        return NULL;
+
+    DPRINT("uninstall handler %p on win %p\n", &self->handler, win);
+    DoMethod(win, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
+
+    Py_CLEAR(self->window);
+    Py_CLEAR(self->target);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ evthandler_readmsg
+static PyObject *
+evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
+{
+    Object *obj; /* used by _isinobject macro */
+    struct MUIP_HandleEvent *msg;
+
+    if (NULL == self->window) {
+        PyErr_SetString(PyExc_TypeError, "Not installed handler, install it before!");
+        return NULL;
+    }
+
+    if (!PyMethodMsgObject_CheckExact(msg_obj)) {
+        PyErr_SetString(PyExc_TypeError, "readmsg argument shall the the method msg object");
+        return NULL;
+    }
+
+    msg = (APTR)msg_obj->mmsg_Msg;
+    obj = msg_obj->mmsg_Object;
+
+    /* Sanity check */
+    if (msg->ehn != &self->handler) {
+        PyErr_SetString(PyExc_RuntimeError, "given message doesn't match to this event handler");
+        return NULL;
+    }
+
+    CopyMem(msg->imsg, &self->imsg, sizeof(self->imsg));
+    self->muikey = msg->muikey;
+
+    self->inobject = _isinobject(msg->imsg->MouseX, msg->imsg->MouseY);
+    self->hastablet = NULL != ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+
+    /* if tablet data, extract tag items */
+    if (self->hastablet) {
+        PyObject *o_tags;
+        struct TagItem *tag, *tags = ((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData->td_TagList;
+        int error;
+
+        if (NULL == self->TabletTagsList) {
+            self->TabletTagsList = PyDict_New(); /* NR */
+            if (NULL == self->TabletTagsList)
+                return NULL;
+        } else
+            PyDict_Clear(self->TabletTagsList);
+
+        o_tags = PyList_New(0); /* NR */
+        if (NULL == o_tags)
+            return 0;
+
+        while (NULL != (tag = NextTagItem(&tags))) {
+            PyObject *item = Py_BuildValue("II", tag->ti_Tag, tag->ti_Data); /* NR */
+
+            if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
+                Py_XDECREF(item);
+                Py_DECREF(o_tags);
+                return 0;
+            }
+        }
+
+        error = PyDict_MergeFromSeq2(self->TabletTagsList, o_tags, TRUE); /* NR */
+        Py_DECREF(o_tags);
+        if (error)
+            return 0;
+
+        self->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
+    } else
+        memset(&self->tabletdata, 0, sizeof(self->tabletdata));
+
+    Py_RETURN_NONE;
+}
+//-
+//+ evthandler_get_normtablet
+static PyObject *
+evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
+{
+    if (0 == closure)
+        return PyFloat_FromDouble((double)self->tabletdata.td_TabletX / self->tabletdata.td_RangeX);
+    else
+        return PyFloat_FromDouble((double)self->tabletdata.td_TabletY / self->tabletdata.td_RangeY);
+}
+//-
+//+ evthandler_get_up
+static PyObject *
+evthandler_get_up(PyEventHandlerObject *self, void *closure)
+{
+    return PyBool_FromLong((self->imsg.Code & IECODE_UP_PREFIX) == IECODE_UP_PREFIX);
+}
+//-
+//+ evthandler_get_key
+static PyObject *
+evthandler_get_key(PyEventHandlerObject *self, void *closure)
+{
+    return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
+}
+//-
+//+ evthandler_get_handler
+static PyObject *
+evthandler_get_handler(PyEventHandlerObject *self, void *closure)
+{
+    return PyLong_FromVoidPtr(&self->handler);
+}
+//-
+
+static PyGetSetDef evthandler_getseters[] = {
+    {"handler", (getter)evthandler_get_handler, NULL, "Address of the MUI_EventHandlerNode", NULL},
+    {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
+    {"Key", (getter)evthandler_get_key, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
+    {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
+    {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
+    {NULL} /* sentinel */
+};
+
+static PyMemberDef evthandler_members[] = {
+    {"idcmp",        T_ULONG, offsetof(PyEventHandlerObject, handler.ehn_Events), RO, "IDCMP value"},
+    {"muikey",       T_LONG, offsetof(PyEventHandlerObject, muikey), RO, NULL},
+    {"Class",        T_ULONG, offsetof(PyEventHandlerObject, imsg.Class), RO, NULL},
+    {"Code",         T_USHORT, offsetof(PyEventHandlerObject, imsg.Code), RO, NULL},
+    {"Qualifier",    T_USHORT, offsetof(PyEventHandlerObject, imsg.Qualifier), RO, NULL},
+    {"MouseX",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseX), RO, NULL},
+    {"MouseY",       T_SHORT, offsetof(PyEventHandlerObject, imsg.MouseY), RO, NULL},
+    {"Seconds",      T_ULONG, offsetof(PyEventHandlerObject, imsg.Seconds), RO, NULL},
+    {"Micros",       T_ULONG, offsetof(PyEventHandlerObject, imsg.Micros), RO, NULL},
+    {"InObject",     T_BYTE, offsetof(PyEventHandlerObject, inobject), RO, NULL},
+    {"ValidTD",      T_BYTE, offsetof(PyEventHandlerObject, hastablet), RO, NULL},
+    {"td_TabletX",   T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_TabletX), RO, NULL},
+    {"td_TabletY",   T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_TabletY), RO, NULL},
+    {"td_RangeX",    T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_RangeX), RO, NULL},
+    {"td_RangeY",    T_ULONG, offsetof(PyEventHandlerObject, tabletdata.td_RangeY), RO, NULL},
+    {"td_XFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_XFraction), RO, NULL},
+    {"td_YFraction", T_USHORT, offsetof(PyEventHandlerObject, tabletdata.td_YFraction), RO, NULL},
+    {"td_Tags",      T_OBJECT, offsetof(PyEventHandlerObject, TabletTagsList), RO, NULL},
+
+    {NULL} /* sentinel */
+};
+
+static struct PyMethodDef evthandler_methods[] = {
+    {"install",   (PyCFunction)evthandler_install,   METH_VARARGS, NULL},
+    {"uninstall", (PyCFunction)evthandler_uninstall, METH_NOARGS, NULL},
+    {"readmsg", (PyCFunction)evthandler_readmsg, METH_O, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyEventHandlerObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.PyEventHandlerObject",
+    tp_basicsize    : sizeof(PyEventHandlerObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+    tp_doc          : "Event Handler Objects",
+
+    tp_new          : (newfunc)evthandler_new,
+    tp_traverse     : (traverseproc)evthandler_traverse,
+    tp_clear        : (inquiry)evthandler_clear,
+    tp_dealloc      : (destructor)evthandler_dealloc,
+
+    tp_members      : evthandler_members,
+    tp_methods      : evthandler_methods,
+    tp_getset       : evthandler_getseters,
+};
+
+/*******************************************************************************************
 ** Module Functions
 **
 ** List of functions exported by this module reside here
@@ -1941,6 +2342,39 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     return pObj;
 }
 //-
+//+ _muimaster_getfilename
+static PyObject *
+_muimaster_getfilename(PyObject *self, PyObject *args)
+{
+    PyBOOPSIObject *pyo;
+    Object *mo, *win;
+    STRPTR filename, title;
+    STRPTR init_drawer = NULL;
+    STRPTR init_pat = NULL;
+    UBYTE save = FALSE;
+
+    if (!PyArg_ParseTuple(args, "Os|zzb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save))
+        return NULL;
+
+    if ((PyObject *)pyo == Py_None)
+        mo = NULL;
+    else
+        mo = PyBOOPSIObject_GetObject(pyo);
+
+    win = _win(mo);
+    if (NULL == win) {
+        win = mo;
+        //get(mo, MUIA_WindowObject, &win);
+    }
+
+    DPRINT("Obj %p-'%s' (mo=%p, win=%p)\n", pyo, OBJ_TNAME(pyo), mo, win);
+    filename = getfilename(win, title, init_drawer, init_pat, save);
+    if (NULL == filename)
+        Py_RETURN_NONE;
+
+    return PyString_FromString(filename);
+}
+//-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
@@ -1948,6 +2382,7 @@ static PyMethodDef _muimaster_methods[] = {
     {"_ptr2pyobj", _muimaster_pyobjfromptr, METH_VARARGS, NULL},
     {"_ptr2pyboopsi", _muimaster_ptr2pyboopsi, METH_VARARGS, NULL},
     {"_ptr2pymui", _muimaster_ptr2pymui, METH_VARARGS, NULL},
+    {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -2096,6 +2531,7 @@ INITFUNC(void) {
                         error |= PyType_Ready(&PyMUIObject_Type);
                         error |= PyType_Ready(&CHookObject_Type);
                         error |= PyType_Ready(&PyMethodMsgObject_Type);
+                        error |= PyType_Ready(&PyEventHandlerObject_Type);
 
                         if (!error) {
                             /* Module creation/initialization */
@@ -2106,6 +2542,7 @@ INITFUNC(void) {
                                     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
                                     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
                                     ADD_TYPE(m, "_CHook", &CHookObject_Type);
+                                    ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
                             
                                     PyModule_AddObject(m, "_obj_dict", d);
                             

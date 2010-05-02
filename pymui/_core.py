@@ -478,7 +478,10 @@ def postset_child(self, attr, o):
 
 #===============================================================================
 
-class PyMUIBase:
+class PyMUIBase(object):
+    def __init__(self):
+        self.__chld = []
+
     @classmethod
     def _getMA(cl, o):
         if isinstance(o, str):
@@ -563,10 +566,14 @@ class PyMUIBase:
         return self._getMM(mid)(self, *args)
 
     def AddChild(self, o):
+        assert o not in self.__chld
         self._addchild(o)
+        self.__chld.append(o)
 
     def RemChild(self, o):
+        assert o in self.__chld
         self._remchild(o)
+        self.__chld.remove(o)
 
     def Dispose(self):
         self._dispose()
@@ -596,6 +603,7 @@ class BOOPSIRootClass(PyBOOPSIObject, PyMUIBase):
     def __init__(self, **kwds):
         self._keep_db = {}
         PyBOOPSIObject.__init__(self)
+        PyMUIBase.__init__(self)
 
 #===============================================================================
 
@@ -669,6 +677,7 @@ class Notify(PyMUIObject, PyMUIBase):
         self._keep_db = {}
         self.__notify_cbdict = {}
         PyMUIObject.__init__(self)
+        PyMUIBase.__init__(self)
         
     def postcreate(self, **kwds): pass
 
@@ -1666,27 +1675,25 @@ class List(Group): # TODO: unfinished
     Sort               = MMethod(MUIM_List_Sort)
 
     def __init__(self, **kwds):
-        kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
-        kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)
+        if not self._MCC_:
+            kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
+            kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)
         super(List, self).__init__(**kwds)
         
     @Insert.alias
     def Insert(self, meth, objs, pos=MUIV_List_Insert_Bottom):
         n = len(objs)
         # keep valid the ctypes object until the return
-        if isinstance(objs, c_APTR):
-            x = c_APTR.ArrayType(n)(*[ long(x) for x in objs ])
-        else:
-            x = objs
-        return meth(self, long(x), n, pos)
+        x = c_APTR.ArrayType(n)(*[ long(x) for x in objs ])
+        return meth(self, x, n, pos)
 
     @InsertSingle.alias
     def InsertSingle(self, meth, entry, pos=MUIV_List_Insert_Bottom):
         return meth(self, entry, pos)
 
     def InsertSingleString(self, s, pos=MUIV_List_Insert_Bottom):
-        x = c_STRPTR(s) # keep valid the ctypes object until the return
-        return self.InsertSingle(long(x), pos)
+        x = c_STRPTR(s) # keep valid the s object until the return
+        return self.InsertSingle(x, pos)
 
     cols = property(fget=lambda self: self.Format.value.count(',')+1)
 

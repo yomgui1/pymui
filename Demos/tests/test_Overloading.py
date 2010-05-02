@@ -24,8 +24,6 @@ class MyMCC(Rectangle):
 
     @muimethod(MUIM_DragQuery)
     def MCC_DragQuery(self, msg):
-        x = str(msg.obj)
-        print "DragQuery for object %x" % ctypes.cast(x, ctypes.c_void_p).value
         return (MUIV_DragQuery_Accept if msg.obj.value is dragobject else MUIV_DragQuery_Refuse)
 
 assert hasattr(MyMCC, '__pymui_overloaded__')

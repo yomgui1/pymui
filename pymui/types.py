@@ -76,7 +76,7 @@ class PyMUICPointerType(PyMUICType):
 
 class PyMUICArrayType(PyMUICType):
     def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
+        return _ct.cast(self, _ct.c_void_p).value
 
 class PyMUICStructureType(_ct.Structure, PyMUICType):
     def __long__(self):
@@ -102,7 +102,24 @@ class c_UBYTE(_ct.c_ubyte, PyMUICSimpleType): pass
 class c_BYTE(_ct.c_byte, PyMUICSimpleType): pass
 class c_CHAR(_ct.c_char, PyMUICSimpleType): pass
 
+class c_FLOAT(_ct.c_float, PyMUICSimpleType):
+    def __long__(self):
+        # like a C cast of float value
+        return long(self.value)
+
+class c_DOUBLE(_ct.c_double, PyMUICSimpleType):
+    def __long__(self):
+        # like a C cast of double value
+        return long(self.value)
+
 class c_APTR(_ct.c_void_p, PyMUICSimpleType):
+    def __init__(self, x=0):
+        if not x: return
+        if isinstance(x, PyMUICType):
+            self.value = long(x)
+        else:
+            self.value = x
+
     def __long__(self):
         return self.value
 
@@ -140,7 +157,14 @@ class c_TagItem(PyMUICStructureType):
     _fields_ = [ ('ti_Tag', c_ULONG),
                  ('ti_Data', c_ULONG) ]
 
-class c_BOOL(c_LONG): pass
+class c_BOOL(c_LONG):
+    def __get_value(self):
+        return bool(c_LONG.value.__get__(self))
+
+    def __set_value(self, v):
+        c_LONG.value.__set__(self, v)
+
+    value = property(fget=__get_value, fset=__set_value)
 
 class c_pSTRPTR(c_STRPTR.PointerType()):
     _type_ = c_STRPTR
@@ -238,5 +262,9 @@ if __name__ == '__main__':
     v = o[:4]
     assert len(v) == 4
     assert [o.value for o in v] == x
+
+    o = c_STRPTR()
+    x = c_APTR(o)
+    assert x.value is None
 
     print "Everything is OK"
