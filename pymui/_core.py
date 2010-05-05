@@ -567,15 +567,24 @@ class PyMUIBase(object):
         """
         return self._getMM(mid)(self, *args)
 
+    def _ischild(self, o):
+        return o._object in self.__chld
+
+    def _pushchild(self, o):
+        self.__chld.append(o._object)
+
+    def _popchild(self, o):
+        self.__chld.remove(o._object)
+
     def AddChild(self, o):
-        assert o not in self.__chld
-        self._addchild(o)
-        self.__chld.append(o)
+        assert not self._ischild(o)
+        self._addchild(o) # does the _loosed action also!
+        self._pushchild(o)
 
     def RemChild(self, o):
-        assert o in self.__chld
+        assert self._ischild(o)
         self._remchild(o)
-        self.__chld.remove(o)
+        self._popchild(o)
 
     def Dispose(self):
         self._dispose()
@@ -715,6 +724,144 @@ class Notify(PyMUIObject, PyMUIBase):
         else:
             self.__notify_cbdict[attr.id] = [ event ]
             self._notify(attr.id)
+
+#===============================================================================
+
+class Family(Notify):
+    CLASSID = MUIC_Family
+    
+    Child = MAttribute(MUIA_Family_Child, 'i..', c_MUIObject, postSet=postset_child, keep=True)
+    List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
+
+    #Insert   = MMethod(MUIM_Family_Insert,   [ ('obj', c_MUIObject), ('pred', c_MUIObject) ])
+    #Remove   = MMethod(MUIM_Family_Remove,   [ ('obj', c_MUIObject) ])
+    #Sort     = MMethod(MUIM_Family_Sort,     [ ('objs', c_MUIObject.PointerType()) ])
+    #Transfer = MMethod(MUIM_Family_Transfer, [ ('family', c_MUIObject) ])
+
+    def __init__(self, **kwds):
+        child = kwds.pop('Child', None)
+        super(Family, self).__init__(**kwds)
+        if child:
+            self.AddTail(child)
+
+    def AddHead(self, o):
+        o = c_MUIObject(o).value
+        assert o and not self._ischild(o)
+        x = self._do1(MUIM_Family_AddHead, o)
+        if x:
+            o._loosed()
+            self._pushchild(o)
+        return x
+
+    def AddTail(self, o):
+        o = c_MUIObject(o).value
+        assert o, not self._ischild(o)
+        x = self._do1(MUIM_Family_AddTail, o)
+        if x:
+            o._loosed()
+            self._pushchild(o)
+        return x
+
+    def Insert(self, o, p):
+        o = c_MUIObject(o).value
+        p = c_MUIObject(p).value
+        assert o and p and not self._ischild(o) and self._ischild(p)
+        x = self._do(MUIM_Family_Insert, (o, p))
+        if x:
+            o._loosed()
+            self._pushchild(o)
+        return x
+
+    def Remove(self, o):
+        o = c_MUIObject(o).value
+        assert o and self._ischild(o)
+        x = self._do1(MUIM_Family_Remove, o)
+        if x: self._popchild(o)
+        return x
+
+    def Sort(self, *args):
+        a = c_MUIObject.ArrayType(len(args)+1)() # transitive object, not needed to be keep
+        a[:] = args
+        return self._do1(MUIM_Family_Sort, a)
+
+    def Transfer(self, f):
+        f = c_MUIObject(f).value
+        assert f and isinstance(f, Family)
+        x = self._do1(MUIM_Family_Transfer, f)
+        if x:
+            for o in self._children:
+                f._pushchild(o)
+            del self._children
+        return x
+
+#===============================================================================
+
+class Menustrip(Family):
+    CLASSID = MUIC_Menustrip
+    
+    Enabled = MAttribute(MUIA_Menustrip_Enabled, 'isg', c_BOOL)
+
+    InitChange = MMethod(MUIM_Menustrip_InitChange)
+    ExitChange = MMethod(MUIM_Menustrip_ExitChange)
+    Popup      = MMethod(MUIM_Menustrip_Popup, [ ('parent', c_MUIObject),
+                                                 ('flags', c_ULONG),
+                                                 ('x', c_LONG),
+                                                 ('y', c_LONG) ])
+
+    def __init__(self, items=None, **kwds):
+        super(Menustrip, self).__init__(**kwds)
+        if not items: return
+        if hasattr(items, '__iter__'):
+            for x in items:
+                self.AddTail(x)
+        else:
+            self.AddTail(items)
+
+    @Popup.alias
+    def Popup(self, meth, parent, x, y, flags=0):
+        meth(self, parent, flags, x, y)
+
+#===============================================================================
+
+class Menu(Family):
+    CLASSID = MUIC_Menu
+    
+    Enabled = MAttribute(MUIA_Menu_Enabled, 'isg', c_BOOL)
+    Title   = MAttribute(MUIA_Menu_Title  , 'isg', c_STRPTR, keep=True)
+
+    def __init__(self, Title, **kwds):
+        super(Menu, self).__init__(Title=Title, **kwds)
+
+#===============================================================================
+
+class Menuitem(Family):
+    CLASSID = MUIC_Menuitem
+    
+    Checked       = MAttribute(MUIA_Menuitem_Checked       , 'isg', c_BOOL)
+    Checkit       = MAttribute(MUIA_Menuitem_Checkit       , 'isg', c_BOOL)
+    CommandString = MAttribute(MUIA_Menuitem_CommandString , 'isg', c_BOOL)
+    CopyStrings   = MAttribute(MUIA_Menuitem_CopyStrings   , 'i..', c_BOOL)
+    Enabled       = MAttribute(MUIA_Menuitem_Enabled       , 'isg', c_BOOL)
+    Exclude       = MAttribute(MUIA_Menuitem_Exclude       , 'isg', c_LONG)
+    Shortcut      = MAttribute(MUIA_Menuitem_Shortcut      , 'isg', c_STRPTR, keep=True)
+    Title         = MAttribute(MUIA_Menuitem_Title         , 'isg', c_STRPTR, keep=True)
+    Toggle        = MAttribute(MUIA_Menuitem_Toggle        , 'isg', c_BOOL)
+    Trigger       = MAttribute(MUIA_Menuitem_Trigger       , '..g', c_APTR)
+
+    def __init__(self, Title, Shortcut=None, **kwds):
+        if Shortcut:
+            kwds['Shortcut'] = Shortcut
+            if len(Shortcut) > 1:
+                kwds['CommandString'] = True
+            else:
+                kwds['CommandString'] = False
+                
+        if Title == '-': Title = NM_BARLABEL
+        
+        super(Menuitem, self).__init__(Title=Title, **kwds)
+
+    def Bind(self, callback, *args):
+        self.Notify('Trigger', callback=lambda e, *args: callback(*args), args=args)
         
 #===============================================================================
 
