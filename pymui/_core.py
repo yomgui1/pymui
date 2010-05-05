@@ -589,10 +589,6 @@ class PyMUIBase(object):
     def Dispose(self):
         self._dispose()
 
-    def Coerce(self, cl):
-        assert isinstance(cl, PyMUIBase)
-        return cl(_address=self._object)
-
 
 ################################################################################
 #### Official Public Classes
