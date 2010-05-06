@@ -127,6 +127,7 @@ class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
     def __new__(cl, x=0):
         if isinstance(x, str):
             o = c_CONST_STRPTR.__new__(c_CONST_STRPTR)
+            x = x.encode('latin-1')
         else:
             o = _ct.c_char_p.__new__(cl)
         o.value = x
