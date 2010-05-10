@@ -80,7 +80,7 @@ class PyMUICArrayType(PyMUICType):
 
 class PyMUICStructureType(_ct.Structure, PyMUICType):
     def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
+        return addressof(self)
 
     @classmethod
     def FromLong(cl, v):
@@ -145,6 +145,17 @@ class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
 class c_CONST_STRPTR(c_STRPTR):
     def __setitem__(self, i, v):
         raise NotImplemented("CONST_STRPRT cannot be changed")
+
+class c_PyObject(_ct.py_object, PyMUICSimpleType):
+    def __long__(self):
+        return _ct.c_ulong.from_address(addressof(self)).value
+
+    @classmethod
+    def FromLong(cl, v):
+        return cl(_ct._ptr2pyobj(v))
+
+    def __getitem__(self, i):
+        return self.value[i]
 
 def PointerOn(x):
     return x.PointerType()(x)

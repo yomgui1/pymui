@@ -25,6 +25,9 @@
 
 import pymui
 
+MAttribute = pymui.MAttribute
+MMethod = pymui.MMethod
+
 MUIC_NListtree = "NListtree.mcc"
 
 #### Attributes ###
@@ -55,8 +58,6 @@ MUIA_NListtree_DropTarget       = 0xfec81219  # *** [..G.]
 MUIA_NListtree_DropTargetPos    = 0xfec8121a  # *** [..G.]
 MUIA_NListtree_FindUserDataHook = 0xfec8121b  # *** [IS..]
 MUIA_NListtree_ShowTree         = 0xfec8121c  # *** [ISG.]
-MUIA_NListtree_SelectChange     = 0xfec8121d  # *** [ISGN]
-MUIA_NListtree_NoRootTree       = 0xfec8121e  # *** [I...]
 
 ### Special attribute values ###
 
@@ -121,14 +122,14 @@ MUIV_NListtree_ShowTree_Toggle                     = -1
 
 ### Structures & Flags ###
 
-class c_NListTree_TreeNode(pymui.PyMUICStructureType):
-    _field_ = [ ('tn_Node',  pymui.c_MinNode), # To make it a node
-                ('tn_Name',  pymui.c_STRPTR),  # Simple name field
-                ('tn_Flags', pymui.c_UWORD),   # Used for the flags below
-                ('tn_User',  pymui.c_APTR),    # Free for user data
-                ]
+class c_NListtree_TreeNode(pymui.PyMUICStructureType):
+    _fields_ = [ ('tn_Node',  pymui.c_MinNode), # To make it a node
+                 ('tn_Name',  pymui.c_STRPTR),  # Simple name field
+                 ('tn_Flags', pymui.c_UWORD),   # Used for the flags below
+                 ('tn_User',  pymui.c_APTR),    # Free for user data
+                 ]
 
-c_pNListTree_TreeNode = c_NListTree_TreeNode.PointerType()
+c_pNListtree_TreeNode = c_NListtree_TreeNode.PointerType()
 
 TNF_OPEN     = (1<<0)
 TNF_LIST     = (1<<1)
@@ -137,12 +138,12 @@ TNF_NOSIGN   = (1<<3)
 TNF_SELECTED = (1<<4)
 
 class c_TestPosResult(pymui.PyMUICStructureType):
-    _field_ = [ ('tpr_TreeNode',  c_pNListTree_TreeNode),
-                ('tpr_Type',      pymui.c_UWORD),
-                ('tpr_ListEntry', pymui.c_LONG),
-                ('tpr_ListFlags', pymui.c_UWORD),
-                ('tpr_Column',    pymui.c_WORD),
-                ]
+    _fields_ = [ ('tpr_TreeNode',  c_pNListtree_TreeNode),
+                 ('tpr_Type',      pymui.c_UWORD),
+                 ('tpr_ListEntry', pymui.c_LONG),
+                 ('tpr_ListFlags', pymui.c_UWORD),
+                 ('tpr_Column',    pymui.c_WORD),
+                 ]
     
 ### Methods ###
 
@@ -372,26 +373,27 @@ MUIV_NListtree_CopyToClip_Active                   = -1
 ### Hook message structs ###
 
 class c_NListtree_CloseMessage(pymui.PyMUICStructureType):
-    _field_ = [ ('HookID',   pymui.c_ULONG),
-                ('TreeNode', c_pNListtree_TreeNode),
-                ]
+    _fields_ = [ ('HookID',   pymui.c_ULONG),
+                 ('TreeNode', c_pNListtree_TreeNode) ]
 
 class c_NListtree_CloseHook(pymui.c_Hook): _argtypes_ = (None, c_NListtree_CloseMessage)
 
+_c_NListtree_TreeNode_NULL = c_NListtree_TreeNode.FromLong(0)
+
 ### Class ###
 
-class NListtree(Area):
+class NListtree(pymui.Area):
     CLASSID = MUIC_NListtree
     
     Active           = MAttribute(MUIA_NListtree_Active,            '.sg', c_pNListtree_TreeNode)
     ActiveList       = MAttribute(MUIA_NListtree_ActiveList,        '..g', c_pNListtree_TreeNode)
     AutoVisible      = MAttribute(MUIA_NListtree_AutoVisible,       'isg', c_pNListtree_TreeNode)
     CloseHook        = MAttribute(MUIA_NListtree_CloseHook,         'is.', c_NListtree_CloseHook, keep=True)
-    CompareHook      = MAttribute(MUIA_NListtree_CompareHook,       'is.', c_Hook, keep=True)
-    ConstructHook    = MAttribute(MUIA_NListtree_ConstructHook,     'is.', c_Hook, keep=True)
-    CopyToClipHook   = MAttribute(MUIA_NListtree_CopyToClipHook,    'is.', c_Hook, keep=True)
-    DestructHook     = MAttribute(MUIA_NListtree_DestructHook,      'is.', c_Hook, keep=True)
-    DisplayHook      = MAttribute(MUIA_NListtree_DisplayHook,       'is.', c_Hook, keep=True)
+    CompareHook      = MAttribute(MUIA_NListtree_CompareHook,       'is.', pymui.c_Hook, keep=True)
+    ConstructHook    = MAttribute(MUIA_NListtree_ConstructHook,     'is.', pymui.c_Hook, keep=True)
+    CopyToClipHook   = MAttribute(MUIA_NListtree_CopyToClipHook,    'is.', pymui.c_Hook, keep=True)
+    DestructHook     = MAttribute(MUIA_NListtree_DestructHook,      'is.', pymui.c_Hook, keep=True)
+    DisplayHook      = MAttribute(MUIA_NListtree_DisplayHook,       'is.', pymui.c_Hook, keep=True)
     DoubleClick      = MAttribute(MUIA_NListtree_DoubleClick,       'isg', pymui.c_ULONG)
     DragDropSort     = MAttribute(MUIA_NListtree_DragDropSort,      'is.', pymui.c_BOOL)
     DropTarget       = MAttribute(MUIA_NListtree_DropTarget,        '..g', pymui.c_ULONG)
@@ -399,21 +401,94 @@ class NListtree(Area):
     DropType         = MAttribute(MUIA_NListtree_DropType,          '..g', pymui.c_ULONG)
     DupNodeName      = MAttribute(MUIA_NListtree_DupNodeName,       'is.', pymui.c_BOOL)
     EmptyNodes       = MAttribute(MUIA_NListtree_EmptyNodes,        'is.', pymui.c_BOOL)
-    FindNameHook     = MAttribute(MUIA_NListtree_FindNameHook,      'is.', c_Hook, keep=True)
-    FindUserDataHook = MAttribute(MUIA_NListtree_FindUserDataHook,  'is.', c_Hook, keep=True)
+    FindNameHook     = MAttribute(MUIA_NListtree_FindNameHook,      'is.', pymui.c_Hook, keep=True)
+    FindUserDataHook = MAttribute(MUIA_NListtree_FindUserDataHook,  'is.', pymui.c_Hook, keep=True)
     Format           = MAttribute(MUIA_NListtree_Format,            'is.', pymui.c_STRPTR)
     MultiSelect      = MAttribute(MUIA_NListtree_MultiSelect,       'i..', pymui.c_ULONG)
-    MultiTestHook    = MAttribute(MUIA_NListtree_MultiTestHook,     'is.', c_Hook, keep=True)
-    #NoRootTree       = MAttribute(MUIA_NListtree_NoRootTree,        'i..', )
-    OpenHook         = MAttribute(MUIA_NListtree_OpenHook,          'is.', c_Hook, keep=True)
+    MultiTestHook    = MAttribute(MUIA_NListtree_MultiTestHook,     'is.', pymui.c_Hook, keep=True)
+    OpenHook         = MAttribute(MUIA_NListtree_OpenHook,          'is.', pymui.c_Hook, keep=True)
     Quiet            = MAttribute(MUIA_NListtree_Quiet,             '.s.', pymui.c_BOOL)
-    #SelectChange     = MAttribute(MUIA_NListtree_SelectChange,      'isg', )
     ShowTree         = MAttribute(MUIA_NListtree_ShowTree,          'isg', pymui.c_ULONG)
     Title            = MAttribute(MUIA_NListtree_Title,             'is.', pymui.c_BOOL)
     TreeColumn       = MAttribute(MUIA_NListtree_TreeColumn,        'isg', pymui.c_ULONG)
 
-    Insert = MMethod(MUIM_NListtree_Insert, [ ('Name', pymui.c_STRPTR),
-                                              ('User', pymui.c_APTR),
-                                              ('ListNode', c_pNListtree_TreeNode),
-                                              ('PrevNode', c_pNListtree_TreeNode),
-                                              ('Flags', pymui.c_ULONG) ])
+    Clear    = MMethod(MUIM_NListtree_Clear,  [ ('ListNode', c_pNListtree_TreeNode),
+                                                ('Flags',    pymui.c_ULONG) ])
+    Close    = MMethod(MUIM_NListtree_Close, [ ('ListNode', c_pNListtree_TreeNode),
+                                               ('TreeNode', c_pNListtree_TreeNode),
+                                               ('Flags',    pymui.c_ULONG) ])
+    GetEntry = MMethod(MUIM_NListtree_GetEntry, [ ('Node',     c_pNListtree_TreeNode),
+                                                  ('Position', pymui.c_LONG),
+                                                  ('Flags',    pymui.c_ULONG),
+                                                ], c_NListtree_TreeNode)
+    Insert   = MMethod(MUIM_NListtree_Insert, [ ('Name',     pymui.c_STRPTR),
+                                                ('User',     pymui.c_APTR),
+                                                ('ListNode', c_pNListtree_TreeNode),
+                                                ('PrevNode', c_pNListtree_TreeNode),
+                                                ('Flags',    pymui.c_ULONG) ], c_NListtree_TreeNode)
+    Open     = MMethod(MUIM_NListtree_Open, [ ('ListNode', c_pNListtree_TreeNode),
+                                              ('TreeNode', c_pNListtree_TreeNode),
+                                              ('Flags',    pymui.c_ULONG) ])
+    Remove   = MMethod(MUIM_NListtree_Remove, [ ('ListNode', c_pNListtree_TreeNode),
+                                                ('TreeNode', c_pNListtree_TreeNode),
+                                                ('Flags',    pymui.c_ULONG) ])
+
+    @Clear.alias
+    def Clear(self, meth):
+        meth(self, _c_NListtree_TreeNode_NULL, 0)
+        self.__data.clear()
+
+    @GetEntry.alias
+    def GetEntry(self, meth,
+                 node=MUIV_NListtree_GetEntry_ListNode_Active,
+                 position=MUIV_NListtree_GetEntry_Position_Active,
+                 flags=0):
+        node = (node if isinstance(node, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(node))
+        return meth(self, node, position, flags)
+
+    @Insert.alias
+    def Insert(self, meth, name,
+               lnode=MUIV_NListtree_Insert_ListNode_Root,
+               pnode=MUIV_NListtree_Insert_PrevNode_Tail,
+               flags=0, user=0):
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
+        pnode = (pnode if isinstance(pnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(pnode))
+        return meth(self, name, user, lnode, pnode, flags)
+
+    @Open.alias
+    def Open(self, meth,
+             lnode=MUIV_NListtree_Open_ListNode_Active,
+             tnode=MUIV_NListtree_Open_TreeNode_All,
+             flags=0):
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        meth(self, lnode, tnode, flags)
+
+    @Close.alias
+    def Close(self, meth,
+             lnode=MUIV_NListtree_Close_ListNode_Active,
+             tnode=MUIV_NListtree_Close_TreeNode_All,
+             flags=0):
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        meth(self, lnode, tnode, flags)
+
+    @Remove.alias
+    def Remove(self, meth,
+               lnode=MUIV_NListtree_Remove_ListNode_Active,
+               tnode=MUIV_NListtree_Remove_TreeNode_All,
+               flags=0):
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        meth(self, lnode, tnode, flags)
+
+    def __init__(self, *a, **k):
+        super(NListtree, self).__init__(*a, **k)
+        self.__data = {}
+
+    def SetPyData(self, item, data):
+        self.__data[id(data)] = data
+        item.tn_User = id(data)
+
+    def GetPyData(self, item):
+        return self.__data.get(item.tn_User.value)

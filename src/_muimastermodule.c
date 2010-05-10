@@ -700,7 +700,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
         PyObject *overloaded_dict;
 
         Py_INCREF(pyo);
-        overloaded_dict = PyObject_GetAttrString(pyo, "__pymui_overloaded__"); /* NR */
+        overloaded_dict = PyObject_GetAttrString(pyo, "_pymui_overloaded_"); /* NR */
         if (NULL != overloaded_dict) {
             PyObject *key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
             if (NULL != key) {
@@ -1363,22 +1363,22 @@ static PyObject *
 boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
     Object *obj;
     ULONG meth;
-    LONG value;
+    LONG v1=0, v2=0;
 
     obj = PyBOOPSIObject_GetObject(self);
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "IO&", &meth, py2long, &value)) /* BR */
+    if (!PyArg_ParseTuple(args, "I|O&O&", &meth, py2long, &v1, py2long, &v2)) /* BR */
         return NULL;
 
-    DPRINT("DoMethod(obj=%p, meth=0x%08x, value=0x%08x):\n", obj, meth, value);
-    value = DoMethod(obj, meth, value);
+    DPRINT("DoMethod(obj=%p, meth=0x%08x, v1=%08x, v2=%08x):\n", obj, meth, v1, v2);
+    v1 = DoMethod(obj, meth, v1, v2);
 
     if (PyErr_Occurred())
         return NULL;
 
-    return PyLong_FromUnsignedLong(value);
+    return PyLong_FromUnsignedLong(v1);
 }
 //-
 
@@ -2375,6 +2375,24 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     return PyString_FromString(filename);
 }
 //-
+//+ _muimaster_request
+static PyObject *
+_muimaster_request(PyObject *self, PyObject *args)
+{
+    char *gadgets, *contents;
+    char *title;
+    Object *app, *win;
+    LONGBITS flags = 0;
+    LONG result;
+
+    if (!PyArg_ParseTuple(args, "O&O&zss|l", py2long, &app, py2long, &win, &title, &gadgets, &contents, &flags))
+        return NULL;
+
+    result = MUI_RequestA(app, win, flags, title, gadgets, contents, NULL);
+    return PyInt_FromLong(result);
+}
+//-
+
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
@@ -2383,6 +2401,7 @@ static PyMethodDef _muimaster_methods[] = {
     {"_ptr2pyboopsi", _muimaster_ptr2pyboopsi, METH_VARARGS, NULL},
     {"_ptr2pymui", _muimaster_ptr2pymui, METH_VARARGS, NULL},
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
+    {"request", _muimaster_request, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -2430,8 +2449,11 @@ PyMorphOS_CloseModule(void)
                         continue;
                     }
 
-                    /* No parent object ? */
-                    if ((NULL == parent) && (NULL == app)) {
+                    /* No parent object ?
+                     * Note: app may also be 0xffffffff (-1)
+                     */
+
+                    if ((NULL == parent) && ((NULL == app) || ((APTR)-1 == app))) {
                         DPRINT("[%p] Disposing a MUI object...\n", obj);
                         MUI_DisposeObject(obj);
                         DPRINT("[%p] Disposed\n", obj);

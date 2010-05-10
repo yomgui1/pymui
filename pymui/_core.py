@@ -61,17 +61,6 @@ TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 ##
 
-class c_PyObject(_ct.py_object, PyMUICSimpleType):
-    def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
-
-    @classmethod
-    def FromLong(cl, v):
-        return cl(_muimaster._ptr2pyobj(v))
-
-    def __getitem__(self, i):
-        return self.value[i]
-
 class c_Object(_ct.py_object, PyMUICSimpleType):
     def __new__(cl, x=None):
         o = _ct.py_object.__new__(cl)
@@ -154,6 +143,22 @@ class c_Hook(c_PyObject):
 
 class c_PenSpec(PyMUICStructureType):
     _fields_ = [ ('buf', c_BYTE.ArrayType(32)) ]
+
+
+################################################################################
+#### Helpers
+################################################################################
+
+def DoRequest(app=None, win=None, title=None, gadgets=None, format=None, *args):
+    assert gadgets and format
+    if app is not None:
+        assert isinstance(app, Application)
+        app = app._object
+    if win is not None:
+        assert isinstance(win, Window)
+        win = win._object
+    return _muimaster.request(app, win, title, gadgets, format % args)
+
 
 ################################################################################
 #### PyMUI internal base classes and routines
@@ -428,20 +433,18 @@ class BOOPSIMetaClass(type):
         
 
 class MUIMetaClass(BOOPSIMetaClass):
-    def __new__(metacl, name, bases, dct):
-        dct['_MCC_'] = bool(dct.pop('_MCC_', False))
-
-        if dct['_MCC_']:
-            if not any(hasattr(base, '__pymui_overloaded__') for base in bases):
-                dct['__pymui_overloaded__'] = {}
-
-        return BOOPSIMetaClass.__new__(metacl, name, bases, dct)
-
     def __init__(cl, name, bases, dct):
         BOOPSIMetaClass.__init__(cl, name, bases, dct)
 
+        if not hasattr(cl, '_MCC_'):
+            cl._MCC_ = False
+
+        if cl._MCC_:
+            if not any(hasattr(base, '_pymui_overloaded_') for base in bases if isinstance(base, BOOPSIMetaClass)):
+                cl._pymui_overloaded_ = {}
+
         # register MUI overloaded methods
-        d = dct.get('__pymui_overloaded__')
+        d = getattr(cl, '_pymui_overloaded_', None)
         if d is not None:
             for v in dct.itervalues():
                 if hasattr(v, '_pymui_mid_'):
