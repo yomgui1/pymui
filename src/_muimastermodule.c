@@ -1113,37 +1113,37 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
     /* Need to create a new MCC or a simple MUI object instance ? */
     if (isMCC) {
-        MCCNode *node = NULL, *next;
+        MCCNode *mccnode = NULL, *next;
 
         DPRINT("Search for MCC based on: '%s'\n", classid);
 
         ForeachNode(&gMCCList, next) {
             if ((NULL != next->mcc->mcc_Super->cl_ID) && !strcmp(classid, next->mcc->mcc_Super->cl_ID)) {
-                node = next;
+                mccnode = next;
                 break;
             }
         }
 
-        if (NULL == node) {
-            node = AllocMem(sizeof(MCCNode), MEMF_PUBLIC | MEMF_SEM_PROTECTED | MEMF_CLEAR);
-            if (NULL == node) {
-                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+        if (NULL == mccnode) {
+            mccnode = AllocMem(sizeof(MCCNode), MEMF_PUBLIC | MEMF_SEM_PROTECTED | MEMF_CLEAR);
+            if (NULL == mccnode) {
+                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object");
                 goto bye_err;
             }
 
             mcc = MUI_CreateCustomClass(NULL, classid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
             if (NULL == mcc) {
-                free(node);
-                PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object.");
+                FreeMem(mccnode, sizeof(MCCNode));
+                PyErr_Format(PyExc_MemoryError, "MUI_CreateCustomClass() failed with classid %s", classid);
                 goto bye_err;
             }
 
-            node->mcc = mcc;
-            ADDTAIL(&gMCCList, node);
+            mccnode->mcc = mcc;
+            ADDTAIL(&gMCCList, mccnode);
         } else
-            mcc = node->mcc;
+            mcc = mccnode->mcc;
 
-        DPRINT("MCC: %p (SuperID: '%s')\n", mcc, node->mcc->mcc_Super->cl_ID);
+        DPRINT("MCC: %p (SuperID: '%s')\n", mcc, mccnode->mcc->mcc_Super->cl_ID);
     }
 
     /* Creating the BOOPSI/MUI object */
