@@ -23,10 +23,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-import pymui
-
-MAttribute = pymui.MAttribute
-MMethod = pymui.MMethod
+from pymui.mcc.nlist import *
 
 MUIC_NListtree = "NListtree.mcc"
 
@@ -118,7 +115,6 @@ MUIV_NListtree_MultiSelect_Shifted                 = 2
 MUIV_NListtree_MultiSelect_Always                  = 3
 
 MUIV_NListtree_ShowTree_Toggle                     = -1
-
 
 ### Structures & Flags ###
 
@@ -386,7 +382,7 @@ _c_NListtree_TreeNode_NULL = c_NListtree_TreeNode.FromLong(0)
 
 ### Class ###
 
-class NListtree(pymui.Area):
+class NListtree(NList):
     CLASSID = MUIC_NListtree
     
     Active           = MAttribute(MUIA_NListtree_Active,            '.sg', c_pNListtree_TreeNode)
@@ -417,10 +413,10 @@ class NListtree(pymui.Area):
     TreeColumn       = MAttribute(MUIA_NListtree_TreeColumn,        'isg', pymui.c_ULONG)
 
     Clear    = MMethod(MUIM_NListtree_Clear,  [ ('ListNode', c_pNListtree_TreeNode),
-                                                ('Flags',    pymui.c_ULONG) ])
+                                                ('Flags',    pymui.c_ULONG) ], retype=None)
     Close    = MMethod(MUIM_NListtree_Close, [ ('ListNode', c_pNListtree_TreeNode),
                                                ('TreeNode', c_pNListtree_TreeNode),
-                                               ('Flags',    pymui.c_ULONG) ])
+                                               ('Flags',    pymui.c_ULONG) ], retype=None)
     GetEntry = MMethod(MUIM_NListtree_GetEntry, [ ('Node',     c_pNListtree_TreeNode),
                                                   ('Position', pymui.c_LONG),
                                                   ('Flags',    pymui.c_ULONG),
@@ -432,7 +428,7 @@ class NListtree(pymui.Area):
                                                 ('Flags',    pymui.c_ULONG) ], c_NListtree_TreeNode)
     Open     = MMethod(MUIM_NListtree_Open, [ ('ListNode', c_pNListtree_TreeNode),
                                               ('TreeNode', c_pNListtree_TreeNode),
-                                              ('Flags',    pymui.c_ULONG) ])
+                                              ('Flags',    pymui.c_ULONG) ], retype=None)
     Remove   = MMethod(MUIM_NListtree_Remove, [ ('ListNode', c_pNListtree_TreeNode),
                                                 ('TreeNode', c_pNListtree_TreeNode),
                                                 ('Flags',    pymui.c_ULONG) ])
@@ -440,7 +436,7 @@ class NListtree(pymui.Area):
     @Clear.alias
     def Clear(self, meth):
         meth(self, _c_NListtree_TreeNode_NULL, 0)
-        self.__data.clear()
+        self._ClearAllPyData()
 
     @GetEntry.alias
     def GetEntry(self, meth,
@@ -491,15 +487,6 @@ class NListtree(pymui.Area):
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
         self.__data = {} # see (Set|Get)PyData methods
-
-    # Funny methods to make easier wxPython portages.
-
-    def SetPyData(self, item, data):
-        self.__data[id(data)] = data
-        item.tn_User = id(data)
-
-    def GetPyData(self, item):
-        return self.__data.get(item.tn_User.value)
 
     def GetFirstChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
         item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Head)
