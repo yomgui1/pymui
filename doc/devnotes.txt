@@ -391,3 +391,28 @@ b) si l'objet Python est OWNER, alors on contrôle l'appel aux API pour la destru
 Mais je pense à une solution: vu qu'on utilise un weakref comme valeur,
 si plus aucun objet Python ne référence notre objet BOOPSI alors on détruit l'entrée.
 A l'utilisateur de se débrouiller pour garder en vie son objet.
+
+=======
+
+Bon globalement le dernier design (cf au dessus) marche bien.
+Mais j'ai encore des soucis (code pas beau, complexité d'écriture, ...) avec l'utilisation de MCC comme NList & Co.
+Ou bien faire passer des buffers comme pour Rawimage.
+
+Vu que les paramêtres aux méthodes/attributs sont toujours des LONG ou ULONG, c'est pas marrant de gérer au cas par cas
+ces derniers: un attribut peut être un pointeur ou n valeurs partiulière... qui ne faut dés alors surtout pas utiliser
+comme pointeur sino crash!
+
+J'aimerai automatiser tout cela pour que l'écriture des classes soit plus aisées.. mais pas simple!
+
+Genre: actuellement faire un 'get' d'un attribut retourne un objet de type PyMUICType.
+Cela laisse le choix à l'utilisateur de pouvoir l'utiliser soit comme un entier (en le convertissant en long avec long(x)),
+soit comme un objet plus complexe (avec la méthode .value ou autre, tout dépend de la classe).
+
+Le problème avec cela c'est que l'écriture devient moins intuitive: on s'attend plus d'avoir un objet de type PyMUIObject
+quand on exécute "obj.ApplicationObject", plus que de devoir faire "obj.ApplicationObject.value".
+Surtout que le terme 'value' (qui vient ici de ctypes) prète à confusion: on pourrait croire que c'est la valeur entière!
+
+Si je regarde 'chez les autres' ils implémentent tous leur méthodes/attributs en C ou C++. Pas moi.
+Il va falloir que je trouve un autre moyen plus subtile pour indiquer comment interpéter une valeur entière C de MUI
+vers un objet Python.
+

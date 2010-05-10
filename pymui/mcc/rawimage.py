@@ -24,7 +24,6 @@
 ###############################################################################
 
 from pymui import *
-from ctypes import c_char_p
 
 __all__ = [ 'MUIC_Rawimage', 'MUIA_Rawimage_Data',
             'RAWIMAGE_FORMAT_RAW_ARGB_ID', 'RAWIMAGE_FORMAT_BZ2_ARGB_ID',
@@ -34,31 +33,31 @@ MUIC_Rawimage = "Rawimage.mcc"
 
 MUIA_Rawimage_Data = 0xfed10014 # [IS.]  struct MUI_RawimageData *   v20.1 (06.01.2007)
 
-def MAKE_ID(a,b,c,d):
-    return (ord(a)<<24)|(ord(b)<<16)|(ord(c)<<8)|ord(d)
-
 RAWIMAGE_FORMAT_RAW_ARGB_ID = 0
 RAWIMAGE_FORMAT_BZ2_ARGB_ID = MAKE_ID('B','Z','2','\0')
 
 def mkRawimageData(w, h, data, f=RAWIMAGE_FORMAT_RAW_ARGB_ID):
     size = len(data)
-    dt = c_UBYTE.ArrayType(size)
-    obj = type('_rawimgmcc_%u' % size,
+    obj = type('_rawimg_%u' % size,
                (PyMUICStructureType,),
                {'_fields_': [ ('ri_Width',  c_ULONG),
                               ('ri_Height', c_ULONG),
                               ('ri_Format', c_ULONG),
                               ('ri_Size',   c_ULONG),
-                              ('ri_Data',   dt) ]})()
-    obj.ri_Width  = w
-    obj.ri_Height = h
-    obj.ri_Format = f
-    obj.ri_Size   = size
-    for i in xrange(size):
-        obj.ri_Data[i] = ord(data[i])
+                              ('ri_Data',   c_UYBTE.ArrayType(size)) ]})()
+    obj.ri_Width   = w
+    obj.ri_Height  = h
+    obj.ri_Format  = f
+    obj.ri_Size    = size
+    obj.ri_Data[:] = [ ord(x) for x in data ]
     return obj
 
 class Rawimage(Area):
     CLASSID = MUIC_Rawimage
 
     Picture = MAttribute(MUIA_Rawimage_Data, 'is.', c_APTR, keep=True)
+
+    def __init__(self, Picture=None, **kw):
+        if Picture:
+            kw['Picture'] = Picture
+        super(Rawimage, self).__init__(**kw)

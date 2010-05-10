@@ -127,6 +127,10 @@ class c_NListtree_TreeNode(pymui.PyMUICStructureType):
                  ('tn_Name',  pymui.c_STRPTR),  # Simple name field
                  ('tn_Flags', pymui.c_UWORD),   # Used for the flags below
                  ('tn_User',  pymui.c_APTR),    # Free for user data
+
+                 # Privates fields follow, so this type shall not be used
+                 # to defines fields in stuctures.
+                 # For this purpose, use c_pNListtree_TreeNode
                  ]
 
 c_pNListtree_TreeNode = c_NListtree_TreeNode.PointerType()
@@ -444,7 +448,8 @@ class NListtree(pymui.Area):
                  position=MUIV_NListtree_GetEntry_Position_Active,
                  flags=0):
         node = (node if isinstance(node, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(node))
-        return meth(self, node, position, flags)
+        item = meth(self, node, position, flags)
+        return (item if long(item) else None)
 
     @Insert.alias
     def Insert(self, meth, name,
@@ -453,7 +458,8 @@ class NListtree(pymui.Area):
                flags=0, user=0):
         lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
         pnode = (pnode if isinstance(pnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(pnode))
-        return meth(self, name, user, lnode, pnode, flags)
+        item = meth(self, name, user, lnode, pnode, flags)
+        return (item if long(item) else None)
 
     @Open.alias
     def Open(self, meth,
@@ -484,7 +490,9 @@ class NListtree(pymui.Area):
 
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
-        self.__data = {}
+        self.__data = {} # see (Set|Get)PyData methods
+
+    # Funny methods to make easier wxPython portages.
 
     def SetPyData(self, item, data):
         self.__data[id(data)] = data
@@ -492,3 +500,23 @@ class NListtree(pymui.Area):
 
     def GetPyData(self, item):
         return self.__data.get(item.tn_User.value)
+
+    def GetFirstChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
+        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Head)
+        return (item if long(item) else None)
+    
+    def GetLastChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
+        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Tail)
+        return (item if long(item) else None)
+    
+    def ItemHasChildren(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
+        return bool(self.GetFirstChild(item))
+
+    def GetItemParent(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
+        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Parent)
+        return (item if long(item) else None)
+
+    def GetRootItem(self):
+        # -15 is a private value taken from NListree sources.
+        item = self.GetEntry(MUIV_NListtree_GetEntry_ListNode_Root, -15)
+        return (item if long(item) else None)

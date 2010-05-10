@@ -279,4 +279,12 @@ if __name__ == '__main__':
     x = c_APTR(o)
     assert x.value is None
 
+    s = "123456789\xF4\0\033x" # len = 13
+    TestClass = type('TestClass',
+                     (PyMUICStructureType, ),
+                     {'_fields_': [ ('Data', (c_UBYTE*len(s))) ]})
+    o = TestClass()
+    o.Data[:] = [ ord(x) for x in s ]
+    assert len(o.Data) == len(s)
+
     print "Everything is OK"

@@ -61,6 +61,10 @@ TABLETA_ResolutionX  = (TABLETA_Dummy + 9)
 TABLETA_ResolutionY  = (TABLETA_Dummy + 10)
 ##
 
+def MAKE_ID(*v):
+    # Yep, faster than using list comprehension
+    return (ord(v[0])<<24)|(ord(v[1])<<16)|(ord(v[2])<<8)|ord(v[3])
+
 class c_Object(_ct.py_object, PyMUICSimpleType):
     def __new__(cl, x=None):
         o = _ct.py_object.__new__(cl)
