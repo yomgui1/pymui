@@ -65,35 +65,49 @@ def MAKE_ID(*v):
     # Yep, faster than using list comprehension
     return (ord(v[0])<<24)|(ord(v[1])<<16)|(ord(v[2])<<8)|ord(v[3])
 
-class c_Object(_ct.py_object, PyMUICSimpleType):
+class c_Object(c_APTR):
     def __new__(cl, x=None):
-        o = _ct.py_object.__new__(cl)
-        if x is not None:
-            assert isinstance(x, PyBOOPSIObject)
-            o.value = x
+        o = c_APTR.__new__(cl)
+        if x: o.value = x
         return o
-
-    def __long__(self):
-        return self.value._object
 
     @classmethod
     def FromLong(cl, v):
-        return cl(_muimaster._ptr2pyboopsi(v))
-
-class c_MUIObject(_ct.py_object, PyMUICSimpleType):
-    def __new__(cl, x=None):
-        o = _ct.py_object.__new__(cl)
-        if x is not None:
-            assert isinstance(x, PyMUIObject)
-            o.value = x
-        return o
+        return cl(v)
 
     def __long__(self):
-        return self.value._object
+        return c_APTR.value.__get__(self)
+
+    def _get_value(self):
+        return _muimaster._ptr2boopsi(c_APTR.value.__get__(self))
+
+    def _set_value(self, v):
+        if isinstance(v, PyBOOPSIObject):
+            v = v._object
+        c_APTR.value.__set__(self, v)
+
+class c_MUIObject(c_APTR):
+    def __new__(cl, x=None):
+        o = c_APTR.__new__(cl)
+        if x: o.value = x
+        return o
 
     @classmethod
     def FromLong(cl, v):
-        return cl(_muimaster._ptr2pymui(v))
+        return cl(v)
+
+    def __long__(self):
+        return c_APTR.value.__get__(self)
+
+    def _get_value(self):
+        return _muimaster._ptr2pymui(c_APTR.value.__get__(self))
+
+    def _set_value(self, v):
+        if isinstance(v, PyMUIObject):
+            v = v._object
+        c_APTR.value.__set__(self, v)
+
+    value = property(fget=_get_value, fset=_set_value, doc=c_APTR.value.__doc__)
 
 class c_Hook(c_PyObject):
     _argtypes_ = (long, long)

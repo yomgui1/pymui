@@ -280,10 +280,10 @@ MUIV_NList_DoMethod_Entry        = -1
 MUIV_NList_DoMethod_Self         = -2
 MUIV_NList_DoMethod_App          = -3
 
-MUIV_NList_EntryValue             = MUIV_TriggerValue + 0x100
-MUIV_NList_EntryPosValue          = MUIV_TriggerValue + 0x102
-MUIV_NList_SelfValue              = MUIV_TriggerValue + 0x104
-MUIV_NList_AppValue               = MUIV_TriggerValue + 0x106
+MUIV_NList_EntryValue             = pymui.MUIV_TriggerValue + 0x100
+MUIV_NList_EntryPosValue          = pymui.MUIV_TriggerValue + 0x102
+MUIV_NList_SelfValue              = pymui.MUIV_TriggerValue + 0x104
+MUIV_NList_AppValue               = pymui.MUIV_TriggerValue + 0x106
 
 MUIV_NList_ColWidth_All          = -1
 MUIV_NList_ColWidth_Default      = -1
@@ -458,8 +458,7 @@ class NList(pymui.Area):
         self.__data.clear()
     
     def SetPyData(self, item, data):
-        self.__data[id(data)] = data
-        item.tn_User = id(data)
+        self.__data[long(item)] = data
 
     def GetPyData(self, item):
-        return self.__data.get(item.tn_User.value)
+        return self.__data.get(long(item))

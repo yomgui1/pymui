@@ -44,7 +44,7 @@ def mkRawimageData(w, h, data, f=RAWIMAGE_FORMAT_RAW_ARGB_ID):
                               ('ri_Height', c_ULONG),
                               ('ri_Format', c_ULONG),
                               ('ri_Size',   c_ULONG),
-                              ('ri_Data',   c_UYBTE.ArrayType(size)) ]})()
+                              ('ri_Data',   c_UBYTE.ArrayType(size)) ]})()
     obj.ri_Width   = w
     obj.ri_Height  = h
     obj.ri_Format  = f

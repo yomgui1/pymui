@@ -679,14 +679,16 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
 static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 {
-    //MCCData *data = INST_DATA(cl, obj);
-
     PyGILState_STATE gstate;
     PyObject *pyo, *erro;
-    ULONG result = 0, resultok = FALSE;
+    ULONG result;
+    BOOL resultok;
 
     if (!ATOMIC_FETCH(&gModuleIsValid))
         return DoSuperMethodA(cl, obj, msg);
+
+    resultok = FALSE;
+    result = 0;
 
     gstate = PyGILState_Ensure();
 
@@ -749,12 +751,7 @@ bye:
     erro = PyErr_Occurred();
     PyGILState_Release(gstate);
 
-    if (!resultok) {
-        DPRINT("DoSuper()...\n");
-        result = DoSuperMethodA(cl, obj, msg);
-    }
-
-    if (erro) {
+    if (NULL != erro) {
         Object *app = _app(obj);
         DPRINT("python exception occured (%p), app=%p, obj=%p, MethodID=%x\n", erro, app, obj, msg->MethodID);
 
@@ -762,6 +759,9 @@ bye:
             DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
 
         result = 0;
+    } else if (!resultok) {
+        DPRINT("DoSuper(cl=%p, obj=%p, msg=%p)...\n", cl, obj, msg);
+        result = DoSuperMethodA(cl, obj, msg);
     }
 
     return result;
@@ -1285,6 +1285,17 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
         return NULL;
 
     DPRINT("DoMethod(obj=%p, msg=%p (%u bytes), 0x%08x)\n", obj, msg, msg_length, msg->MethodID);
+
+    #if 0
+    {
+        int i;
+        ULONG *p = (ULONG *)msg;
+
+        for (i=0; i < msg_length/4; i++) {
+            DPRINT("msg[%-03lu] = $%08x\n", i, p[i]);
+        }
+    }
+    #endif
 
     /* Notes: objects given to the object dispatcher should remains alive during the call of the method,
      * even if this call cause some Python code to be executed causing a DECREF of these objects.
@@ -2449,11 +2460,8 @@ PyMorphOS_CloseModule(void)
                         continue;
                     }
 
-                    /* No parent object ?
-                     * Note: app may also be 0xffffffff (-1)
-                     */
-
-                    if ((NULL == parent) && ((NULL == app) || ((APTR)-1 == app))) {
+                    /* No parents ? */
+                    if (!TypeOfMem(app) && !TypeOfMem(parent)) {
                         DPRINT("[%p] Disposing a MUI object...\n", obj);
                         MUI_DisposeObject(obj);
                         DPRINT("[%p] Disposed\n", obj);

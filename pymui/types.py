@@ -121,7 +121,7 @@ class c_APTR(_ct.c_void_p, PyMUICSimpleType):
             self.value = x
 
     def __long__(self):
-        return self.value
+        return self.value or 0
 
 class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
     def __new__(cl, x=0):

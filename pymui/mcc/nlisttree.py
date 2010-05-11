@@ -489,21 +489,20 @@ class NListtree(NList):
         self.__data = {} # see (Set|Get)PyData methods
 
     def GetFirstChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
-        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Head)
-        return (item if long(item) else None)
+        return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Head)
     
     def GetLastChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
-        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Tail)
-        return (item if long(item) else None)
+        return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Tail)
     
     def ItemHasChildren(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
         return bool(self.GetFirstChild(item))
 
     def GetItemParent(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
-        item = self.GetEntry(item, nlt.MUIV_NListtree_GetEntry_Position_Parent)
-        return (item if long(item) else None)
+        return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Parent)
 
     def GetRootItem(self):
         # -15 is a private value taken from NListree sources.
-        item = self.GetEntry(MUIV_NListtree_GetEntry_ListNode_Root, -15)
-        return (item if long(item) else None)
+        return self.GetEntry(MUIV_NListtree_GetEntry_ListNode_Root, -15)
+
+    def GetItemText(self, item):
+        return item.tn_Name.value
