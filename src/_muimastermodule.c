@@ -184,17 +184,27 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyBOOPSIObject_ADD_FLAGS(o, x) (((PyBOOPSIObject *)(o))->flags |= (x))
 #define PyBOOPSIObject_REM_FLAGS(o, x) (((PyBOOPSIObject *)(o))->flags &= ~(x))
 #define PyBOOPSIObject_ISOWNER(o) (0 != (((PyBOOPSIObject *)(o))->flags & FLAG_OWNER))
+#define PyBOOPSIObject_HAS_FLAGS(o, m) (0 != (((PyBOOPSIObject *)(o))->flags & (m)))
 
 #define PyBOOPSIObject_SET_NODE(o, n) ({ \
     PyBOOPSIObject *_o = (PyBOOPSIObject *)(o); \
     ObjectNode *_n = (ObjectNode *)(n); \
     _o->node = _n; _n->obj = PyBOOPSIObject_GET_OBJECT(_o); })
 
+#define PyBOOPSIObject_FORBID(o) PyBOOPSIObject_ADD_FLAGS(o, FLAG_USED)
+#define PyBOOPSIObject_PERMIT(o) ({                        \
+            PyBOOPSIObject_REM_FLAGS(o, FLAG_USED);        \
+            if (PyBOOPSIObject_HAS_FLAGS(o, FLAG_DISPOSE)  \
+                && PyBOOPSIObject_DisposeObject((PyBOOPSIObject *)(o))) \
+                PyErr_Clear(); })
+
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
 
 #define ID_BREAK 0xABADDEAD
 #define FLAG_OWNER (1<<0) /* bObject has been created by the PyObject */
+#define FLAG_DISPOSE (1<<1) /* The bObject shall be disposed when operator is done */
+#define FLAG_USED (1<<2) /* The bObject can't be explicitly disposed when set */
 
 #define NODE_FLAG_MUI (1<<0)
 
@@ -221,7 +231,6 @@ typedef struct ObjectNode_STRUCT {
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
     Object *       bObject;
-    Object *       _old_obj;
     ObjectNode *   node;
     ULONG          flags;
     PyObject *     wreflist;
@@ -422,20 +431,26 @@ PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
 }
 //-
 //+ PyBOOPSIObject_DisposeObject
+// WARNING: this function doesn't check USED flag.
 static int
 PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 {
-    Object *bObj = PyBOOPSIObject_GET_OBJECT(pObj);
+    Object *bObj;
+    PyObject *ptype = NULL, *pvalue, *ptb, *err;
+    int res;
 
-    if (NULL == bObj)
-        bObj = pObj->_old_obj;
+    err = PyErr_Occurred();
+    if (NULL != err)
+        PyErr_Fetch(&ptype, &pvalue, &ptb);
 
+    bObj = PyBOOPSIObject_GET_OBJECT(pObj);
     if (NULL == bObj) {
         PyErr_SetString(PyExc_TypeError, "No valid BOOPSI object found");
-        return -1;
+        res = -1;
+        goto bye;
     }
 
-    if (PyBOOPSIObject_ISOWNER(pObj)) {
+    if (PyBOOPSIObject_HAS_FLAGS(pObj, FLAG_OWNER|FLAG_DISPOSE)) {
         /* BOOPSI/MUI destroy */
         DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
         if (PyMUIObject_Check(pObj))
@@ -450,13 +465,26 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
     } else
         DPRINT("BOOPSI object not disposed (not owner)\n");
 
+    if (bObj == gApp)
+        gApp = NULL;
+
     /* remove BOOPSI object reference from the objects db */
     objdb_remove(bObj);
     PyErr_Clear();
 
     PyBOOPSIObject_SET_OBJECT(pObj, NULL);
+    res = 0;
 
-    return 0;
+bye:
+    if (NULL != ptype) {
+        err = PyErr_Occurred();
+        if (NULL != err)
+            PyErr_WriteUnraisable(err);
+        
+        PyErr_Restore(ptype, pvalue, ptb);
+    }
+
+    return res;
 }
 //-
 //+ py2long
@@ -548,20 +576,17 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
         if (Py_None != pyo) {
             PyObject *res;
             ULONG v = args[2];
-            Object *app;
 
             DPRINT("{%#lx} pyo=%p-'%s', MUI=%p, value=(%ld, %lu, $%X)\n",
                    attr, pyo, OBJ_TNAME_SAFE(pyo), mo, v, v, (APTR)v);
 
             Py_INCREF(pyo);
 
-            app = _app(mo); /* take it now, because the object can be disposed during the next call */
             res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
             DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
 
-            /* [Yomgui]: what's happen if app is disposed ? */
-            if (PyErr_Occurred() && (NULL != app))
-                DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
+            if (PyErr_Occurred() && (NULL != gApp))
+                DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
 
             Py_XDECREF(res);
             Py_DECREF(pyo);
@@ -597,6 +622,9 @@ PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 static void
 IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *imsg)
 {
+    /* fr_UserData is Application, and its python proxy is already protected against
+     * Disposing. So I don't protect it using FORBID/PERMIT pair here.
+     */
     if (IDCMP_REFRESHWINDOW == imsg->Class)
         DoMethod(req->fr_UserData, MUIM_Application_CheckRefresh);
 }
@@ -651,7 +679,7 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
             if (NULL != req) {
                 set(app, MUIA_Application_Sleep, TRUE);
 
-                if (MUI_AslRequestTags(req,TAG_DONE)) {
+                if (MUI_AslRequestTags(req, TAG_DONE)) {
                     if (NULL != req->fr_File) {
                         res = buf;
                         stccpy(buf, req->fr_Drawer, sizeof(buf));
@@ -818,7 +846,6 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 
         if (PyArg_ParseTuple(args, "|I", &bObj)) {
             PyBOOPSIObject_SET_OBJECT(self, bObj);
-            self->_old_obj = NULL;
             self->flags = 0;
             self->node = NULL;
             self->wreflist = NULL;
@@ -832,19 +859,10 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
-    PyObject *ptype, *pvalue, *ptb, *err;
-
     DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), PyBOOPSIObject_GET_OBJECT(self));
 
-    err = PyErr_Occurred();
-    if (NULL != err)
-        PyErr_Fetch(&ptype, &pvalue, &ptb);
-
-    PyBOOPSIObject_DisposeObject(self);
-    PyErr_Clear();
-
-    if (NULL != err)
-        PyErr_Restore(ptype, pvalue, ptb);
+    if (NULL != PyBOOPSIObject_GET_OBJECT(self))
+        PyBOOPSIObject_DisposeObject(self);
 
     if (NULL != self->wreflist)
         PyObject_ClearWeakRefs((PyObject *)self);
@@ -906,6 +924,8 @@ PyDoc_STRVAR(boopsi__dispose_doc,
 "_dispose() -> int\n\
 \n\
 This method force the BOOPSI object dispose.\n\
+If this method is called when the object is in-use (set/get/do,...)\n\
+the BOOPSI object is not disposed immediatly, but after the use.\n\
 Use it only if you know what you are doing!\n\
 This object may be disposed elsewhere, not neccessary by you your code...");
 
@@ -915,16 +935,12 @@ boopsi__dispose(PyBOOPSIObject *self)
     Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
 
     if (NULL != bObj) {
-        /* Force the OWNER flag (removed during the disposing) */
-        PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+        PyBOOPSIObject_ADD_FLAGS(self, FLAG_DISPOSE);
 
-        /* False dispose, just set owned, but only remove it from obj db
-         * will be delete when the python object will die
-         */
-
-        objdb_remove(bObj);
-        self->_old_obj = bObj;
-        PyBOOPSIObject_SET_OBJECT(self, NULL);
+        if (!PyBOOPSIObject_HAS_FLAGS(self, FLAG_USED)) {
+            PyBOOPSIObject_DisposeObject(self);
+            PyErr_Clear();
+        }
     }
 
     Py_RETURN_NONE;
@@ -978,18 +994,46 @@ boopsi__addchild(PyBOOPSIObject *self, PyObject *args)
     /* Automatic OWNER flag loosing */
     loose(pychild);
 
+    ret = NULL;
+    PyBOOPSIObject_FORBID(self);
+
     if (lock) {
-        DPRINT("Lock\n");    
+        DPRINT("Lock\n");
+
+        /* This call can execute python code and cause exception */
         DoMethod(obj, MUIM_Group_InitChange);
+        if (PyErr_Occurred())
+            goto bye;
     }
 
     DPRINT("OM_ADDMEMBER: parent=%p, child=%p\n", obj, child);
     ret = PyInt_FromLong(DoMethod(obj, OM_ADDMEMBER, (ULONG)child));
 
     if (lock) {
-        DPRINT("Unlock\n");        
+        PyObject *ptype = NULL, *pvalue, *ptb;
+
+        DPRINT("Unlock\n");
+
+        if (NULL != PyErr_Occurred())
+            PyErr_Fetch(&ptype, &pvalue, &ptb);
+
+        /* This call can execute python code and cause exception */
         DoMethod(obj, MUIM_Group_ExitChange);
+
+        if (NULL != ptype) {
+            PyObject *err = PyErr_Occurred();
+
+            if (NULL != err)
+                PyErr_WriteUnraisable(err);
+
+            PyErr_Restore(ptype, pvalue, ptb);
+        }
     }
+
+bye:
+    PyBOOPSIObject_PERMIT(self);
+    if (PyErr_Occurred())
+        return NULL;
 
     return ret;
 }
@@ -1019,20 +1063,51 @@ boopsi__remchild(PyBOOPSIObject *self, PyObject *args)
     if (NULL == child)
         return NULL;
 
+    ret = NULL;
+    PyBOOPSIObject_FORBID(self);
+
     if (lock) {
-        DPRINT("Lock\n");    
+        DPRINT("Lock\n");
+
+        /* This call can execute python code and cause exception */
         DoMethod(obj, MUIM_Group_InitChange);
+        if (PyErr_Occurred())
+            goto bye;
     }
 
     DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);         
     ret = PyInt_FromLong(DoMethod(obj, OM_REMMEMBER, (ULONG)child));
-    
+
+    /* Note: object is not owned anymore!
+     * So user should re-attach it immediately or dispose it
+     */
+
     if (lock) {
-        DPRINT("Unlock\n");        
+        PyObject *ptype = NULL, *pvalue, *ptb;
+
+        DPRINT("Unlock\n");
+
+        if (NULL != PyErr_Occurred())
+            PyErr_Fetch(&ptype, &pvalue, &ptb);
+
+        /* This call can execute python code and cause exception */
         DoMethod(obj, MUIM_Group_ExitChange);
+
+        if (NULL != ptype) {
+            PyObject *err = PyErr_Occurred();
+
+            if (NULL != err)
+                PyErr_WriteUnraisable(err);
+
+            PyErr_Restore(ptype, pvalue, ptb);
+        }
     }
 
-    /* Note: object is not owned anymore! So user should re-attach it immediately or dispose it */
+bye:
+    PyBOOPSIObject_PERMIT(self);
+
+    if (PyErr_Occurred())
+        return NULL;
 
     return ret;
 }
@@ -1222,7 +1297,7 @@ Call BOOPSI function GetAttr() on linked BOPPSI object with given attribute id.\
 Returns the stored value of GetAttr().");
 
 static PyObject *
-boopsi__get(PyBOOPSIObject *self, PyObject *args)
+boopsi__get(PyBOOPSIObject *self, PyObject *attr_o)
 {
     Object *obj;
     ULONG attr;
@@ -1232,12 +1307,13 @@ boopsi__get(PyBOOPSIObject *self, PyObject *args)
     if (NULL == obj)
         return NULL;
 
-    if (!PyArg_ParseTuple(args, "I", &attr)) /* BR */
+    attr = PyLong_AsUnsignedLongMask(attr_o);
+    if (PyErr_Occurred())
         return NULL;
 
     DPRINT("_get(0x%08x): Object=%p (%s)\n", attr, obj, OCLASS(obj)->cl_ID);
-    value = 0xdeadbeaf;
-    if (!GetAttr(attr, obj, &value))
+    value = 0xdeadbeaf; /* be sure that the value is modified */
+    if (!GetAttr(attr, obj, &value)) /* I suppose that GetAttr() doesn't call python code */
         return PyErr_Format(PyExc_ValueError, "GetAttr(0x%08x) failed", (int)attr);
     DPRINT("_get(0x%08x): value=(%d, %u, 0x%08lx)\n", attr, (LONG)value, value, value);
 
@@ -1269,11 +1345,14 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     if (!py2long(v_obj, &value))
         return NULL;
 
-    DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
-    set(obj, attr, value);
-    DPRINT("- done\n");
+    PyBOOPSIObject_FORBID(self);
 
-    /* Due to MUI notification system a Python code may have be called here */
+    DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    set(obj, attr, value); /* may call some python code (notifications) */
+    DPRINT("- done\n");
+        
+    PyBOOPSIObject_PERMIT(self);
+
     if (PyErr_Occurred())
         return NULL;
 
@@ -1366,15 +1445,20 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
             return NULL;
         }
 
+        PyBOOPSIObject_FORBID(self);
         result = DoMethodA(obj, final_msg);
+        PyBOOPSIObject_PERMIT(self);
 
         PyMem_Free(final_msg);
-    } else
+    } else {
+        PyBOOPSIObject_FORBID(self);
         result = DoMethodA(obj, msg);
+        PyBOOPSIObject_PERMIT(self);
+    }
 
     DPRINT("DoMethod(obj=%p, 0x%08x) = (%ld, %lu, %lx)\n", obj, msg->MethodID, (LONG)result, result, result);
 
-    /* Methods can call Python ... check against exception here also */
+    /* Methods can call Python code ... check against exception here also */
     if (PyErr_Occurred())
         return NULL;
 
@@ -1400,8 +1484,11 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "I|O&O&", &meth, py2long, &v1, py2long, &v2)) /* BR */
         return NULL;
 
-    DPRINT("DoMethod(obj=%p, meth=0x%08x, v1=%08x, v2=%08x):\n", obj, meth, v1, v2);
+    PyBOOPSIObject_FORBID(self);
+    DPRINT("+ DoMethod(obj=%p, meth=0x%08x, v1=%08x, v2=%08x):\n", obj, meth, v1, v2);
     v1 = DoMethod(obj, meth, v1, v2);
+    DPRINT("- done\n");
+    PyBOOPSIObject_PERMIT(self);
 
     if (PyErr_Occurred())
         return NULL;
@@ -1425,7 +1512,7 @@ static struct PyMethodDef boopsi_methods[] = {
     {"_addchild", (PyCFunction) boopsi__addchild, METH_VARARGS, boopsi__addchild_doc},
     {"_remchild", (PyCFunction) boopsi__remchild, METH_VARARGS, boopsi__remchild_doc},
     {"_create",   (PyCFunction) boopsi__create,   METH_VARARGS, boopsi__create_doc},
-    {"_get",      (PyCFunction) boopsi__get,      METH_VARARGS, boopsi__get_doc},
+    {"_get",      (PyCFunction) boopsi__get,      METH_O,       boopsi__get_doc},
     {"_set",      (PyCFunction) boopsi__set,      METH_VARARGS, boopsi__set_doc},
     {"_do",       (PyCFunction) boopsi__do,       METH_VARARGS, boopsi__do_doc},
     {"_do1",      (PyCFunction) boopsi__do1,      METH_VARARGS, boopsi__do1_doc},
@@ -1465,7 +1552,7 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
-        ;
+        /* NOTHING TO DO YET */ ;
     }
 
     return (PyObject *)self;
@@ -1498,9 +1585,16 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "IO&", &attr, py2long, &value)) /* BR */
         return NULL;
 
-    DPRINT("Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
+    PyBOOPSIObject_FORBID(self);
+
+    DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
     nnset(obj, attr, value);
-    DPRINT("done\n");
+    DPRINT("- done\n");
+    
+    PyBOOPSIObject_PERMIT(self);
+
+    if (PyErr_Occurred())
+        return NULL;
 
     Py_RETURN_NONE;
 }
@@ -1524,7 +1618,12 @@ muiobject__redraw(PyMUIObject *self, PyObject *args)
     if (NULL == obj)
         return NULL;
 
+    PyBOOPSIObject_FORBID(self);
     MUI_Redraw(obj, flags);
+    PyBOOPSIObject_PERMIT(self);
+
+    if (PyErr_Occurred())
+        return NULL;
 
     Py_RETURN_NONE;
 }
@@ -1568,14 +1667,19 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
         return NULL;
     }
 
-    DPRINT("MO: %p, WRef ptr: %p on %p-'%s', trigattr: %#lx\n",
-           mo, wref_storage, self, OBJ_TNAME(self), trigattr);
+    PyBOOPSIObject_FORBID(self);
 
+    DPRINT("+ MO: %p, WRef ptr: %p on %p-'%s', trigattr: %#lx\n",
+           mo, wref_storage, self, OBJ_TNAME(self), trigattr);
     DoMethod(mo, MUIM_Notify, trigattr, MUIV_EveryTime,
              MUIV_Notify_Self, 5,
              MUIM_CallHook, (ULONG)&OnAttrChangedHook, (ULONG) wref_storage, trigattr, MUIV_TriggerValue);
+    DPRINT("- done\n");
 
-    DPRINT("done\n");
+    PyBOOPSIObject_PERMIT(self);
+
+    if (PyErr_Occurred())
+        return NULL;
 
     Py_RETURN_NONE;
 }
@@ -1920,9 +2024,12 @@ evthandler_clear(PyEventHandlerObject *self)
         Object *mo = PyBOOPSIObject_GET_OBJECT(self->window);
 
         DPRINT("win=%p\n", mo);
-        if (NULL != mo)
+        if (NULL != mo) {
+            PyBOOPSIObject_FORBID(self->window);
             DoMethod(mo, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
-
+            PyBOOPSIObject_PERMIT(self->window);
+            PyErr_Clear(); /* Silent exceptions during DoMethod or PERMIT */
+        }
     }
 
     Py_CLEAR(self->TabletTagsList);
@@ -1976,7 +2083,7 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
     pyo_win = objdb_get(win);
     DPRINT("window py obj: %p\n", pyo_win);
     if (NULL == pyo_win) {
-       PyErr_SetString(PyExc_TypeError, "events handler object must be installed on MUI Window object only");
+        PyErr_SetString(PyExc_TypeError, "events handler object must be installed on MUI Window object only");
         return NULL;
     }
 
@@ -1992,7 +2099,12 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
         self->handler.ehn_Flags,
         self->handler.ehn_Priority);
 
+    PyBOOPSIObject_FORBID(pyo_tgt);
     DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)&self->handler);
+    PyBOOPSIObject_PERMIT(pyo_tgt);
+    
+    if (PyErr_Occurred())
+        return NULL;
 
     Py_RETURN_NONE;
 }
@@ -2012,11 +2124,16 @@ evthandler_uninstall(PyEventHandlerObject *self)
     if (NULL == win)
         return NULL;
 
+    PyBOOPSIObject_FORBID(self->window);
     DPRINT("uninstall handler %p on win %p\n", &self->handler, win);
     DoMethod(win, MUIM_Window_RemEventHandler, (ULONG)&self->handler);
+    PyBOOPSIObject_PERMIT(self->window);
 
     Py_CLEAR(self->window);
     Py_CLEAR(self->target);
+
+    if (PyErr_Occurred())
+        return NULL;
 
     Py_RETURN_NONE;
 }
@@ -2219,10 +2336,10 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 
     DPRINT("Goes into mainloop...\n");
     gApp = app; Py_INCREF(pyapp);
+    PyBOOPSIObject_FORBID(pyapp);
 
     for (;;) {
         ULONG id;
-        PyThreadState *_save;
 
         Py_UNBLOCK_THREADS;
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
@@ -2242,6 +2359,8 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
         if (sigs & SIGBREAKF_CTRL_C)
             break;
     }
+
+    PyBOOPSIObject_PERMIT(pyapp);
 
     Py_DECREF(pyapp);
     gApp = NULL;
@@ -2409,14 +2528,24 @@ _muimaster_request(PyObject *self, PyObject *args)
 {
     char *gadgets, *contents;
     char *title;
+    PyObject *win_py;
     Object *app, *win;
     LONGBITS flags = 0;
     LONG result;
 
-    if (!PyArg_ParseTuple(args, "O&O&zss|l", py2long, &app, py2long, &win, &title, &gadgets, &contents, &flags))
+    if (!PyArg_ParseTuple(args, "OOzss|l", py2long, &app, &win_py, &title, &gadgets, &contents, &flags))
         return NULL;
 
+    if (!py2long(win_py, (LONG *)&win))
+        return NULL;
+
+    PyBOOPSIObject_FORBID(win_py);
     result = MUI_RequestA(app, win, flags, title, gadgets, contents, NULL);
+    PyBOOPSIObject_PERMIT(win_py);
+
+    if (PyErr_Occurred())
+        return NULL;
+
     return PyInt_FromLong(result);
 }
 //-
