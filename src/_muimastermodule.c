@@ -191,12 +191,16 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
     ObjectNode *_n = (ObjectNode *)(n); \
     _o->node = _n; _n->obj = PyBOOPSIObject_GET_OBJECT(_o); })
 
-#define PyBOOPSIObject_FORBID(o) PyBOOPSIObject_ADD_FLAGS(o, FLAG_USED)
-#define PyBOOPSIObject_PERMIT(o) ({                        \
-            PyBOOPSIObject_REM_FLAGS(o, FLAG_USED);        \
-            if (PyBOOPSIObject_HAS_FLAGS(o, FLAG_DISPOSE)  \
-                && PyBOOPSIObject_DisposeObject((PyBOOPSIObject *)(o))) \
-                PyErr_Clear(); })
+#define PyBOOPSIObject_FORBID(o) ({ PyBOOPSIObject *_o = (APTR)(o); \
+            PyBOOPSIObject_ADD_FLAGS(_o, FLAG_USED); \
+            _o->used_cnt++; })
+#define PyBOOPSIObject_PERMIT(o) ({ PyBOOPSIObject *_o = (APTR)(o); \
+            if (--_o->used_cnt) {                                   \
+                PyBOOPSIObject_REM_FLAGS(_o, FLAG_USED);            \
+                if (PyBOOPSIObject_HAS_FLAGS(_o, FLAG_DISPOSE)      \
+                    && PyBOOPSIObject_DisposeObject(_o))            \
+                    PyErr_Clear();                                  \
+            } })
 
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
@@ -233,6 +237,7 @@ typedef struct PyBOOPSIObject_STRUCT {
     Object *       bObject;
     ObjectNode *   node;
     ULONG          flags;
+    ULONG          used_cnt;
     PyObject *     wreflist;
 } PyBOOPSIObject;
 
@@ -847,6 +852,7 @@ boopsi_new(PyTypeObject *type, PyObject *args)
         if (PyArg_ParseTuple(args, "|I", &bObj)) {
             PyBOOPSIObject_SET_OBJECT(self, bObj);
             self->flags = 0;
+            self->used_cnt = 0;
             self->node = NULL;
             self->wreflist = NULL;
         }
