@@ -221,6 +221,7 @@ typedef struct ObjectNode_STRUCT {
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
     Object *       bObject;
+    Object *       _old_obj;
     ObjectNode *   node;
     ULONG          flags;
     PyObject *     wreflist;
@@ -424,7 +425,10 @@ PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
 static int
 PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 {
-    Object *bObj = PyBOOPSIObject_GetObject(pObj);
+    Object *bObj = PyBOOPSIObject_GET_OBJECT(pObj);
+
+    if (NULL == bObj)
+        bObj = pObj->_old_obj;
 
     if (NULL == bObj) {
         PyErr_SetString(PyExc_TypeError, "No valid BOOPSI object found");
@@ -544,17 +548,20 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
         if (Py_None != pyo) {
             PyObject *res;
             ULONG v = args[2];
+            Object *app;
 
             DPRINT("{%#lx} pyo=%p-'%s', MUI=%p, value=(%ld, %lu, $%X)\n",
                    attr, pyo, OBJ_TNAME_SAFE(pyo), mo, v, v, (APTR)v);
 
             Py_INCREF(pyo);
 
+            app = _app(mo); /* take it now, because the object can be disposed during the next call */
             res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
             DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
 
-            if (PyErr_Occurred() && (NULL != _app(mo)))
-                DoMethod(_app(mo), MUIM_Application_ReturnID, ID_BREAK);
+            /* [Yomgui]: what's happen if app is disposed ? */
+            if (PyErr_Occurred() && (NULL != app))
+                DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
 
             Py_XDECREF(res);
             Py_DECREF(pyo);
@@ -811,6 +818,7 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 
         if (PyArg_ParseTuple(args, "|I", &bObj)) {
             PyBOOPSIObject_SET_OBJECT(self, bObj);
+            self->_old_obj = NULL;
             self->flags = 0;
             self->node = NULL;
             self->wreflist = NULL;
@@ -904,11 +912,20 @@ This object may be disposed elsewhere, not neccessary by you your code...");
 static PyObject *
 boopsi__dispose(PyBOOPSIObject *self)
 {
-    /* Force the OWNER flag (removed during the disposing) */
-    PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+    Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
 
-    if (PyBOOPSIObject_DisposeObject(self))
-        return NULL;
+    if (NULL != bObj) {
+        /* Force the OWNER flag (removed during the disposing) */
+        PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
+
+        /* False dispose, just set owned, but only remove it from obj db
+         * will be delete when the python object will die
+         */
+
+        objdb_remove(bObj);
+        self->_old_obj = bObj;
+        PyBOOPSIObject_SET_OBJECT(self, NULL);
+    }
 
     Py_RETURN_NONE;
 }

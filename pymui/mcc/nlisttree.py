@@ -432,6 +432,9 @@ class NListtree(NList):
     Remove   = MMethod(MUIM_NListtree_Remove, [ ('ListNode', c_pNListtree_TreeNode),
                                                 ('TreeNode', c_pNListtree_TreeNode),
                                                 ('Flags',    pymui.c_ULONG) ])
+    Rename   = MMethod(MUIM_NListtree_Rename, [ ('TreeNode', c_pNListtree_TreeNode),
+                                                ('newname',  pymui.c_STRPTR),
+                                                ('Flags',    pymui.c_ULONG) ])
 
     @Clear.alias
     def Clear(self, meth):
@@ -484,6 +487,14 @@ class NListtree(NList):
         tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
         meth(self, lnode, tnode, flags)
 
+    @Rename.alias
+    def Rename(self, meth,
+               tnode=MUIV_NListtree_Rename_TreeNode_Active,
+               text='',
+               flags=0):
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        meth(self, tnode, text, flags)
+
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
         self.__data = {} # see (Set|Get)PyData methods
@@ -506,3 +517,6 @@ class NListtree(NList):
 
     def GetItemText(self, item):
         return item.tn_Name.value
+
+    def SetItemText(self, item, text):
+        self.Rename(item, text)

@@ -1393,22 +1393,19 @@ class Image(Area):
     Spec            = MAttribute(MUIA_Image_Spec            , 'i..', c_STRPTR, keep=True)
     State           = MAttribute(MUIA_Image_State           , 'is.', c_LONG)
 
-    @classmethod
-    def CheckMark(cl, selected=False, key=None):
+class CheckMark(Image):
+    def __init__(self, selected=False, key=None, **kwds):
         kwds = {}
         if key is not None:
             kwds['ControlChar'] = key
-            
-        return cl(Frame='ImageButton',
-                  Background='ButtonBack', 
-                  InputMode='Toggle',
-                  Spec=MUII_CheckMark,
-                  FreeVert=True,
-                  Selected=selected,
-                  ShowSelState=False,
-                  **kwds)
-
-CheckMark = Image.CheckMark
+        kwds.update(Frame='ImageButton',
+                    Background='ButtonBack', 
+                    InputMode='Toggle',
+                    Spec=MUII_CheckMark,
+                    FreeVert=True,
+                    Selected=selected,
+                    ShowSelState=False)
+        Image.__init__(self, **kwds)
 
 #===============================================================================
 
