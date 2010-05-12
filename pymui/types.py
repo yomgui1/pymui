@@ -27,6 +27,20 @@
 import ctypes as _ct
 from ctypes import addressof, string_at
 
+ENCODING = 'latin-1'
+
+"""
+ctype.from_value => create an instance of ctype class, set from a C long value.
+o = ctype() => create an instance of ctype class
+long(o) => return the C long value from the ctype.
+o.value => return an object representing the context of the ctype
+o.value = x
+
+Pointer only:
+'value' property get/set only long integer, the address of pointed buffer.
+use 'contents' to have the pointed object.
+"""
+
 class PyMUICType(object):
     __ptr_dict = {}
     __ary_dict = {}
@@ -35,8 +49,8 @@ class PyMUICType(object):
         raise NotImplemented("type doesn't implement __long__ method")
 
     @classmethod
-    def FromLong(cl, v):
-        raise NotImplementedError("type %s doesn't implement FromLong method" % cl.__name__)
+    def from_value(cl, v):
+        raise NotImplementedError("type %s doesn't implement from_value method" % cl.__name__)
 
     @classmethod
     def PointerType(cl):
@@ -44,7 +58,8 @@ class PyMUICType(object):
         ncl = PyMUICType.__ptr_dict.get(n)
         if not ncl:
             ncl = _ct.POINTER(cl)
-            ncl = type(n, (ncl, PyMUICPointerType), {'_type_': cl})
+            dct = {'_type_': cl}
+            ncl = type(n, (PyMUICPointerType, ncl), dct)
             PyMUICType.__ptr_dict[n] = ncl
         return ncl
 
@@ -54,7 +69,7 @@ class PyMUICType(object):
         ncl = PyMUICType.__ary_dict.get(n)
         if not ncl:
             ncl = _ct.ARRAY(cl, c)
-            ncl = type(n, (ncl, PyMUICArrayType), {'_length_': c, '_type_': cl})
+            ncl = type(n, (PyMUICArrayType, ncl), {'_length_': c, '_type_': cl})
             PyMUICType.__ary_dict[n] = ncl
         return ncl
 
@@ -63,7 +78,7 @@ class PyMUICSimpleType(PyMUICType):
         return self.value or 0
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl(v)
 
 class PyMUICPointerType(PyMUICType):
@@ -71,49 +86,55 @@ class PyMUICPointerType(PyMUICType):
         return _ct.cast(self, _ct.c_void_p).value or 0
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return _ct.cast(_ct.c_void_p(v), cl)
+
+    def __set_value(self, v):
+        self.contents = self._type_.from_address(v)
+
+    value = property(fget=__long__, fset=__set_value)
+
+class PyMUICStructureType(PyMUICType, _ct.Structure):
+    def __long__(self):
+        return addressof(self)
+
+    @classmethod
+    def from_value(cl, v):
+        return cl.from_address(v)
 
 class PyMUICArrayType(PyMUICType):
     def __long__(self):
         return _ct.cast(self, _ct.c_void_p).value
 
-class PyMUICStructureType(_ct.Structure, PyMUICType):
-    def __long__(self):
-        return addressof(self)
-
-    @classmethod
-    def FromLong(cl, v):
-        return cl.from_address(v)
-
-class PyMUICUnionType(_ct.Union, PyMUICType):
+class PyMUICUnionType(PyMUICType, _ct.Union):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl.from_address(v)
 
-class c_ULONG(_ct.c_ulong, PyMUICSimpleType): pass
-class c_LONG(_ct.c_long, PyMUICSimpleType): pass
-class c_UWORD(_ct.c_ushort, PyMUICSimpleType): pass
-class c_WORD(_ct.c_short, PyMUICSimpleType): pass
-class c_UBYTE(_ct.c_ubyte, PyMUICSimpleType): pass
-class c_BYTE(_ct.c_byte, PyMUICSimpleType): pass
-class c_CHAR(_ct.c_char, PyMUICSimpleType): pass
+class c_ULONG(PyMUICSimpleType, _ct.c_ulong): pass
+class c_LONG(PyMUICSimpleType, _ct.c_long): pass
+class c_UWORD(PyMUICSimpleType, _ct.c_ushort): pass
+class c_WORD(PyMUICSimpleType, _ct.c_short): pass
+class c_UBYTE(PyMUICSimpleType, _ct.c_ubyte): pass
+class c_BYTE(PyMUICSimpleType, _ct.c_byte): pass
+class c_CHAR(PyMUICSimpleType, _ct.c_char): pass
 
-class c_FLOAT(_ct.c_float, PyMUICSimpleType):
+class c_FLOAT(PyMUICSimpleType, _ct.c_float):
     def __long__(self):
         # like a C cast of float value
         return long(self.value)
 
-class c_DOUBLE(_ct.c_double, PyMUICSimpleType):
+class c_DOUBLE(PyMUICSimpleType, _ct.c_double):
     def __long__(self):
         # like a C cast of double value
         return long(self.value)
 
-class c_APTR(_ct.c_void_p, PyMUICSimpleType):
+class c_APTR(PyMUICSimpleType, _ct.c_void_p):
     def __init__(self, x=0):
+        _ct.c_void_p.__init__(self)
         if not x: return
         if isinstance(x, PyMUICType):
             self.value = long(x)
@@ -123,11 +144,11 @@ class c_APTR(_ct.c_void_p, PyMUICSimpleType):
     def __long__(self):
         return self.value or 0
 
-class c_STRPTR(_ct.c_char_p, PyMUICSimpleType):
+class c_STRPTR(PyMUICSimpleType, _ct.c_char_p):
     def __new__(cl, x=0):
         if isinstance(x, str):
             o = c_CONST_STRPTR.__new__(c_CONST_STRPTR)
-            x = x.encode('latin-1')
+            x = x.encode(ENCODING)
         else:
             o = _ct.c_char_p.__new__(cl)
         o.value = x
@@ -146,12 +167,12 @@ class c_CONST_STRPTR(c_STRPTR):
     def __setitem__(self, i, v):
         raise NotImplemented("CONST_STRPRT cannot be changed")
 
-class c_PyObject(_ct.py_object, PyMUICSimpleType):
+class c_PyObject(PyMUICSimpleType, _ct.py_object):
     def __long__(self):
         return _ct.c_ulong.from_address(addressof(self)).value
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl(_ct._ptr2pyobj(v))
 
     def __getitem__(self, i):
@@ -217,6 +238,22 @@ class c_Message(PyMUICStructureType):
     
 if __name__ == '__main__':
     from sys import getrefcount as rc
+
+    o = c_ULONG.PointerType()()
+    assert o.value == 0
+
+    x = c_ULONG(45)
+    o.value = addressof(x)
+    assert o.value == addressof(x)
+    assert o.contents.value == o.contents.value
+
+    o = c_BYTE(255)
+    assert long(o) == -1
+
+    p = PointerOn(o)
+    assert isinstance(p, PyMUICType)
+    assert isinstance(p, PyMUICPointerType)
+    assert p[0].value == -1
     
     o = c_STRPTR('toto') # Shall return a CONST_STRPTR
     assert isinstance(o, PyMUICType)
@@ -249,14 +286,6 @@ if __name__ == '__main__':
     assert x.value == 'poto'
     s = 'toto'
     assert ord(s[0]) == 112 ### 't' == 'p', Funny, isn't ?
-
-    o = c_BYTE(255)
-    assert long(o) == -1
-
-    p = PointerOn(o)
-    assert isinstance(p, PyMUICType)
-    assert isinstance(p, PyMUICPointerType)
-    assert p[0].value == -1
 
     o = c_STRPTR('tutu')
     cnt = rc(o)

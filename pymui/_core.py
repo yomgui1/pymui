@@ -72,7 +72,7 @@ class c_Object(c_APTR):
         return o
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl(v)
 
     def __long__(self):
@@ -93,7 +93,7 @@ class c_MUIObject(c_APTR):
         return o
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl(v)
 
     def __long__(self):
@@ -130,22 +130,22 @@ class c_Hook(c_PyObject):
                 elif argstypes[1] is long:
                     f = lambda a, b: x(b)
                 else:
-                    f = lambda a, b: x(argstypes[1].FromLong(b))
+                    f = lambda a, b: x(argstypes[1].from_value(b))
             elif argstypes[1] is None:
                 if argstypes[0] is long:
                     f = lambda a, b: x(a)
                 else:
-                    f = lambda a, b: x(argstypes[0].FromLong(a))
+                    f = lambda a, b: x(argstypes[0].from_value(a))
             else:
                 if argstypes[0] is long:
                     if argstypes[1] is long:
                         f = lambda a, b: x(a, b)
                     else:
-                        f = lambda a, b: x(a, argstypes[1].FromLong(b))
+                        f = lambda a, b: x(a, argstypes[1].from_value(b))
                 elif argstypes[1] is long:
-                    f = lambda a, b: x(argstypes[0].FromLong(a), b)
+                    f = lambda a, b: x(argstypes[0].from_value(a), b)
                 else:
-                    f = lambda a, b: x(argstypes[0].FromLong(a), argstypes[1].FromLong(b))
+                    f = lambda a, b: x(argstypes[0].from_value(a), argstypes[1].from_value(b))
 
             c_PyObject.__init__(self, _muimaster._CHook(f))
         else:
@@ -156,7 +156,7 @@ class c_Hook(c_PyObject):
         return (0 if x is None else x.address)
 
     @classmethod
-    def FromLong(cl, v):
+    def from_value(cl, v):
         return cl(_muimaster._CHook(v))
 
 class c_PenSpec(PyMUICStructureType):
@@ -250,7 +250,7 @@ class MAttribute(property):
 
         if 'g' in isg:
             def _getter(obj):
-                return ctype.FromLong(obj._get(id))
+                return ctype.from_value(obj._get(id))
         else:
             _getter = None
 
@@ -327,7 +327,7 @@ class MMethod(property):
         if rettype is None:
             self.__retconv = lambda x: None
         else:
-            self.__retconv = rettype.FromLong
+            self.__retconv = rettype.from_value
         
         if fields:
             self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
@@ -490,7 +490,7 @@ def muimethod(mid):
             # Becarefull here: the constructed Msg object from tp,
             # is only valid during the call of the function and accessible
             # by msg getattr function.
-            return func(self, msg._setup(tp.FromLong))
+            return func(self, msg._setup(tp.from_value))
         convertor._pymui_mid_ = mid
         return convertor
     return wrapper
@@ -696,7 +696,7 @@ class Notify(PyMUIObject, PyMUIBase):
         
     def _notify_cb(self, a, v, nv):
         attr = self._getMAByID(a)
-        e = AttributeEvent(self, attr.ctype.FromLong(v), nv)
+        e = AttributeEvent(self, attr.ctype.from_value(v), nv)
         for o in self.__notify_cbdict[a]:
             if o.trigvalue == MUIV_EveryTime or long(o.trigvalue) == v:
                 if o(e): return
