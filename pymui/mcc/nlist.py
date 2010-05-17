@@ -440,25 +440,11 @@ MUIM_NList_Display            = 0x9d5100A4 # GM $$$Sensei
 class NList(pymui.Area):
     CLASSID = MUIC_NList
 
-    CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_MUIObject),
+    CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_pMUIObject),
                                                     ('flags', pymui.c_ULONG) ], pymui.c_APTR)
     DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ], retype=None)
-
-    def __init__(self, *a, **k):
-        super(NList, self).__init__(*a, **k)
-        self.__data = {} # see (Set|Get)PyData methods
 
     @CreateImage.alias
     def CreateImage(self, meth, obj, flags=0):
         return meth(self, obj, flags)
 
-    # Funny methods to make easier wxPython portages.
-
-    def _ClearAllPyData(self):
-        self.__data.clear()
-    
-    def SetPyData(self, item, data):
-        self.__data[long(item)] = data
-
-    def GetPyData(self, item):
-        return self.__data.get(long(item))

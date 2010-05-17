@@ -119,6 +119,7 @@ MUIV_NListtree_ShowTree_Toggle                     = -1
 ### Structures & Flags ###
 
 class c_NListtree_TreeNode(pymui.PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('tn_Node',  pymui.c_MinNode), # To make it a node
                  ('tn_Name',  pymui.c_STRPTR),  # Simple name field
                  ('tn_Flags', pymui.c_UWORD),   # Used for the flags below
@@ -138,6 +139,7 @@ TNF_NOSIGN   = (1<<3)
 TNF_SELECTED = (1<<4)
 
 class c_TestPosResult(pymui.PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('tpr_TreeNode',  c_pNListtree_TreeNode),
                  ('tpr_Type',      pymui.c_UWORD),
                  ('tpr_ListEntry', pymui.c_LONG),
@@ -378,7 +380,7 @@ class c_NListtree_CloseMessage(pymui.PyMUICStructureType):
 
 class c_NListtree_CloseHook(pymui.c_Hook): _argtypes_ = (None, c_NListtree_CloseMessage)
 
-_c_NListtree_TreeNode_NULL = c_NListtree_TreeNode.FromLong(0)
+_c_NListtree_TreeNode_NULL = c_NListtree_TreeNode.from_value(0)
 
 ### Class ###
 
@@ -446,7 +448,7 @@ class NListtree(NList):
                  node=MUIV_NListtree_GetEntry_ListNode_Active,
                  position=MUIV_NListtree_GetEntry_Position_Active,
                  flags=0):
-        node = (node if isinstance(node, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(node))
+        node = (node if isinstance(node, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(node))
         item = meth(self, node, position, flags)
         return (item if long(item) else None)
 
@@ -455,8 +457,8 @@ class NListtree(NList):
                lnode=MUIV_NListtree_Insert_ListNode_Root,
                pnode=MUIV_NListtree_Insert_PrevNode_Tail,
                flags=0, user=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
-        pnode = (pnode if isinstance(pnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(pnode))
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
+        pnode = (pnode if isinstance(pnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(pnode))
         item = meth(self, name, user, lnode, pnode, flags)
         return (item if long(item) else None)
 
@@ -465,8 +467,8 @@ class NListtree(NList):
              lnode=MUIV_NListtree_Open_ListNode_Active,
              tnode=MUIV_NListtree_Open_TreeNode_All,
              flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
         meth(self, lnode, tnode, flags)
 
     @Close.alias
@@ -474,8 +476,8 @@ class NListtree(NList):
              lnode=MUIV_NListtree_Close_ListNode_Active,
              tnode=MUIV_NListtree_Close_TreeNode_All,
              flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
         meth(self, lnode, tnode, flags)
 
     @Remove.alias
@@ -483,8 +485,8 @@ class NListtree(NList):
                lnode=MUIV_NListtree_Remove_ListNode_Active,
                tnode=MUIV_NListtree_Remove_TreeNode_All,
                flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
         meth(self, lnode, tnode, flags)
 
     @Rename.alias
@@ -492,12 +494,14 @@ class NListtree(NList):
                tnode=MUIV_NListtree_Rename_TreeNode_Active,
                text='',
                flags=0):
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.FromLong(tnode))
+        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
         meth(self, tnode, text, flags)
 
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
         self.__data = {} # see (Set|Get)PyData methods
+
+    # Funny methods to make easier wxPython portages.
 
     def GetFirstChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
         return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Head)
@@ -516,7 +520,26 @@ class NListtree(NList):
         return self.GetEntry(MUIV_NListtree_GetEntry_ListNode_Root, -15)
 
     def GetItemText(self, item):
-        return item.tn_Name.value
+        return item.tn_Name.contents
 
     def SetItemText(self, item, text):
         self.Rename(item, text)
+
+    def _ClearAllPyData(self):
+        self.__data.clear()
+
+    def SetPyData(self, item, data):
+        x = pymui.c_PyObject(data)
+        item.tn_User = long(x)
+        self.__data[long(item)] = x
+        assert long(x), item.tn_User.value
+
+    def GetPyData(self, item):
+        if not long(item): return None
+        x = self.__data.get(long(item))
+        try:
+            assert long(x) == item.tn_User.value
+        except:
+            print item.tn_Name.contents, hex(long(x)), hex(item.tn_User.value)
+            raise
+        return x.value

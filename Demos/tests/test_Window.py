@@ -29,7 +29,7 @@ t1 = 'MainWindow'
 win = Window(t1)
 
 assert isinstance(win.Title, c_STRPTR)
-assert win.Title.value == t1
+assert win.Title.contents == t1
 
 def onclose(evt, win):
     print "Received 'CloseRequest' from Window:", evt.Source

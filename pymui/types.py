@@ -26,6 +26,7 @@
 
 import ctypes as _ct
 from ctypes import addressof, string_at
+from _ctypes import PyObj_FromPtr as _PyObj_FromPtr
 
 ENCODING = 'latin-1'
 
@@ -41,16 +42,16 @@ Pointer only:
 use 'contents' to have the pointed object.
 """
 
+#===============================================================================
+# Root class of all PyMUI C types
+#
+# This classes should not be used immediately.
+# Use one of sub-categories just after.
+#
+
 class PyMUICType(object):
     __ptr_dict = {}
     __ary_dict = {}
-    
-    def __long__(self):
-        raise NotImplemented("type doesn't implement __long__ method")
-
-    @classmethod
-    def from_value(cl, v):
-        raise NotImplementedError("type %s doesn't implement from_value method" % cl.__name__)
 
     @classmethod
     def PointerType(cl):
@@ -58,8 +59,7 @@ class PyMUICType(object):
         ncl = PyMUICType.__ptr_dict.get(n)
         if not ncl:
             ncl = _ct.POINTER(cl)
-            dct = {'_type_': cl}
-            ncl = type(n, (PyMUICPointerType, ncl), dct)
+            ncl = type(n, (PyMUICPointerType, ncl), {'_type_': cl})
             PyMUICType.__ptr_dict[n] = ncl
         return ncl
 
@@ -73,6 +73,27 @@ class PyMUICType(object):
             PyMUICType.__ary_dict[n] = ncl
         return ncl
 
+    @classmethod
+    def from_value(cl, v):
+        "Return an instance of the class where the buffer is initialized with the given value"
+        raise NotImplementedError("type %s doesn't implement from_value method" % cl.__name__)
+
+    def __long__(self):
+        raise NotImplemented("type doesn't implement __long__ method")
+
+
+#===============================================================================
+# Sub-categories.
+#
+# PyMUICSimpleType : for types that handles simple buffer taken as a whole.
+# PyMUICUnionType  : for types where the buffer is shared between a fixed amount of types.
+# PyMUICArrayType  : for types where the buffer can be seen as a group of fixed length,
+#                    where all items have the same type.
+# PyMUICStructType : for types like a group of fixed number of items of any types.
+# PyMUICPointerType: for types to handle a simple integer value representing an address
+#                    of another buffer of it own type.
+#
+
 class PyMUICSimpleType(PyMUICType):
     def __long__(self):
         return self.value or 0
@@ -80,6 +101,7 @@ class PyMUICSimpleType(PyMUICType):
     @classmethod
     def from_value(cl, v):
         return cl(v)
+
 
 class PyMUICPointerType(PyMUICType):
     def __long__(self):
@@ -94,7 +116,8 @@ class PyMUICPointerType(PyMUICType):
 
     value = property(fget=__long__, fset=__set_value)
 
-class PyMUICStructureType(PyMUICType, _ct.Structure):
+
+class _PyMUICComplex(PyMUICType):
     def __long__(self):
         return addressof(self)
 
@@ -102,17 +125,18 @@ class PyMUICStructureType(PyMUICType, _ct.Structure):
     def from_value(cl, v):
         return cl.from_address(v)
 
-class PyMUICArrayType(PyMUICType):
-    def __long__(self):
-        return _ct.cast(self, _ct.c_void_p).value
 
-class PyMUICUnionType(PyMUICType, _ct.Union):
-    def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
+class PyMUICUnionType(_PyMUICComplex, _ct.Union): pass
+class PyMUICArrayType(_PyMUICComplex, _ct.Array):
+    _length_ = 0
+    _type_ = _ct.c_char
 
-    @classmethod
-    def from_value(cl, v):
-        return cl.from_address(v)
+class PyMUICStructureType(_PyMUICComplex, _ct.Structure): pass
+
+
+#===============================================================================
+# Real classes (simples)
+#
 
 class c_ULONG(PyMUICSimpleType, _ct.c_ulong): pass
 class c_LONG(PyMUICSimpleType, _ct.c_long): pass
@@ -122,61 +146,84 @@ class c_UBYTE(PyMUICSimpleType, _ct.c_ubyte): pass
 class c_BYTE(PyMUICSimpleType, _ct.c_byte): pass
 class c_CHAR(PyMUICSimpleType, _ct.c_char): pass
 
-class c_FLOAT(PyMUICSimpleType, _ct.c_float):
-    def __long__(self):
-        # like a C cast of float value
-        return long(self.value)
-
-class c_DOUBLE(PyMUICSimpleType, _ct.c_double):
-    def __long__(self):
-        # like a C cast of double value
-        return long(self.value)
+# It could be logic to think that c_APTR is a subclass
+# of PyMUICPointerType. But it's not the case and remains
+# a subclass of PyMUICSimpleType because no items operations
+# are possible on c_APTR instances.
 
 class c_APTR(PyMUICSimpleType, _ct.c_void_p):
-    def __init__(self, x=0):
-        _ct.c_void_p.__init__(self)
-        if not x: return
-        if isinstance(x, PyMUICType):
-            self.value = long(x)
-        else:
-            self.value = x
+    def __init__(self, x=None):
+        if isinstance(x, PyMUICPointerType):
+            x = long(x)
+        super(c_APTR, self).__init__(x)
 
+    def __get_value(self):
+        return super(c_APTR, self).value or 0
+
+    value = property(fget=__get_value, fset=_ct.c_void_p.value)
+
+
+# Floating types are a bit special:
+# BOOPSI/MUI don't use them directly. They are given only
+# by references (pointers) to objects.
+#
+# So to force user to not use them as methods/attributes
+# types __long__ and from_value raise errors.
+
+class _PyMUICFloatType(PyMUICSimpleType):
     def __long__(self):
-        return self.value or 0
+        raise SyntaxError("Not permited operation")
 
-class c_STRPTR(PyMUICSimpleType, _ct.c_char_p):
-    def __new__(cl, x=0):
-        if isinstance(x, str):
-            o = c_CONST_STRPTR.__new__(c_CONST_STRPTR)
-            x = x.encode(ENCODING)
-        else:
-            o = _ct.c_char_p.__new__(cl)
-        o.value = x
-        return o
+    @classmethod
+    def from_value(cl, value):
+        raise SyntaxError("Not permited operation")
 
-    def __long__(self):
-        return _ct.cast(self, _ct.c_void_p).value or 0
-    
+
+class c_FLOAT(_PyMUICFloatType, _ct.c_float): pass
+class c_DOUBLE(_PyMUICFloatType, _ct.c_double): pass
+
+
+# ctypes considers c_char_p/c_wchar_p as simple type
+# and non-mutable buffer.
+# Amiga STRPTR is more like a pointer on c_char,
+# and mutable. CONST_STRPTR is not mutable.
+#
+
+class c_CONST_STRPTR(PyMUICPointerType, _ct.c_char_p):
+    def __init__(self, x=None):
+        assert not x or isinstance(x, basestring)
+        super(c_CONST_STRPTR, self).__init__(x)
+
+    def __get_contents(self):
+        return _ct.c_char_p.value.__get__(self)
+
+    def __set_contents(self, v):
+        _ct.c_char_p.value.__set__(self, v)
+
+    contents = property(fget=__get_contents, fset=__set_contents)
+
+    def __set_value(self, v):
+        _ct.c_void_p.value.__set__(self, v)
+
+    value = property(fget=PyMUICPointerType.__long__, fset=__set_value)
+
     def __getitem__(self, i):
-        return self.value[i]
+        return self.contents[i]
 
-    def __setitem__(self, i, v):
-        _ct.POINTER(_ct.c_char).from_address(addressof(self))[i] = v
 
-class c_CONST_STRPTR(c_STRPTR):
+class c_STRPTR(c_CONST_STRPTR):
     def __setitem__(self, i, v):
-        raise NotImplemented("CONST_STRPRT cannot be changed")
+        c_CHAR.from_address(long(self)+i).value = v
+
 
 class c_PyObject(PyMUICSimpleType, _ct.py_object):
     def __long__(self):
-        return _ct.c_ulong.from_address(addressof(self)).value
+        return _ct.c_void_p.from_address(addressof(self)).value or 0
 
     @classmethod
     def from_value(cl, v):
-        return cl(_ct._ptr2pyobj(v))
+        return cl(_PyObj_FromPtr(v))
 
-    def __getitem__(self, i):
-        return self.value[i]
 
 def PointerOn(x):
     return x.PointerType()(x)
@@ -186,37 +233,36 @@ def PointerOn(x):
 #### Usefull types
 ################################################################################
 
-class c_TagItem(PyMUICStructureType):
-    _fields_ = [ ('ti_Tag', c_ULONG),
-                 ('ti_Data', c_ULONG) ]
-
 class c_BOOL(c_LONG):
     def __get_value(self):
         return bool(c_LONG.value.__get__(self))
 
-    def __set_value(self, v):
-        c_LONG.value.__set__(self, v)
+    value = property(fget=__get_value, fset=c_LONG.value)
 
-    value = property(fget=__get_value, fset=__set_value)
 
 class c_pSTRPTR(c_STRPTR.PointerType()):
     _type_ = c_STRPTR
 
     def __init__(self, x=None):
         # Accept tuple/list as initiator
-        if isinstance(x, (list, tuple)):
-            x = c_STRPTR.ArrayType(len(x))(*x)
-            super(c_pSTRPTR, self).__init__(x[0])
-        elif x is not None:
-            super(c_pSTRPTR, self).__init__(x)
-        else:
+        if x is None:
             super(c_pSTRPTR, self).__init__()
+        else:
+            if isinstance(x, (list, tuple)):
+                x = c_STRPTR.ArrayType(len(x))(*tuple(c_STRPTR(s) for s in x))[0]
+            super(c_pSTRPTR, self).__init__(x)
+
+
+class c_TagItem(PyMUICStructureType):
+    _fields_ = [ ('ti_Tag', c_ULONG),
+                 ('ti_Data', c_ULONG) ]
+
 
 class c_pTextFont(c_APTR): pass
 class c_pList(c_APTR): pass
 class c_pMinList(c_APTR): pass
 
-class c_Node(PyMUICStructureType): pass
+class c_Node(PyMUICStructureType): _pack_ = 2
 c_Node._fields_ = [ ('ln_Succ', c_Node.PointerType()),
                     ('ln_Pred', c_Node.PointerType()),
                     ('ln_Type', c_UBYTE),
@@ -228,9 +274,11 @@ c_MinNode._fields_ = [ ('mln_Succ', c_MinNode.PointerType()),
                        ('mln_Pred', c_MinNode.PointerType()) ]
 
 class c_Message(PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('mn_Node', c_Node),
                  ('mn_ReplyPort', c_APTR),
                  ('mn_Length', c_UWORD) ]
+
 
 ################################################################################
 #### Test-suite
@@ -238,6 +286,7 @@ class c_Message(PyMUICStructureType):
     
 if __name__ == '__main__':
     from sys import getrefcount as rc
+    import gc
 
     o = c_ULONG.PointerType()()
     assert o.value == 0
@@ -254,20 +303,41 @@ if __name__ == '__main__':
     assert isinstance(p, PyMUICType)
     assert isinstance(p, PyMUICPointerType)
     assert p[0].value == -1
-    
-    o = c_STRPTR('toto') # Shall return a CONST_STRPTR
-    assert isinstance(o, PyMUICType)
-    assert isinstance(o, PyMUICSimpleType)
-    assert isinstance(o, c_CONST_STRPTR)
-    assert o[0] == 't'
-    try:
-        o[0] = 'u'
-    except TypeError:
-        pass
-    else:
-        raise AssertionError('setitem shall not be possible on CONST_STRPTR!')
 
-    o = c_STRPTR.ArrayType(3)('a', 'toto', 0)
+    x = 'toto'
+    o = c_CONST_STRPTR()
+    assert isinstance(p, PyMUICPointerType)
+    assert o.value == 0 and o.contents is None
+    v = _ct.cast(_ct.c_char_p(x), _ct.c_void_p).value
+    o.value = v
+    assert o.value == v
+    assert o.contents == x
+    o.contents = ''
+    assert o.value != 0 and not o.contents
+
+    o = c_CONST_STRPTR('titi')
+    assert o.contents == 'titi'
+
+    o = c_STRPTR()
+    assert isinstance(p, PyMUICPointerType)
+    assert o.value == 0 and o.contents is None
+    v = _ct.cast(_ct.c_char_p(x), _ct.c_void_p).value
+    o.value = v
+    assert o.value == v
+    assert o.contents == x
+    assert o[0] == 't'
+    o[0] = 'u'
+    assert o[0] == 'u' and o.contents == 'uoto'
+    o.contents = ''
+    assert o.value != 0 and not o.contents
+
+    x = 'fklgkf'
+    c = rc(x)
+    o = c_STRPTR(x)
+    assert o.contents == x
+    assert rc(x) == c+1
+
+    o = c_CONST_STRPTR.ArrayType(3)('a', 'toto', 0)
     assert isinstance(o, PyMUICType)
     assert isinstance(o, PyMUICArrayType)
     assert len(o) == 3
@@ -278,12 +348,12 @@ if __name__ == '__main__':
     # Python hacking!
     addr = long(o[1])
     assert addr > 0
-    x = c_STRPTR(addr)
+    x = c_STRPTR.from_value(addr)
     assert isinstance(x, c_STRPTR)
     assert x.value == o[1].value
     x[0] = 'p'
     assert x[0] == 'p'
-    assert x.value == 'poto'
+    assert x.contents == 'poto'
     s = 'toto'
     assert ord(s[0]) == 112 ### 't' == 'p', Funny, isn't ?
 
@@ -291,22 +361,26 @@ if __name__ == '__main__':
     cnt = rc(o)
     p = c_APTR(long(o))
     assert long(p) == long(o)
-    assert rc(o) == cnt
 
     x = id('bla')
-    o = c_STRPTR(x)
-    assert long(o) == x
+    try:
+        o = c_STRPTR(x)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('c_STRPTR(x) shall not accept integer but string')
 
     x = ['one', 'two', 'three', None]
     o = c_pSTRPTR(x)
+    assert len(o._objects) > 0
     assert long(o) != 0
     v = o[:4]
     assert len(v) == 4
-    assert [o.value for o in v] == x
+    assert [o.contents for o in v] == x
 
     o = c_STRPTR()
     x = c_APTR(o)
-    assert x.value is None
+    assert x.value == 0
 
     s = "123456789\xF4\0\033x" # len = 13
     TestClass = type('TestClass',
@@ -316,4 +390,28 @@ if __name__ == '__main__':
     o.Data[:] = [ ord(x) for x in s ]
     assert len(o.Data) == len(s)
 
-    print "Everything is OK"
+    x = [1, 2, 3]
+    o = c_PyObject(x)
+    assert id(x) == long(o)
+    assert o.value is x
+    o.value = None
+    assert o.value is None
+    assert long(o) != 0 # yep, it's address of the None object
+
+    o = c_PyObject()
+    assert long(o) == 0
+    try:
+        o.value
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("c_PyObject().value shall raise a ValueError exception")
+
+    a = c_BOOL()
+    b = c_BOOL(1)
+    c = c_BOOL(0)
+    d = c_BOOL(True)
+    assert a.value == c.value
+    assert b.value == d.value
+
+    print "Module OK"

@@ -13,6 +13,7 @@ setup(name = 'PyMUI',
       packages = ['pymui', 'pymui.mcc'],
       ext_modules = [Extension('pymui._muimaster',
                                ['src/_muimastermodule.c'],
+                               libraries = ['syscall'],
                                extra_compile_args = opt)],
       data_files=[('/Docs/PyMUI', ('LICENSE', 'HISTORY'))],
       )

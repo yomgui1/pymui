@@ -23,6 +23,14 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
+## TODO:
+##
+## - c_Hook class is not correct
+## - when an object replace another one for keep attribute, and if
+##   the old object was a PyBOOPSIObject, this object is not disposed
+##   if it has loosed its OWNER flag.
+##
+
 import sys, functools
 
 try:
@@ -65,49 +73,62 @@ def MAKE_ID(*v):
     # Yep, faster than using list comprehension
     return (ord(v[0])<<24)|(ord(v[1])<<16)|(ord(v[2])<<8)|ord(v[3])
 
-class c_Object(c_APTR):
-    def __new__(cl, x=None):
-        o = c_APTR.__new__(cl)
-        if x: o.value = x
-        return o
+
+class c_Object(c_PyObject):
+    def __init__(self, x=None):
+        if x is None:
+            super(c_Object, self).__init__()
+        else:
+            assert isinstance(x, PyBOOPSIObject)
+            super(c_Object, self).__init__(x)
+
+    def __long__(self):
+        return self.value._object
+
+
+class c_pObject(c_Object.PointerType()):
+    _type_ = c_Object
+
+    def __init__(self, x=None):
+        if x is None:
+            super(c_pObject, self).__init__()
+        else:
+            super(c_pObject, self).__init__(c_Object(x))
+
+    def __long__(self):
+        return long(c_Object.from_address(self.value))
+
+    def __get_contents(self):
+        return c_Object.from_address(self.value).value
+
+    contents = property(fget=__get_contents)
 
     @classmethod
     def from_value(cl, v):
-        return cl(v)
+        return (cl(_muimaster._ptr2pyboopsi(v)) if v else cl())
+
+
+class c_pMUIObject(c_Object.PointerType()):
+    _type_ = c_Object
+
+    def __init__(self, x=None):
+        if x is None:
+            super(c_pMUIObject, self).__init__()
+        else:
+            super(c_pMUIObject, self).__init__(c_Object(x))
 
     def __long__(self):
-        return c_APTR.value.__get__(self)
+        return long(c_Object.from_address(self.value))
 
-    def _get_value(self):
-        return _muimaster._ptr2boopsi(c_APTR.value.__get__(self))
+    def __get_contents(self):
+        return c_Object.from_address(self.value).value
 
-    def _set_value(self, v):
-        if isinstance(v, PyBOOPSIObject):
-            v = v._object
-        c_APTR.value.__set__(self, v)
-
-class c_MUIObject(c_APTR):
-    def __new__(cl, x=None):
-        o = c_APTR.__new__(cl)
-        if x: o.value = x
-        return o
+    contents = property(fget=__get_contents)
 
     @classmethod
     def from_value(cl, v):
-        return cl(v)
+        return (cl(_muimaster._ptr2pymui(v)) if v else cl())
 
-    def __long__(self):
-        return c_APTR.value.__get__(self)
-
-    def _get_value(self):
-        return _muimaster._ptr2pymui(c_APTR.value.__get__(self))
-
-    def _set_value(self, v):
-        if isinstance(v, PyMUIObject):
-            v = v._object
-        c_APTR.value.__set__(self, v)
-
-    value = property(fget=_get_value, fset=_set_value, doc=c_APTR.value.__doc__)
 
 class c_Hook(c_PyObject):
     _argtypes_ = (long, long)
@@ -159,7 +180,9 @@ class c_Hook(c_PyObject):
     def from_value(cl, v):
         return cl(_muimaster._CHook(v))
 
+
 class c_PenSpec(PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('buf', c_BYTE.ArrayType(32)) ]
 
 
@@ -228,9 +251,17 @@ class MAttribute(property):
         self.__id = id
         self.__ctype = ctype
 
+        assert issubclass(ctype, PyMUICType)
+
         if 'i' in isg:
             def _init(obj, x):
-                x = x if isinstance(x, ctype) else ctype(x)
+                if isinstance(x, (int, long)):
+                    try:
+                        x = ctype(x)
+                    except:
+                        x = ctype.from_value(x)
+                elif not isinstance(x, ctype):
+                    x = ctype(x)
                 if keep: obj._keep_db[id] = x
                 return long(x)
         else:
@@ -239,7 +270,13 @@ class MAttribute(property):
 
         if 's' in isg:
             def _setter(obj, x, nn=False):
-                x = x if isinstance(x, ctype) else ctype(x)
+                if isinstance(x, (int, long)):
+                    try:
+                        x = ctype(x)
+                    except:
+                        x = ctype.from_value(x)
+                elif not isinstance(x, ctype):
+                    x = ctype(x)
                 if keep: obj._keep_db[id] = x
                 if nn:
                     obj._nnset(id, long(x))
@@ -330,7 +367,7 @@ class MMethod(property):
             self.__retconv = rettype.from_value
         
         if fields:
-            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_fields_': [ ('MethodID', c_ULONG) ] + fields})
+            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_pack_': 4, '_fields_': [ ('MethodID', c_ULONG) ] + fields})
             buftp = (_ct.c_ulong * (len(fields)+1))
 
             if not varargs:
@@ -349,14 +386,14 @@ class MMethod(property):
                                 raise SyntaxError("field '%s' is given as positional and keyword argument" % nm)
                             o = args.pop(0)
                             if not isinstance(o, tp):
-                                o = field[1](o)
+                                o = tp(o)
                             setattr(msg, nm, o)
                         else:
                             if nm not in kwds:
                                 raise SyntaxError("required field '%s' missing" % nm)
                             o = kwds[nm]
                             if not isinstance(o, tp):
-                                o = field[1](o)
+                                o = tp(o)
                             setattr(msg, nm, o)
 
                     if kwds:
@@ -378,7 +415,7 @@ class MMethod(property):
                         msg[i+1] = long(o)
                     return self.__retconv(obj._do(msg, args))
         else:
-            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_fields_': [ ('MethodID', c_ULONG) ]})
+            self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_pack_': 4, '_fields_': [ ('MethodID', c_ULONG) ]})
 
             if not varargs:
                 def cb(obj):
@@ -635,7 +672,7 @@ class BOOPSIRootClass(PyBOOPSIObject, PyMUIBase):
 
 #===============================================================================
 
-class c_NotifyHook(c_Hook): _argtypes_ = (c_MUIObject, c_APTR.PointerType())
+class c_NotifyHook(c_Hook): _argtypes_ = (c_pMUIObject, c_APTR.PointerType())
 
 class Event(object):
     def __init__(self, source):
@@ -671,14 +708,14 @@ class Notify(PyMUIObject, PyMUIBase):
     __metaclass__ = MUIMetaClass
     CLASSID = MUIC_Notify
 
-    ApplicationObject = MAttribute(MUIA_ApplicationObject, '..g', c_MUIObject)
+    ApplicationObject = MAttribute(MUIA_ApplicationObject, '..g', c_pMUIObject)
     AppMessage        = MAttribute(MUIA_AppMessage,        '..g', c_APTR)
     HelpLine          = MAttribute(MUIA_HelpLine,          'isg', c_LONG)
     HelpNode          = MAttribute(MUIA_HelpNode,          'isg', c_STRPTR, keep=True)
     NoNotify          = MAttribute(MUIA_NoNotify,          '.s.', c_BOOL)
     NoNotifyMethod    = MAttribute(MUIA_NoNotifyMethod,    '.s.', c_ULONG)
     ObjectID          = MAttribute(MUIA_ObjectID,          'isg', c_ULONG)
-    Parent            = MAttribute(MUIA_Parent,            '..g', c_MUIObject)
+    Parent            = MAttribute(MUIA_Parent,            '..g', c_pMUIObject)
     Revision          = MAttribute(MUIA_Revision,          '..g', c_LONG)
     UserData          = MAttribute(MUIA_UserData,          'isg', c_ULONG)
     Version           = MAttribute(MUIA_Version,           '..g', c_LONG)
@@ -726,7 +763,7 @@ class Notify(PyMUIObject, PyMUIBase):
         self._getMA(attr).setter(self, v, nn=True)
 
     def KillApp(self):
-        app = self.ApplicationObject.value
+        app = self.ApplicationObject.contents
         assert isinstance(app, Application)
         app.Quit()
 
@@ -747,13 +784,13 @@ class Notify(PyMUIObject, PyMUIBase):
 class Family(Notify):
     CLASSID = MUIC_Family
     
-    Child = MAttribute(MUIA_Family_Child, 'i..', c_MUIObject, postSet=postset_child, keep=True)
+    Child = MAttribute(MUIA_Family_Child, 'i..', c_pMUIObject, postSet=postset_child, keep=True)
     List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
 
-    #Insert   = MMethod(MUIM_Family_Insert,   [ ('obj', c_MUIObject), ('pred', c_MUIObject) ])
-    #Remove   = MMethod(MUIM_Family_Remove,   [ ('obj', c_MUIObject) ])
-    #Sort     = MMethod(MUIM_Family_Sort,     [ ('objs', c_MUIObject.PointerType()) ])
-    #Transfer = MMethod(MUIM_Family_Transfer, [ ('family', c_MUIObject) ])
+    #Insert   = MMethod(MUIM_Family_Insert,   [ ('obj', c_pMUIObject), ('pred', c_pMUIObject) ])
+    #Remove   = MMethod(MUIM_Family_Remove,   [ ('obj', c_pMUIObject) ])
+    #Sort     = MMethod(MUIM_Family_Sort,     [ ('objs', c_pMUIObject.PointerType()) ])
+    #Transfer = MMethod(MUIM_Family_Transfer, [ ('family', c_pMUIObject) ])
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
@@ -762,7 +799,7 @@ class Family(Notify):
             self.AddTail(child)
 
     def AddHead(self, o):
-        o = c_MUIObject(o).value
+        o = c_pMUIObject(o).value
         assert o and not self._ischild(o)
         x = self._do1(MUIM_Family_AddHead, o)
         if x:
@@ -771,7 +808,7 @@ class Family(Notify):
         return x
 
     def AddTail(self, o):
-        o = c_MUIObject(o).value
+        o = c_pMUIObject(o).value
         assert o, not self._ischild(o)
         x = self._do1(MUIM_Family_AddTail, o)
         if x:
@@ -780,8 +817,8 @@ class Family(Notify):
         return x
 
     def Insert(self, o, p):
-        o = c_MUIObject(o).value
-        p = c_MUIObject(p).value
+        o = c_pMUIObject(o).value
+        p = c_pMUIObject(p).value
         assert o and p and not self._ischild(o) and self._ischild(p)
         x = self._do(MUIM_Family_Insert, (o, p))
         if x:
@@ -790,19 +827,19 @@ class Family(Notify):
         return x
 
     def Remove(self, o):
-        o = c_MUIObject(o).value
+        o = c_pMUIObject(o).value
         assert o and self._ischild(o)
         x = self._do1(MUIM_Family_Remove, o)
         if x: self._popchild(o)
         return x
 
     def Sort(self, *args):
-        a = c_MUIObject.ArrayType(len(args)+1)() # transitive object, not needed to be keep
+        a = c_pMUIObject.ArrayType(len(args)+1)() # transitive object, not needed to be keep
         a[:] = args
         return self._do1(MUIM_Family_Sort, a)
 
     def Transfer(self, f):
-        f = c_MUIObject(f).value
+        f = c_pMUIObject(f).value
         assert f and isinstance(f, Family)
         x = self._do1(MUIM_Family_Transfer, f)
         if x:
@@ -820,7 +857,7 @@ class Menustrip(Family):
 
     InitChange = MMethod(MUIM_Menustrip_InitChange)
     ExitChange = MMethod(MUIM_Menustrip_ExitChange)
-    Popup      = MMethod(MUIM_Menustrip_Popup, [ ('parent', c_MUIObject),
+    Popup      = MMethod(MUIM_Menustrip_Popup, [ ('parent', c_pMUIObject),
                                                  ('flags', c_ULONG),
                                                  ('x', c_LONG),
                                                  ('y', c_LONG) ])
@@ -897,13 +934,13 @@ class Application(Notify): # TODO: unfinished
     Description    = MAttribute(MUIA_Application_Description,    'i.g', c_STRPTR, keep=True)
     DiskObject     = MAttribute(MUIA_Application_DiskObject,     'isg', c_APTR, keep=True)
     DoubleStart    = MAttribute(MUIA_Application_DoubleStart,    '..g', c_BOOL)
-    DropObject     = MAttribute(MUIA_Application_DropObject,     'is.', c_MUIObject, postSet=postset_child)
+    DropObject     = MAttribute(MUIA_Application_DropObject,     'is.', c_pMUIObject, postSet=postset_child)
     ForceQuit      = MAttribute(MUIA_Application_ForceQuit,      '..g', c_BOOL)
     HelpFile       = MAttribute(MUIA_Application_HelpFile,       'isg', c_STRPTR, keep=True)
     Iconified      = MAttribute(MUIA_Application_Iconified,      '.sg', c_BOOL)
     MenuAction     = MAttribute(MUIA_Application_MenuAction,     '..g', c_ULONG)
     MenuHelp       = MAttribute(MUIA_Application_MenuHelp,       '..g', c_ULONG)
-    Menustrip      = MAttribute(MUIA_Application_Menustrip,      'i..', c_MUIObject, postSet=postset_child)
+    Menustrip      = MAttribute(MUIA_Application_Menustrip,      'i..', c_pMUIObject, postSet=postset_child)
     RexxHook       = MAttribute(MUIA_Application_RexxHook,       'isg', c_Hook, keep=True)
     RexxMsg        = MAttribute(MUIA_Application_RexxMsg,        '..g', c_APTR)
     RexxString     = MAttribute(MUIA_Application_RexxString,     '.s.', c_STRPTR, keep=True)
@@ -914,10 +951,10 @@ class Application(Notify): # TODO: unfinished
     UsedClasses    = MAttribute(MUIA_Application_UsedClasses,    'isg', c_pSTRPTR, keep=True)
     UseRexx        = MAttribute(MUIA_Application_UseRexx,        'i..', c_BOOL)
     Version        = MAttribute(MUIA_Application_Version,        'i.g', c_STRPTR, keep=True)
-    Window         = MAttribute(MUIA_Application_Window,         'i..', c_MUIObject, postSet=postset_child)
+    Window         = MAttribute(MUIA_Application_Window,         'i..', c_pMUIObject, postSet=postset_child)
     WindowList     = MAttribute(MUIA_Application_WindowList,     '..g', c_pList)
 
-    AboutMUI         = MMethod(MUIM_Application_AboutMUI,         [ ('refwindow', c_MUIObject) ])
+    AboutMUI         = MMethod(MUIM_Application_AboutMUI,         [ ('refwindow', c_pMUIObject) ])
     ##AddInputHandler
     ##BuildSettingsPanel
     CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
@@ -927,13 +964,13 @@ class Application(Notify): # TODO: unfinished
     #NewInput         = MMethod(MUIM_Application_NewInput,         [ ('signal', c_ULONG.PointerType()) ])
     OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow, [ ('flags', c_ULONG),
                                                                     ('classid', c_STRPTR) ])
-    PushMethod       = MMethod(MUIM_Application_PushMethod,       [ ('dest', c_MUIObject),
+    PushMethod       = MMethod(MUIM_Application_PushMethod,       [ ('dest', c_pMUIObject),
                                                                     ('count', c_LONG) ], varargs=True)
     ##RemInputHandler
     ReturnID         = MMethod(MUIM_Application_ReturnID,         [ ('retid', c_ULONG) ])
     Save             = MMethod(MUIM_Application_Save,             [ ('name', c_STRPTR) ])
 
-    ShowHelp         = MMethod(MUIM_Application_ShowHelp,         [ ('window', c_MUIObject),
+    ShowHelp         = MMethod(MUIM_Application_ShowHelp,         [ ('window', c_pMUIObject),
                                                                     ('name',   c_STRPTR),
                                                                     ('node',   c_STRPTR),
                                                                     ('line',   c_LONG) ])
@@ -972,12 +1009,12 @@ class Window(Notify): # TODO: unfinished
     CLASSID = MUIC_Window
 
     def __checkForApp(self, attr, o):
-        if not self.ApplicationObject.value:
+        if not long(self.ApplicationObject):
             raise AttributeError("Window not linked to an application yet")
         return o
 
     Activate                = MAttribute(MUIA_Window_Activate                , 'isg', c_BOOL)
-    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_MUIObject) # XXX: what append if the object is not a child?
+    ActiveObject            = MAttribute(MUIA_Window_ActiveObject            , '.sg', c_pMUIObject) # XXX: what append if the object is not a child?
     AltHeight               = MAttribute(MUIA_Window_AltHeight               , 'i.g', c_LONG)
     AltLeftEdge             = MAttribute(MUIA_Window_AltLeftEdge             , 'i.g', c_LONG)
     AltTopEdge              = MAttribute(MUIA_Window_AltTopEdge              , 'i.g', c_LONG)
@@ -987,7 +1024,7 @@ class Window(Notify): # TODO: unfinished
     Borderless              = MAttribute(MUIA_Window_Borderless              , 'i..', c_BOOL)
     CloseGadget             = MAttribute(MUIA_Window_CloseGadget             , 'i..', c_BOOL)
     CloseRequest            = MAttribute(MUIA_Window_CloseRequest            , '..g', c_BOOL)
-    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_MUIObject) # XXX: what append if the object is not a child?
+    DefaultObject           = MAttribute(MUIA_Window_DefaultObject           , 'isg', c_pMUIObject) # XXX: what append if the object is not a child?
     DepthGadget             = MAttribute(MUIA_Window_DepthGadget             , 'i..', c_BOOL)
     DisableKeys             = MAttribute(MUIA_Window_DisableKeys             , 'isg', c_LONG)
     DragBar                 = MAttribute(MUIA_Window_DragBar                 , 'i..', c_BOOL)
@@ -998,14 +1035,14 @@ class Window(Notify): # TODO: unfinished
     IsSubWindow             = MAttribute(MUIA_Window_IsSubWindow             , 'isg', c_BOOL)
     LeftEdge                = MAttribute(MUIA_Window_LeftEdge                , 'i.g', c_LONG)
     MenuAction              = MAttribute(MUIA_Window_MenuAction              , 'isg', c_LONG)
-    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
-    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_MUIObject)
+    Menustrip               = MAttribute(MUIA_Window_Menustrip               , 'i.g', c_pMUIObject, postSet=postset_child, keep=True)
+    MouseObject             = MAttribute(MUIA_Window_MouseObject             , '..g', c_pMUIObject)
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR, keep=True)
-    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_MUIObject, keep=True)
-    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_MUIObject, postSet=postset_child, keep=True)
+    RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_pMUIObject, keep=True)
+    RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_pMUIObject, postSet=postset_child, keep=True)
     Screen                  = MAttribute(MUIA_Window_Screen                  , 'isg', c_APTR, keep=True)
     ScreenTitle             = MAttribute(MUIA_Window_ScreenTitle             , 'isg', c_STRPTR, keep=True)
     SizeGadget              = MAttribute(MUIA_Window_SizeGadget              , 'i..', c_BOOL)
@@ -1167,7 +1204,7 @@ class Window(Notify): # TODO: unfinished
 class AboutMUI(Window):
     CLASSID = MUIC_Aboutmui
 
-    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_MUIObject, keep=True)
+    Application = MAttribute(MUIA_Aboutmui_Application, 'i..', c_pMUIObject, keep=True)
 
     def __init__(self, app, **kwds):
         super(AboutMUI, self).__init__(Application=app, RefWindow=kwds.pop('RefWindow', None), **kwds)
@@ -1178,6 +1215,7 @@ class AboutMUI(Window):
 #===============================================================================
 
 class c_MinMax(PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('MinWidth', c_WORD),
                  ('MinHeight', c_WORD),
                  ('MaxWidth', c_WORD),
@@ -1186,6 +1224,7 @@ class c_MinMax(PyMUICStructureType):
                  ('DefHeight', c_WORD) ]
 
 class c_IntuiMessage(PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('ExecMessage', c_Message),
                  ('Class', c_ULONG),
                  ('Code', c_UWORD),
@@ -1199,11 +1238,12 @@ class c_IntuiMessage(PyMUICStructureType):
                  ('SpecialLink', c_APTR) ]
 
 class c_EventHandlerNode(PyMUICStructureType):
+    _pack_ = 2
     _fields_ = [ ('ehn_Node', c_MinNode),
                  ('ehn_Reserved', c_BYTE),
                  ('ehn_Priority', c_BYTE),
                  ('ehn_Flags', c_UWORD),
-                 ('ehn_Object', c_MUIObject),
+                 ('ehn_Object', c_pMUIObject),
                  ('ehn_Class', c_APTR),
                  ('ehn_Events', c_ULONG) ]
 
@@ -1212,8 +1252,8 @@ class Area(Notify): # TODO: unfinished
 
     Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR, keep=True)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
-    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_MUIObject, postSet=postset_child, keep=True)
-    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_MUIObject)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_pMUIObject, postSet=postset_child, keep=True)
+    ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_pMUIObject)
     ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
     Disabled           = MAttribute(MUIA_Disabled           , 'isg', c_BOOL)
@@ -1255,12 +1295,12 @@ class Area(Notify): # TODO: unfinished
     Weight             = MAttribute(MUIA_Weight             , 'i..', c_LONG)
     Width              = MAttribute(MUIA_Width              , '..g', c_LONG)
     Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
-    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_MUIObject)
+    WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_pMUIObject)
 
     AskMinMax   = MMethod(MUIM_AskMinMax,   [ ('MinMaxInfo', c_MinMax.PointerType()) ])
     Cleanup     = MMethod(MUIM_Cleanup)
-    DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_MUIObject) ])
-    DragDrop    = MMethod(MUIM_DragDrop,    [ ('obj', c_MUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
+    DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_pMUIObject) ])
+    DragDrop    = MMethod(MUIM_DragDrop,    [ ('obj', c_pMUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
     Draw        = MMethod(MUIM_Draw,        [ ('flags', c_ULONG) ])
     HandleEvent = MMethod(MUIM_HandleEvent, [ ('imsg', c_IntuiMessage.PointerType()),
                                               ('muikey', c_LONG),
@@ -1501,7 +1541,7 @@ class String(Area):
     Accept         = MAttribute(MUIA_String_Accept,         'isg', c_STRPTR, keep=True)
     Acknowledge    = MAttribute(MUIA_String_Acknowledge,    '..g', c_STRPTR)
     AdvanceOnCR    = MAttribute(MUIA_String_AdvanceOnCR,    'isg', c_BOOL)
-    AttachedList   = MAttribute(MUIA_String_AttachedList,   'isg', c_MUIObject, postSet=postset_child, keep=True)
+    AttachedList   = MAttribute(MUIA_String_AttachedList,   'isg', c_pMUIObject, postSet=postset_child, keep=True)
     BufferPos      = MAttribute(MUIA_String_BufferPos,      '.sg', c_LONG)
     Contents       = MAttribute(MUIA_String_Contents,       'isg', c_STRPTR, keep=True)
     DisplayPos     = MAttribute(MUIA_String_DisplayPos,     '.sg', c_LONG)
@@ -1648,7 +1688,7 @@ class Pendisplay(Area):
     CLASSID = MUIC_Pendisplay
 
     Pen       = MAttribute(MUIA_Pendisplay_Pen,       '..g', c_ULONG)
-    Reference = MAttribute(MUIA_Pendisplay_Reference, 'isg', c_MUIObject, keep=True)
+    Reference = MAttribute(MUIA_Pendisplay_Reference, 'isg', c_pMUIObject, keep=True)
     RGBcolor  = MAttribute(MUIA_Pendisplay_RGBcolor,  'isg', c_APTR) # struct MUI_RGBcolor *
     Spec      = MAttribute(MUIA_Pendisplay_Spec,      'isg', c_APTR) # struct MUI_PenSpec *
 
@@ -1667,7 +1707,7 @@ class Group(Area): # TODO: unfinished
     CLASSID = MUIC_Group
 
     ActivePage   = MAttribute(MUIA_Group_ActivePage   , 'isg', c_LONG)
-    Child        = MAttribute(MUIA_Group_Child        , 'i..', c_MUIObject, postSet=postset_child)
+    Child        = MAttribute(MUIA_Group_Child        , 'i..', c_pMUIObject, postSet=postset_child)
     ChildList    = MAttribute(MUIA_Group_ChildList    , '..g', c_pList)
     Columns      = MAttribute(MUIA_Group_Columns      , 'is.', c_LONG)
     Forward      = MAttribute(MUIA_Group_Forward,       '.s.', c_BOOL)
@@ -1682,12 +1722,12 @@ class Group(Area): # TODO: unfinished
     Spacing      = MAttribute(MUIA_Group_Spacing      , 'is.', c_LONG)
     VertSpacing  = MAttribute(MUIA_Group_VertSpacing  , 'isg', c_LONG)
 
-    AddHead      = MMethod(MUIM_Group_AddHead,    [ ('obj', c_MUIObject) ])
-    AddTail      = MMethod(MUIM_Group_AddTail,    [ ('obj', c_MUIObject) ])
+    AddHead      = MMethod(MUIM_Group_AddHead,    [ ('obj', c_pMUIObject) ])
+    AddTail      = MMethod(MUIM_Group_AddTail,    [ ('obj', c_pMUIObject) ])
     ExitChange   = MMethod(MUIM_Group_ExitChange)
     InitChange   = MMethod(MUIM_Group_InitChange)
-    MoveMember   = MMethod(MUIM_Group_MoveMember, [ ('obj', c_MUIObject), ('pos', c_LONG) ])
-    Remove       = MMethod(MUIM_Group_Remove,     [ ('obj', c_MUIObject) ])
+    MoveMember   = MMethod(MUIM_Group_MoveMember, [ ('obj', c_pMUIObject), ('pos', c_LONG) ])
+    Remove       = MMethod(MUIM_Group_Remove,     [ ('obj', c_pMUIObject) ])
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
@@ -1826,7 +1866,7 @@ class List(Group): # TODO: unfinished
     Clear              = MMethod(MUIM_List_Clear)
     Compare            = MMethod(MUIM_List_Compare,      [ ('entry1', c_APTR), ('entry2', c_APTR) ], rettype=c_LONG)
     Construct          = MMethod(MUIM_List_Construct,    [ ('entry', c_APTR), ('pool', c_APTR) ], rettype=c_APTR)
-    CreateImage        = MMethod(MUIM_List_CreateImage,  [ ('obj', c_MUIObject), ('flags', c_ULONG) ], retype=c_APTR)
+    CreateImage        = MMethod(MUIM_List_CreateImage,  [ ('obj', c_pMUIObject), ('flags', c_ULONG) ], retype=c_APTR)
     DeleteImage        = MMethod(MUIM_List_DeleteImage,  [ ('listimg', c_APTR) ])
     Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
     Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
@@ -2013,12 +2053,12 @@ class Scrollgroup(Group):
     CLASSID = MUIC_Scrollgroup
 
     AutoBars     = MAttribute(MUIA_Scrollgroup_AutoBars,     'isg', c_BOOL)
-    Contents     = MAttribute(MUIA_Scrollgroup_Contents,     'i.g', c_MUIObject, postSet=postset_child, keep=True)
+    Contents     = MAttribute(MUIA_Scrollgroup_Contents,     'i.g', c_pMUIObject, postSet=postset_child, keep=True)
     FreeHoriz    = MAttribute(MUIA_Scrollgroup_FreeHoriz,    'i..', c_BOOL)
     FreeVert     = MAttribute(MUIA_Scrollgroup_FreeVert,     'i..', c_BOOL)
-    HorizBar     = MAttribute(MUIA_Scrollgroup_HorizBar,     '..g', c_MUIObject)
+    HorizBar     = MAttribute(MUIA_Scrollgroup_HorizBar,     '..g', c_pMUIObject)
     UseWinBorder = MAttribute(MUIA_Scrollgroup_UseWinBorder, 'i..', c_BOOL)
-    VertBar      = MAttribute(MUIA_Scrollgroup_VertBar,      '..g', c_MUIObject)
+    VertBar      = MAttribute(MUIA_Scrollgroup_VertBar,      '..g', c_pMUIObject)
 
 #===============================================================================
 
@@ -2038,7 +2078,7 @@ class Listview(Group):
     DoubleClick    = MAttribute(MUIA_Listview_DoubleClick,    'i.g', c_BOOL)
     DragType       = MAttribute(MUIA_Listview_DragType,       'isg', c_LONG)
     Input          = MAttribute(MUIA_Listview_Input,          'i..', c_BOOL)
-    List           = MAttribute(MUIA_Listview_List,           'i.g', c_MUIObject, postSet=postset_child, keep=True)
+    List           = MAttribute(MUIA_Listview_List,           'i.g', c_pMUIObject, postSet=postset_child, keep=True)
     MultiSelect    = MAttribute(MUIA_Listview_MultiSelect,    'i..', c_LONG)
     ScollerPos     = MAttribute(MUIA_Listview_ScrollerPos,    'i..', c_BOOL)
     SelectChange   = MAttribute(MUIA_Listview_SelectChange,   '..g', c_BOOL)
@@ -2097,10 +2137,10 @@ class Palette(Group):
 class Popstring(Group):
     CLASSID = MUIC_Popstring
 
-    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
+    Button    = MAttribute(MUIA_Popstring_Button   , 'i.g', c_pMUIObject, postSet=postset_child, keep=True)
     CloseHook = MAttribute(MUIA_Popstring_CloseHook, 'isg', c_Hook)
     OpenHook  = MAttribute(MUIA_Popstring_OpenHook , 'isg', c_Hook)
-    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_MUIObject, postSet=postset_child, keep=True)
+    String    = MAttribute(MUIA_Popstring_String   , 'i.g', c_pMUIObject, postSet=postset_child, keep=True)
     Toggle    = MAttribute(MUIA_Popstring_Toggle   , 'isg', c_BOOL)
 
     Close = MMethod(MUIM_Popstring_Close, [ ('result', c_LONG) ])
@@ -2130,7 +2170,7 @@ class Popobject(Popstring):
 
     Follow     = MAttribute(MUIA_Popobject_Follow,      'isg', c_BOOL)
     Light      = MAttribute(MUIA_Popobject_Light,       'isg', c_BOOL)
-    Object     = MAttribute(MUIA_Popobject_Object,      'i.g', c_MUIObject, postSet=postset_child, keep=True)
+    Object     = MAttribute(MUIA_Popobject_Object,      'i.g', c_pMUIObject, postSet=postset_child, keep=True)
     ObjStrHook = MAttribute(MUIA_Popobject_ObjStrHook , 'isg', c_Hook, keep=True)
     StrObjHook = MAttribute(MUIA_Popobject_StrObjHook,  'isg', c_Hook, keep=True)
     Volatile   = MAttribute(MUIA_Popobject_Volatile,    'isg', c_BOOL)

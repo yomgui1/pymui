@@ -15,15 +15,15 @@ def callback(obj, args):
 
     print "Hello: callback",
 
-    assert isinstance(obj, c_MUIObject)
+    assert isinstance(obj, c_pMUIObject)
     assert isinstance(args, c_APTR.PointerType())
-    assert obj.value is n
+    assert obj.contents is n
 
     # Second argument is a pointer on the first hook argument.
     assert long(args[0]) == long(test_args[0])
 
     # Use this pointer as a string array now
-    x = c_pSTRPTR.FromLong(long(args))
+    x = c_pSTRPTR.from_value(long(args))
     assert long(x[0]) == long(test_args[0])
     assert any(a.value == b.value for a, b in zip(test_args, x))
 
@@ -42,9 +42,9 @@ def typed_callback(obj):
 def complex_callback(args_ptr):
     print "Hello: complex_callback",
 
-    s = c_STRPTR.FromLong(args_ptr[0].value)
-    i = c_LONG.FromLong(args_ptr[1].value)
-    o = c_PyObject.FromLong(args_ptr[2].value)
+    s = c_STRPTR.from_value(args_ptr[0].value)
+    i = c_LONG.from_value(args_ptr[1].value)
+    o = c_PyObject.from_value(args_ptr[2].value)
     assert s
 
 typed_hook = c_NotifyHook(typed_callback, argstypes=(None, c_pSTRPTR))

@@ -195,7 +195,7 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
             PyBOOPSIObject_ADD_FLAGS(_o, FLAG_USED); \
             _o->used_cnt++; })
 #define PyBOOPSIObject_PERMIT(o) ({ PyBOOPSIObject *_o = (APTR)(o); \
-            if (--_o->used_cnt) {                                   \
+            if (0 == --_o->used_cnt) {                              \
                 PyBOOPSIObject_REM_FLAGS(_o, FLAG_USED);            \
                 if (PyBOOPSIObject_HAS_FLAGS(_o, FLAG_DISPOSE)      \
                     && PyBOOPSIObject_DisposeObject(_o))            \
@@ -309,6 +309,7 @@ static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
 static struct MinList gObjectList;
 static struct MinList gMCCList;
+static struct MinList gToDisposeList;
 static struct Hook OnAttrChangedHook;
 static APTR gMemPool;
 static PyObject *gKillDBEntry;
@@ -456,13 +457,34 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
     }
 
     if (PyBOOPSIObject_HAS_FLAGS(pObj, FLAG_OWNER|FLAG_DISPOSE)) {
-        /* BOOPSI/MUI destroy */
-        DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
-        if (PyMUIObject_Check(pObj))
-            MUI_DisposeObject(bObj);
-        else
-            DisposeObject(bObj);
-        DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+        /* In mainloop ? */
+        if (NULL != gApp) {
+            ObjectNode *node;
+
+            /* don't dispose BOOPSI objects if we're inside the MUIM_Application_NewInput.
+             * Put the object in a dispose list, and ask to exit the method to flush the
+             * list outside the method.
+             */
+
+            node = AllocMem(sizeof(*node), MEMF_PUBLIC | MEMF_CLEAR | MEMF_SEM_PROTECTED);
+            if (NULL != node) {
+                node->obj = bObj;
+                node->flags = PyMUIObject_Check(pObj) ? NODE_FLAG_MUI:0;
+                ADDTAIL(&gToDisposeList, node);
+                DPRINT("break mainloop\n");
+                DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
+                DPRINT("break mainloop asked\n");
+            } else
+                DPRINT("AllocMem(node) failed, oups!\n");
+        } else {
+            /* BOOPSI/MUI destroy */
+            DPRINT("Before DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+            if (PyMUIObject_Check(pObj))
+                MUI_DisposeObject(bObj);
+            else
+                DisposeObject(bObj);
+            DPRINT("After DisposeObject(%p) (%p-'%s')\n", bObj, pObj, OBJ_TNAME(pObj));
+        }
 
         /* Now delete the attached node */
         if (NULL != pObj->node) /* checked because the OWNER flag may have beem forced */
@@ -939,14 +961,15 @@ static PyObject *
 boopsi__dispose(PyBOOPSIObject *self)
 {
     Object *bObj = PyBOOPSIObject_GET_OBJECT(self);
-
+    DPRINT("bObj %p-'%s'\n", bObj, OBJ_TNAME(self));
     if (NULL != bObj) {
         PyBOOPSIObject_ADD_FLAGS(self, FLAG_DISPOSE);
 
         if (!PyBOOPSIObject_HAS_FLAGS(self, FLAG_USED)) {
             PyBOOPSIObject_DisposeObject(self);
             PyErr_Clear();
-        }
+        } else
+            DPRINT("bObj %p-'%s' is in use, DISPOSE flags set\n", bObj, OBJ_TNAME(self));
     }
 
     Py_RETURN_NONE;
@@ -2346,10 +2369,26 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
 
     for (;;) {
         ULONG id;
+        PyThreadState *_save;
+        ObjectNode *node, *next;
 
         Py_UNBLOCK_THREADS;
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
         Py_BLOCK_THREADS;
+
+        ForeachNodeSafe(&gToDisposeList, node, next) {
+            Object *bObj = node->obj;
+
+            /* BOOPSI/MUI destroy */
+            DPRINT("Before DisposeObject(%p)\n", bObj);
+            if (node->flags & NODE_FLAG_MUI)
+                MUI_DisposeObject(bObj);
+            else
+                DisposeObject(bObj);
+            DPRINT("After DisposeObject(%p)\n", bObj);
+
+            FreeMem(REMOVE(node), sizeof(*node));
+        }
 
         /* Exception occured or quit requested */
         if ((MUIV_Application_ReturnID_Quit == id) || PyErr_Occurred())
@@ -2539,7 +2578,7 @@ _muimaster_request(PyObject *self, PyObject *args)
     LONGBITS flags = 0;
     LONG result;
 
-    if (!PyArg_ParseTuple(args, "OOzss|l", py2long, &app, &win_py, &title, &gadgets, &contents, &flags))
+    if (!PyArg_ParseTuple(args, "O&Ozss|l", py2long, &app, &win_py, &title, &gadgets, &contents, &flags))
         return NULL;
 
     if (!py2long(win_py, (LONG *)&win))
@@ -2547,6 +2586,7 @@ _muimaster_request(PyObject *self, PyObject *args)
 
     PyBOOPSIObject_FORBID(win_py);
     result = MUI_RequestA(app, win, flags, title, gadgets, contents, NULL);
+    result = 0;
     PyBOOPSIObject_PERMIT(win_py);
 
     if (PyErr_Occurred())
@@ -2693,6 +2733,7 @@ INITFUNC(void) {
 
     NEWLIST((struct List *)&gObjectList);
     NEWLIST(&gMCCList);
+    NEWLIST(&gToDisposeList);
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
 
     gMemPool = CreatePool(MEMF_PUBLIC|MEMF_SEM_PROTECTED, 1024, 512);
