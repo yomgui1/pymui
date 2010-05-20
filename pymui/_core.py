@@ -732,10 +732,12 @@ class Notify(PyMUIObject, PyMUIBase):
         self.postcreate(**kwds)
         
     def _notify_cb(self, a, v, nv):
+        key = (self, a)
+        l = self.__notify_cbdict[key]
         attr = self._getMAByID(a)
         e = AttributeEvent(self, attr.ctype.from_value(v), nv)
-        for o in self.__notify_cbdict[a]:
-            if o.trigvalue == MUIV_EveryTime or long(o.trigvalue) == v:
+        for o in l:
+            if o.trigvalue is MUIV_EveryTime or long(o.trigvalue) is v:
                 if o(e): return
 
     def precreate(self, **kwds):
@@ -772,11 +774,13 @@ class Notify(PyMUIObject, PyMUIBase):
         assert callable(callback)
         attr = self._getMA(attr)
         assert 's' in attr.isg or 'g' in attr.isg
+        # Incref self (if it's a temporary object no notification will occures after GC)
         event = AttributeNotify(trigvalue, callback, args, kwds)
-        if attr.id in self.__notify_cbdict:
-            self.__notify_cbdict[attr.id].append(event)
+        key = (self, attr.id)
+        if key in self.__notify_cbdict:
+            self.__notify_cbdict[key].append(event)
         else:
-            self.__notify_cbdict[attr.id] = [ event ]
+            self.__notify_cbdict[key] = [ event ]
             self._notify(attr.id)
 
 #===============================================================================

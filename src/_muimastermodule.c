@@ -304,7 +304,6 @@ static PyTypeObject CHookObject_Type;
 static PyTypeObject PyMethodMsgObject_Type;
 static PyTypeObject PyEventHandlerObject_Type;
 
-static ULONG gModuleIsValid = FALSE; /* TRUE when module is valid and used */
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
 static struct MinList gObjectList;
@@ -548,8 +547,9 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 
     DPRINT("hook: %p, self: %p\n", hook, self);
 
-    if (!ATOMIC_FETCH(&gModuleIsValid)) {
-        dprintf("Warning: PyMUI CHookObject called during PyMUI closing.");
+    /* A Hook can be called by MUI even when Python interpreter is not available anymore */
+    if (!Py_IsInitialized()) {
+        dprintf("Warning: PyMUI Hook called without Python initialized.");
         return 0;
     }
 
@@ -582,25 +582,29 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 //-
 //+ OnAttrChanged
 static void
-OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
+OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args)
+{
     PyObject **wref_storage = (PyObject **)args[0];
     PyObject *pyo;
     PyGILState_STATE gstate;
     ULONG attr = args[1];
 
-    /* As notifications are not removed, they can occures during the module cleanup
-     * caused during objects disposing (strange, but ...).
-     * So, we protect the code against that.
+    /* 1 - Atttribute value change hook may be called during the module cleanup.
+     * 2 - Source python object may be destroyed and/or a previous call
+     *     has destroyed the wref object also.
      */
-    if (!ATOMIC_FETCH(&gModuleIsValid) || (NULL == *wref_storage))
+    if (!Py_IsInitialized() || (NULL == *wref_storage))
         return;
 
     gstate = PyGILState_Ensure();
 
-    if (!PyErr_Occurred()) {
-        /* TODO: to be changed to use the object DB */
+    /* Don't try to execute python code if we are already in exception */
+    if (NULL != PyErr_Occurred())
+    {
+        /* Is source object valid ? */
         pyo = PyWeakref_GET_OBJECT(*wref_storage); /* BR */
-        if (Py_None != pyo) {
+        if (Py_None != pyo)
+        {
             PyObject *res;
             ULONG v = args[2];
 
@@ -617,9 +621,14 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args) {
 
             Py_XDECREF(res);
             Py_DECREF(pyo);
-        } else {
+        }
+        else
+        {
+            /* destroy the weakref and NULLify the pointer (see point 2 on the function first comments) */
             DPRINT("Dead python object for MUI obj %p, attribute $%08x\n", mo, attr);
             Py_CLEAR(*wref_storage);
+
+            /* XXX: can I remove the notification ? */
         }
     }
 
@@ -746,7 +755,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
     ULONG result;
     BOOL resultok;
 
-    if (!ATOMIC_FETCH(&gModuleIsValid))
+    if (!Py_IsInitialized())
         return DoSuperMethodA(cl, obj, msg);
 
     resultok = FALSE;
@@ -1679,7 +1688,8 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 
     /* The hook will be called using a weakref on the python object.
      * So if the python object is destroyed the weakref gives NULL.
-     * In this last case the hook will destroy also the weakref.
+     *
+     * In this last case the hook shall destroy also the weakref itself.
      * But we can't give directly to the hook this weakref as parameter
      * as it will be invalid, so we use a mempool to store this ptr.
      * The storage will be NULLed when weakref die.
@@ -2623,8 +2633,6 @@ PyMorphOS_CloseModule(void)
 
     DPRINT("Closing module...\n");
 
-    ATOMIC_STORE(&gModuleIsValid, FALSE);
-
     ForeachNodeSafe(&gObjectList, node, next) {
         Object *app, *obj = node->obj;
 
@@ -2770,7 +2778,6 @@ INITFUNC(void) {
                                     PyModule_AddObject(m, "_obj_dict", d);
                             
                                     gBOOPSI_Objects_Dict = d;
-                                    gModuleIsValid = TRUE;
                                     return;
                                 }
 
