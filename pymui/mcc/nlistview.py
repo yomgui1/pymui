@@ -64,7 +64,7 @@ MUIV_NListview_HSB_Off         = 0x0100
 class NListview(pymui.Group):
     CLASSID = MUIC_NListview
     
-    NList          = MAttribute(MUIA_NListview_NList,           'i.g', pymui.c_pMUIObject, postSet=pymui.postset_child)
+    NList          = MAttribute(MUIA_NListview_NList,           'i.g', pymui.c_pMUIObject, postSet=pymui.postset_child, keep=True)
     VertScrollBar  = MAttribute(MUIA_NListview_Vert_ScrollBar,  'isg', pymui.c_LONG)
     HorizScrollBar = MAttribute(MUIA_NListview_Horiz_ScrollBar, 'isg', pymui.c_LONG)
     VSBWidth       = MAttribute(MUIA_NListview_VSB_Width,       '..g', pymui.c_LONG)

@@ -2,7 +2,7 @@
 
 from distutils.core import setup, Extension
 
-opt = ['-Wall -Wuninitialized -Wstrict-prototypes']
+opt = ['-Wall -Wuninitialized -Wstrict-prototypes -Wno-pointer-sign']
 
 setup(name = 'PyMUI',
       version = '0.4',

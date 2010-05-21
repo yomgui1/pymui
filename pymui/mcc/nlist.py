@@ -440,6 +440,8 @@ MUIM_NList_Display            = 0x9d5100A4 # GM $$$Sensei
 class NList(pymui.Area):
     CLASSID = MUIC_NList
 
+    MinLineHeight = MAttribute(MUIA_NList_MinLineHeight, 'is.', pymui.c_LONG)
+
     CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_pMUIObject),
                                                     ('flags', pymui.c_ULONG) ], pymui.c_APTR)
     DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ], retype=None)

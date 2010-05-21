@@ -294,9 +294,9 @@ typedef struct PyEventHandlerObject_STRUCT {
 ** Private Variables
 */
 
-static struct Library *MUIMasterBase;
-static struct Library *CyberGfxBase;
-static struct Library *LayersBase;
+struct Library *MUIMasterBase;
+struct Library *CyberGfxBase;
+struct Library *LayersBase;
 
 static PyTypeObject PyBOOPSIObject_Type;
 static PyTypeObject PyMUIObject_Type;
@@ -599,7 +599,7 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args)
     gstate = PyGILState_Ensure();
 
     /* Don't try to execute python code if we are already in exception */
-    if (NULL != PyErr_Occurred())
+    if (NULL == PyErr_Occurred())
     {
         /* Is source object valid ? */
         pyo = PyWeakref_GET_OBJECT(*wref_storage); /* BR */
@@ -614,7 +614,7 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args)
             Py_INCREF(pyo);
 
             res = PyObject_CallMethod(pyo, "_notify_cb", "III", attr, v, ~v); /* NR */
-            DPRINT("PyObject_CallMethod() resulted with value %p (err=%p)\n", res, PyErr_Occurred());
+            DPRINT("PyObject_CallMethod() resulted with value %p-%s (err=%p)\n", res, OBJ_TNAME_SAFE(res), PyErr_Occurred());
 
             if (PyErr_Occurred() && (NULL != gApp))
                 DoMethod(gApp, MUIM_Application_ReturnID, ID_BREAK);
@@ -843,6 +843,8 @@ DISPATCHER(mcc)
 {
     ULONG result;
 
+    //DPRINT("meth: %08x %s\n", msg->MethodID, OCLASS(obj)->cl_ID);
+
     switch (msg->MethodID) {
         /* Protect basic BOOPSI methods */
         case OM_NEW:
@@ -861,6 +863,7 @@ DISPATCHER(mcc)
         default: result = mCheckPython(cl, obj, (APTR)msg);
     }
 
+    //DPRINT("meth: %08x result: %08x\n", msg->MethodID, result);
     return result;
 }
 DISPATCHER_END
@@ -1196,7 +1199,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         PyObject **tuples = PySequence_Fast_ITEMS(fast);
         ULONG i;
 
-        tags = PyMem_Malloc(sizeof(struct TagItem) * n);
+        tags = PyMem_Malloc(sizeof(struct TagItem) * (n+1));
         if (NULL == tags) {
             Py_DECREF(fast);
             return PyErr_NoMemory();
@@ -1223,10 +1226,13 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             PyMem_Free(tags);
             return NULL;
         }
+
+        tags[n].ti_Tag = TAG_DONE;
         
         Py_DECREF(fast);
     } else
         tags = NULL;
+    DPRINT("tags: %p (%lu)\n", tags, n);
 
     /* Allocated a note to save the object reference.
      * It will be used at module cleanup to flush BOOPSI/MUI.

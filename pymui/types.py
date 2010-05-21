@@ -127,10 +127,7 @@ class _PyMUICComplex(PyMUICType):
 
 
 class PyMUICUnionType(_PyMUICComplex, _ct.Union): pass
-class PyMUICArrayType(_PyMUICComplex, _ct.Array):
-    _length_ = 0
-    _type_ = _ct.c_char
-
+class PyMUICArrayType(_PyMUICComplex): pass
 class PyMUICStructureType(_PyMUICComplex, _ct.Structure): pass
 
 

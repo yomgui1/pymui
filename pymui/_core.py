@@ -54,6 +54,8 @@ MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
 MUI_MAXMAX = 10000
 
+_app = None
+
 ## Currently private defines, but very useful
 MUIA_Window_TabletMessages = 0x804217b7
 TABLETA_Dummy        = (TAG_USER + 0x3A000)
@@ -105,7 +107,7 @@ class c_pObject(c_Object.PointerType()):
 
     @classmethod
     def from_value(cl, v):
-        return (cl(_muimaster._ptr2pyboopsi(v)) if v else cl())
+        return cl(_muimaster._ptr2pyboopsi(v))
 
 
 class c_pMUIObject(c_Object.PointerType()):
@@ -127,7 +129,7 @@ class c_pMUIObject(c_Object.PointerType()):
 
     @classmethod
     def from_value(cl, v):
-        return (cl(_muimaster._ptr2pymui(v)) if v else cl())
+        return cl(_muimaster._ptr2pymui(v))
 
 
 class c_Hook(c_PyObject):
@@ -536,6 +538,11 @@ def muimethod(mid):
 def postset_child(self, attr, o):
     o._loosed()
 
+
+def GetApp():
+    return _app
+
+
 #===============================================================================
 
 class PyMUIBase(object):
@@ -737,7 +744,7 @@ class Notify(PyMUIObject, PyMUIBase):
         attr = self._getMAByID(a)
         e = AttributeEvent(self, attr.ctype.from_value(v), nv)
         for o in l:
-            if o.trigvalue is MUIV_EveryTime or long(o.trigvalue) is v:
+            if o.trigvalue == MUIV_EveryTime or long(o.trigvalue) ==  v:
                 if o(e): return
 
     def precreate(self, **kwds):
@@ -982,6 +989,9 @@ class Application(Notify): # TODO: unfinished
     def __init__(self, mainwin=None, **kwds):
         super(Application, self).__init__(**kwds)
 
+        global _app
+        _app = self
+
         self.__mainwin = mainwin
         if mainwin:
             self.AddChild(mainwin)
@@ -989,12 +999,16 @@ class Application(Notify): # TODO: unfinished
 
     def AddChild(self, win):
         assert isinstance(win, Window)
+        if self.__mainwin is None:
+            self.__mainwin = win
         super(Application, self).AddChild(win)
 
     def RemChild(self, win):
         assert isinstance(win, Window)
         super(Application, self).RemChild(win)
         win.Open = False
+        if self.__mainwin._object == win._object:
+            self.__mainwin = None
         # win may be not owned anymore, let user decide to dispose it or re-assign it
 
     def Run(self):
@@ -1002,6 +1016,10 @@ class Application(Notify): # TODO: unfinished
 
     def Quit(self):
         self.ReturnID(MUIV_Application_ReturnID_Quit)
+
+    @property
+    def TopWindow(self):
+        return self.__mainwin
 
     @AboutMUI.alias
     def AboutMUI(self, meth, refwin=None):
@@ -1356,10 +1374,13 @@ class Area(Notify): # TODO: unfinished
 
 #===============================================================================
 
+MUIA_Dtpic_Scale = 0x8042ca4c # Currently private
+
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
 
-    Name = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
+    Name  = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
+    Scale = MAttribute(MUIA_Dtpic_Scale, 'isg',  c_LONG)
 
     def __init__(self, Name=None, **kwds):
         if Name: kwds['Name'] = Name
@@ -1601,7 +1622,7 @@ class Colorfield(Area):
     Green = MAttribute(MUIA_Colorfield_Green, 'isg', c_ULONG)
     Pen   = MAttribute(MUIA_Colorfield_Pen,   '..g', c_ULONG)
     Red   = MAttribute(MUIA_Colorfield_Red,   'isg', c_ULONG)
-    RGB   = MAttribute(MUIA_Colorfield_RGB,   'isg', c_ULONG.PointerType())
+    RGB   = MAttribute(MUIA_Colorfield_RGB,   'isg', c_ULONG.ArrayType(3))
 
 #===============================================================================
 
@@ -2198,8 +2219,10 @@ class Popscreen(Popobject):
 #===============================================================================
 
 _ASL_TB = TAG_USER + 0x80000
-ASLFR_DrawersOnly = _ASL_TB + 47
-ASLFR_TitleText   = _ASL_TB + 1
+ASLFR_TitleText     = _ASL_TB + 1
+ASLFR_InitialFile   = _ASL_TB + 8
+ASLFR_InitialDrawer = _ASL_TB + 9
+ASLFR_DrawersOnly   = _ASL_TB + 47
 
 class Popasl(Popstring):
     CLASSID = MUIC_Popasl
@@ -2209,9 +2232,10 @@ class Popasl(Popstring):
     StopHook  = MAttribute(MUIA_Popasl_StopHook,  'isg', c_Hook, keep=True)
     Type      = MAttribute(MUIA_Popasl_Type,      'i.g', c_ULONG)
 
-    ASLDrawersOnly = MAttribute(ASLFR_DrawersOnly, 'i..', c_BOOL)
-    ASLTitle       = MAttribute(ASLFR_TitleText,   'i..', c_STRPTR, keep=True)
-
+    ASLDrawersOnly   = MAttribute(ASLFR_DrawersOnly,   'i..', c_BOOL)
+    ASLTitle         = MAttribute(ASLFR_TitleText,     'i..', c_STRPTR, keep=True)
+    ASLInitialFile   = MAttribute(ASLFR_InitialFile,   'i..', c_STRPTR)
+    ASLInitialDrawer = MAttribute(ASLFR_InitialDrawer, 'i..', c_STRPTR)
 
     __type_map = {'FileRequest':        0,
                   'FontRequest':        1,
