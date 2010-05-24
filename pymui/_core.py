@@ -713,6 +713,7 @@ class Notify(PyMUIObject, PyMUIBase):
     """
     
     __metaclass__ = MUIMetaClass
+    __notify_cbdict = {}
     CLASSID = MUIC_Notify
 
     ApplicationObject = MAttribute(MUIA_ApplicationObject, '..g', c_pMUIObject)
@@ -740,7 +741,7 @@ class Notify(PyMUIObject, PyMUIBase):
         
     def _notify_cb(self, a, v, nv):
         key = (self, a)
-        l = self.__notify_cbdict[key]
+        l = Notify.__notify_cbdict[key]
         attr = self._getMAByID(a)
         e = AttributeEvent(self, attr.ctype.from_value(v), nv)
         for o in l:
@@ -749,7 +750,6 @@ class Notify(PyMUIObject, PyMUIBase):
 
     def precreate(self, **kwds):
         self._keep_db = {}
-        self.__notify_cbdict = {}
         PyMUIObject.__init__(self)
         PyMUIBase.__init__(self)
         
@@ -784,10 +784,10 @@ class Notify(PyMUIObject, PyMUIBase):
         # Incref self (if it's a temporary object no notification will occures after GC)
         event = AttributeNotify(trigvalue, callback, args, kwds)
         key = (self, attr.id)
-        if key in self.__notify_cbdict:
-            self.__notify_cbdict[key].append(event)
+        if key in Notify.__notify_cbdict:
+            Notify.__notify_cbdict[key].append(event)
         else:
-            self.__notify_cbdict[key] = [ event ]
+            Notify.__notify_cbdict[key] = [ event ]
             self._notify(attr.id)
 
 #===============================================================================
