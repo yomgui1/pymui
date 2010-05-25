@@ -448,7 +448,7 @@ class NList(pymui.Area):
     DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ],
                           retype=None)
 
-    UseImage = MMethod(MUIM_NList_UseImage, [ ('obj': pymui.c_pMUIObject),
+    UseImage = MMethod(MUIM_NList_UseImage, [ ('obj', pymui.c_pMUIObject),
                                               ('imgnum', pymui.c_LONG),
                                               ('flags', pymui.c_ULONG) ],
                        retype=pymui.c_ULONG)
