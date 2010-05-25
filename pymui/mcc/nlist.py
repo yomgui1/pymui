@@ -393,47 +393,47 @@ ALIGN_JUSTIFY   = 0x0400
 ### Methods ###
 
 MUIM_NList_Clear              = 0x9d510070 # GM
+MUIM_NList_ColToColumn        = 0x9d51008f # GM
+MUIM_NList_ColWidth           = 0x9d51008c # GM
+MUIM_NList_ColumnToCol        = 0x9d510091 # GM
+MUIM_NList_Compare            = 0x9d5100A3 # GM $$$Sensei
+MUIM_NList_Construct          = 0x9d5100A1 # GM $$$Sensei
+MUIM_NList_ContextMenuBuild   = 0x9d51008d # GM
+MUIM_NList_CopyTo             = 0x9d510087 # GM
+MUIM_NList_CopyToClip         = 0x9d51007f # GM
 MUIM_NList_CreateImage        = 0x9d510071 # GM
 MUIM_NList_DeleteImage        = 0x9d510072 # GM
+MUIM_NList_Destruct           = 0x9d5100A2 # GM $$$Sensei
+MUIM_NList_Display            = 0x9d5100A4 # GM $$$Sensei
+MUIM_NList_DoMethod           = 0x9d51008b # GM
+MUIM_NList_DropDraw           = 0x9d510089 # GM
+MUIM_NList_DropEntryDrawErase = 0x9d51008e # GM
+MUIM_NList_DropType           = 0x9d510088 # GM
 MUIM_NList_Exchange           = 0x9d510073 # GM
 MUIM_NList_GetEntry           = 0x9d510074 # GM
+MUIM_NList_GetEntryInfo       = 0x9d510084 # GM
+MUIM_NList_GetPos             = 0x9d510096 # GM
+MUIM_NList_GetSelectInfo      = 0x9d510086 # GM
 MUIM_NList_Insert             = 0x9d510075 # GM
 MUIM_NList_InsertSingle       = 0x9d510076 # GM
+MUIM_NList_InsertSingleWrap   = 0x9d510083 # GM
+MUIM_NList_InsertWrap         = 0x9d510082 # GM
 MUIM_NList_Jump               = 0x9d510077 # GM
 MUIM_NList_Move               = 0x9d510078 # GM
 MUIM_NList_NextSelected       = 0x9d510079 # GM
-MUIM_NList_Redraw             = 0x9d51007a # GM
-MUIM_NList_Remove             = 0x9d51007b # GM
-MUIM_NList_Select             = 0x9d51007c # GM
-MUIM_NList_Sort               = 0x9d51007d # GM
-MUIM_NList_TestPos            = 0x9d51007e # GM
-MUIM_NList_CopyToClip         = 0x9d51007f # GM
-MUIM_NList_UseImage           = 0x9d510080 # GM
-MUIM_NList_ReplaceSingle      = 0x9d510081 # GM
-MUIM_NList_InsertWrap         = 0x9d510082 # GM
-MUIM_NList_InsertSingleWrap   = 0x9d510083 # GM
-MUIM_NList_GetEntryInfo       = 0x9d510084 # GM
-MUIM_NList_GetSelectInfo      = 0x9d510086 # GM
-MUIM_NList_CopyTo             = 0x9d510087 # GM
-MUIM_NList_DropType           = 0x9d510088 # GM
-MUIM_NList_DropDraw           = 0x9d510089 # GM
-MUIM_NList_RedrawEntry        = 0x9d51008a # GM
-MUIM_NList_DoMethod           = 0x9d51008b # GM
-MUIM_NList_ColWidth           = 0x9d51008c # GM
-MUIM_NList_ContextMenuBuild   = 0x9d51008d # GM
-MUIM_NList_DropEntryDrawErase = 0x9d51008e # GM
-MUIM_NList_ColToColumn        = 0x9d51008f # GM
-MUIM_NList_ColumnToCol        = 0x9d510091 # GM
-MUIM_NList_Sort2              = 0x9d510092 # GM
 MUIM_NList_PrevSelected       = 0x9d510093 # GM
-MUIM_NList_SetColumnCol       = 0x9d510094 # GM
-MUIM_NList_Sort3              = 0x9d510095 # GM
-MUIM_NList_GetPos             = 0x9d510096 # GM
+MUIM_NList_Redraw             = 0x9d51007a # GM
+MUIM_NList_RedrawEntry        = 0x9d51008a # GM
+MUIM_NList_Remove             = 0x9d51007b # GM
+MUIM_NList_ReplaceSingle      = 0x9d510081 # GM
+MUIM_NList_Select             = 0x9d51007c # GM
 MUIM_NList_SelectChange       = 0x9d5100A0 # GM
-MUIM_NList_Construct          = 0x9d5100A1 # GM $$$Sensei
-MUIM_NList_Destruct           = 0x9d5100A2 # GM $$$Sensei
-MUIM_NList_Compare            = 0x9d5100A3 # GM $$$Sensei
-MUIM_NList_Display            = 0x9d5100A4 # GM $$$Sensei
+MUIM_NList_SetColumnCol       = 0x9d510094 # GM
+MUIM_NList_Sort               = 0x9d51007d # GM
+MUIM_NList_Sort2              = 0x9d510092 # GM
+MUIM_NList_Sort3              = 0x9d510095 # GM
+MUIM_NList_TestPos            = 0x9d51007e # GM
+MUIM_NList_UseImage           = 0x9d510080 # GM
 
 ### Class ###
 
@@ -443,10 +443,21 @@ class NList(pymui.Area):
     MinLineHeight = MAttribute(MUIA_NList_MinLineHeight, 'is.', pymui.c_LONG)
 
     CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_pMUIObject),
-                                                    ('flags', pymui.c_ULONG) ], pymui.c_APTR)
-    DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ], retype=None)
+                                                    ('flags', pymui.c_ULONG) ],
+                          pymui.c_APTR)
+    DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ],
+                          retype=None)
+
+    UseImage = MMethod(MUIM_NList_UseImage, [ ('obj': pymui.c_pMUIObject),
+                                              ('imgnum', pymui.c_LONG),
+                                              ('flags', pymui.c_ULONG) ],
+                       retype=pymui.c_ULONG)
 
     @CreateImage.alias
     def CreateImage(self, meth, obj, flags=0):
         return meth(self, obj, flags)
 
+
+    @UseImage.alias
+    def UseImage(self, meth, obj, imgnum, flags=0):
+        return meth(self, obj, imgnum, flags)
