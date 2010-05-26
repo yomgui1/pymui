@@ -76,16 +76,18 @@ def MAKE_ID(*v):
     return (ord(v[0])<<24)|(ord(v[1])<<16)|(ord(v[2])<<8)|ord(v[3])
 
 
-class c_Object(c_PyObject):
-    def __init__(self, x=None):
+class c_Object(c_ULONG):
+    def __new__(cl, x=None):
         if x is None:
-            super(c_Object, self).__init__()
-        else:
-            assert isinstance(x, PyBOOPSIObject)
-            super(c_Object, self).__init__(x)
+            return c_ULONG.__new__(cl)
+        assert isinstance(x, PyBOOPSIObject)
+        return cl.from_address(x._object)
+
+    def __init__(self, x=None):
+        c_ULONG.__init__(self)
 
     def __long__(self):
-        return self.value._object
+        raise TypeError('c_Object instance cannot be transformed as long value')
 
 
 class c_pObject(c_Object.PointerType()):
@@ -97,11 +99,8 @@ class c_pObject(c_Object.PointerType()):
         else:
             super(c_pObject, self).__init__(c_Object(x))
 
-    def __long__(self):
-        return long(c_Object.from_address(self.value))
-
     def __get_contents(self):
-        return c_Object.from_address(self.value).value
+        return _muimaster._ptr2pyboopsi(long(self))
 
     contents = property(fget=__get_contents)
 
@@ -119,11 +118,8 @@ class c_pMUIObject(c_Object.PointerType()):
         else:
             super(c_pMUIObject, self).__init__(c_Object(x))
 
-    def __long__(self):
-        return long(c_Object.from_address(self.value))
-
     def __get_contents(self):
-        return c_Object.from_address(self.value).value
+        return _muimaster._ptr2pymui(long(self))
 
     contents = property(fget=__get_contents)
 
@@ -201,6 +197,14 @@ def DoRequest(app=None, win=None, title=None, gadgets=None, format=None, *args):
         assert isinstance(win, Window)
         win = win._object
     return _muimaster.request(app, win, title, gadgets, format % args)
+
+
+def postset_child(self, attr, o):
+    o._loosed()
+
+
+def GetApp():
+    return _app
 
 
 ################################################################################
@@ -535,14 +539,6 @@ def muimethod(mid):
     return wrapper
 
 
-def postset_child(self, attr, o):
-    o._loosed()
-
-
-def GetApp():
-    return _app
-
-
 #===============================================================================
 
 class PyMUIBase(object):
@@ -597,6 +593,7 @@ class PyMUIBase(object):
         except KeyError:
             # lookup in super classes
             for b in cl.__bases__:
+                if not isinstance(b, PyMUIBase): continue
                 try:
                     return b._getMMByName(name)
                 except:

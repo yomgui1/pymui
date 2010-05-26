@@ -2560,20 +2560,19 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     STRPTR init_drawer = NULL;
     STRPTR init_pat = NULL;
     UBYTE save = FALSE;
+    ULONG dummy;
 
     if (!PyArg_ParseTuple(args, "Os|zzb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save))
         return NULL;
 
-    if ((PyObject *)pyo == Py_None)
-        mo = NULL;
-    else
-        mo = PyBOOPSIObject_GetObject(pyo);
+    mo = PyBOOPSIObject_GetObject(pyo);
+    if (NULL == mo)
+        return NULL;
 
-    win = _win(mo);
-    if (NULL == win) {
+    if (get(mo, MUIA_Window_Window, &dummy))
         win = mo;
-        //get(mo, MUIA_WindowObject, &win);
-    }
+    else
+        win = _win(mo);
 
     DPRINT("Obj %p-'%s' (mo=%p, win=%p)\n", pyo, OBJ_TNAME(pyo), mo, win);
     filename = getfilename(win, title, init_drawer, init_pat, save);

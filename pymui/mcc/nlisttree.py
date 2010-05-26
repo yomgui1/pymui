@@ -149,32 +149,32 @@ class c_TestPosResult(pymui.PyMUICStructureType):
     
 ### Methods ###
 
-MUIM_NListtree_Open         = 0xfec81101
+MUIM_NListtree_Active       = 0xfec81115  # *** Method which gives the active node/number.
+MUIM_NListtree_Clear        = 0xfec8111b  # *** Clear complete tree.
 MUIM_NListtree_Close        = 0xfec81102
-MUIM_NListtree_Insert       = 0xfec81103
-MUIM_NListtree_Remove       = 0xfec81104
+MUIM_NListtree_Copy         = 0xfec81113
+MUIM_NListtree_CopyToClip   = 0xfec81119  # *** Copy an entry or part to the clipboard.
+MUIM_NListtree_DoubleClick  = 0xfec81116  # *** Occurs on every double click.
+MUIM_NListtree_DropDraw     = 0xfec8111f  # ***
+MUIM_NListtree_DropType     = 0xfec8111e  # ***
 MUIM_NListtree_Exchange     = 0xfec81105
-MUIM_NListtree_Move         = 0xfec81106
-MUIM_NListtree_Rename       = 0xfec81107
 MUIM_NListtree_FindName     = 0xfec81108
+MUIM_NListtree_FindUserData = 0xfec8111a  # *** Find a node upon user data.
 MUIM_NListtree_GetEntry     = 0xfec81109
 MUIM_NListtree_GetNr        = 0xfec8110a
+MUIM_NListtree_Insert       = 0xfec81103
+MUIM_NListtree_InsertStruct = 0xfec81114  # *** Insert a struct (like a path) into the list.
+MUIM_NListtree_Move         = 0xfec81106
+MUIM_NListtree_MultiTest    = 0xfec81111
+MUIM_NListtree_NextSelected = 0xfec81110
+MUIM_NListtree_Open         = 0xfec81101
+MUIM_NListtree_PrevSelected = 0xfec81118  # *** Like reverse NextSelected.
+MUIM_NListtree_Redraw       = 0xfec8110d
+MUIM_NListtree_Remove       = 0xfec81104
+MUIM_NListtree_Rename       = 0xfec81107
+MUIM_NListtree_Select       = 0xfec81112
 MUIM_NListtree_Sort         = 0xfec8110b
 MUIM_NListtree_TestPos      = 0xfec8110c
-MUIM_NListtree_Redraw       = 0xfec8110d
-MUIM_NListtree_NextSelected = 0xfec81110
-MUIM_NListtree_MultiTest    = 0xfec81111
-MUIM_NListtree_Select       = 0xfec81112
-MUIM_NListtree_Copy         = 0xfec81113
-MUIM_NListtree_InsertStruct = 0xfec81114  # *** Insert a struct (like a path) into the list.
-MUIM_NListtree_Active       = 0xfec81115  # *** Method which gives the active node/number.
-MUIM_NListtree_DoubleClick  = 0xfec81116  # *** Occurs on every double click.
-MUIM_NListtree_PrevSelected = 0xfec81118  # *** Like reverse NextSelected.
-MUIM_NListtree_CopyToClip   = 0xfec81119  # *** Copy an entry or part to the clipboard.
-MUIM_NListtree_FindUserData = 0xfec8111a  # *** Find a node upon user data.
-MUIM_NListtree_Clear        = 0xfec8111b  # *** Clear complete tree.
-MUIM_NListtree_DropType     = 0xfec8111e  # ***
-MUIM_NListtree_DropDraw     = 0xfec8111f  # ***
 
 ### Special method values ###
 
@@ -543,3 +543,4 @@ class NListtree(NList):
             print item.tn_Name.contents, hex(long(x)), hex(item.tn_User.value)
             raise
         return x.value
+
