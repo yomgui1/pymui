@@ -207,6 +207,13 @@ def GetApp():
     return _app
 
 
+def GetFilename(win, title, drawer='RAM:', pattern='#?', save=False, multiple=False):
+    assert isinstance(win, Window)
+    return _muimaster.getfilename(win, title, drawer, pattern, save, multiple)
+
+del getfilename
+
+
 ################################################################################
 #### PyMUI internal base classes and routines
 ################################################################################

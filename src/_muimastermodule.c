@@ -667,24 +667,27 @@ IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *
 //-
 //+ getfilename
 /* Stolen from MUI psi.c demo */
-STRPTR
-getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL save)
+LONG
+getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat,
+            BOOL save, BOOL multiple)
 {
-    static char buf[MAXPATHLEN];
     struct FileRequester *req;
     struct Window *w = NULL;
     static LONG left=-1,top=-1,width=-1,height=-1;
     Object *app = NULL;
-    char *res = NULL;
+    LONG res=0;
     static const struct Hook IntuiMsgHook;
 
     INIT_HOOK(&IntuiMsgHook, IntuiMsgFunc)
 
     get(win, MUIA_ApplicationObject, &app);
-    if (NULL != app) {
+    if (NULL != app)
+    {
         get(win, MUIA_Window_Window, &w);
-        if (NULL != win) {
-            if (-1 == left) {
+        if (NULL != win)
+        {
+            if (-1 == left)
+            {
                 left   = w->LeftEdge + w->BorderLeft + 2;
                 top    = w->TopEdge + w->BorderTop + 2;
                 width  = MAX(400, w->Width - w->BorderLeft - w->BorderRight - 4);
@@ -711,15 +714,75 @@ getfilename(Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat, BOOL
                                           ASLFR_RejectIcons    , TRUE,
                                           ASLFR_UserData       , (ULONG)app,
                                           ASLFR_IntuiMsgFunc   , (ULONG)&IntuiMsgHook,
+                                          ASLFR_DoMultiSelect  , multiple,
                                           TAG_DONE);
-            if (NULL != req) {
+            if (NULL != req)
+            {
                 set(app, MUIA_Application_Sleep, TRUE);
 
-                if (MUI_AslRequestTags(req, TAG_DONE)) {
-                    if (NULL != req->fr_File) {
-                        res = buf;
-                        stccpy(buf, req->fr_Drawer, sizeof(buf));
-                        AddPart(buf, req->fr_File, sizeof(buf));
+                if (MUI_AslRequestTags(req, TAG_DONE))
+                {
+                    if (multiple && (req->fr_NumArgs > 0))
+                    {
+                        int i;
+
+                        *results = AllocVec(sizeof(STRPTR) * req->fr_NumArgs,
+                                            MEMF_PUBLIC|MEMF_SEM_PROTECTED);
+                        if (NULL != *result)
+                        {
+                            for (i=0; i < req->fr_NumArgs; i++)
+                            {
+                                BYTE *name = req->fr_ArgList[i].wa_Name;
+                            
+                                if (NULL != name)
+                                {
+                                    ULONG size = strlen(req->fr_Drawer) + strlen(name) + 1;
+                                    STRPTR str = AllocVec(size, MEMF_PUBLIC|MEMF_SEM_PROTECTED);
+
+                                    if (NULL != str)
+                                    {
+                                        strncpy(str, req->fr_Drawer, size);
+                                        AddPart(str, name, size);
+                                        (*results)[i] = str;
+                                        res++;
+                                    }
+                                    else
+                                        DPRINT("AllocVec() failed for string copy\n");
+                                }
+                            }
+
+                            if (0 == res)
+                                FreeVec(*results);
+                        }
+                        else
+                            DPRINT("AllocVec() failed for %lu strings\n", req->fr_NumArgs);
+                    }
+                    else
+                    {
+                        if (NULL != req->fr_File)
+                        {
+                            *results = AllocVec(sizeof(STRPTR), MEMF_PUBLIC|MEMF_SEM_PROTECTED);
+                            if (NULL != *results)
+                            {
+                                ULONG size = strlen(req->fr_File) + strlen(req->fr_Drawer) + 1;
+                                STRPTR str = AllocVec(size, MEMF_PUBLIC|MEMF_SEM_PROTECTED);
+
+                                if (NULL != str)
+                                {
+                                    strncpy(str, req->fr_Drawer, size);
+                                    AddPart(str, req->fr_File, size);
+                                    (*results)[0] = str;
+                                    res = 1;
+                                }
+                                else
+                                {
+                                    DPRINT("AllocVec() failed for string copy\n");
+                                    FreeVec(*results);
+                                }
+                            }
+                            else
+                                DPRINT("AllocVec() failed for %lu strings\n", req->fr_NumArgs);
+                        }
                     }
 
                     left   = req->fr_LeftEdge;
@@ -2555,14 +2618,15 @@ static PyObject *
 _muimaster_getfilename(PyObject *self, PyObject *args)
 {
     PyBOOPSIObject *pyo;
+    PyObject *res;
     Object *mo, *win;
-    STRPTR filename, title;
+    STRPTR *results, title;
     STRPTR init_drawer = NULL;
     STRPTR init_pat = NULL;
-    UBYTE save = FALSE;
-    ULONG dummy;
+    UBYTE save = FALSE, multiple = FALSE;
+    ULONG dummy, count;
 
-    if (!PyArg_ParseTuple(args, "Os|zzb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save))
+    if (!PyArg_ParseTuple(args, "Os|zzbb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save, &multiple))
         return NULL;
 
     mo = PyBOOPSIObject_GetObject(pyo);
@@ -2575,11 +2639,22 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
         win = _win(mo);
 
     DPRINT("Obj %p-'%s' (mo=%p, win=%p)\n", pyo, OBJ_TNAME(pyo), mo, win);
-    filename = getfilename(win, title, init_drawer, init_pat, save);
-    if (NULL == filename)
+    count = getfilename(&results, win, title, init_drawer, init_pat, save, multiple);
+    if (count == 0)
         Py_RETURN_NONE;
 
-    return PyString_FromString(filename);
+    res = PyTuple_New(count);
+    if (NULL != res)
+    {
+        for (i=0; i < count; i++)
+            PyTuple_SET_ITEM(res, i, PyString_FromString(results[i]));
+    }
+
+    for (i=0; i < count; i++)
+        FreeVec(results[i]);
+    FreeVec(results);
+
+    return res;
 }
 //-
 //+ _muimaster_request
