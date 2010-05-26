@@ -440,23 +440,33 @@ MUIM_NList_UseImage           = 0x9d510080 # GM
 class NList(pymui.Area):
     CLASSID = MUIC_NList
 
+    Entries       = MAttribute(MUIA_NList_Entries,       '..g', pymui.c_LONG)
     MinLineHeight = MAttribute(MUIA_NList_MinLineHeight, 'is.', pymui.c_LONG)
+    Quiet         = MAttribute(MUIA_NList_Quiet,         '.s.', pymui.c_BOOL)
 
+    Clear       = MMethod(MUIM_NList_Clear, retype=None)
     CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_pMUIObject),
                                                     ('flags', pymui.c_ULONG) ],
                           pymui.c_APTR)
     DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ],
                           retype=None)
-
-    UseImage = MMethod(MUIM_NList_UseImage, [ ('obj', pymui.c_pMUIObject),
-                                              ('imgnum', pymui.c_LONG),
-                                              ('flags', pymui.c_ULONG) ],
-                       retype=pymui.c_ULONG)
+    InsertSingle = MMethod(MUIM_NList_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ])
+    UseImage    = MMethod(MUIM_NList_UseImage, [ ('obj', pymui.c_pMUIObject),
+                                                 ('imgnum', pymui.c_LONG),
+                                                 ('flags', pymui.c_ULONG) ],
+                          retype=pymui.c_ULONG)
 
     @CreateImage.alias
     def CreateImage(self, meth, obj, flags=0):
         return meth(self, obj, flags)
 
+    @InsertSingle.alias
+    def InsertSingle(self, meth, entry, pos=MUIV_NList_Insert_Bottom):
+        return meth(self, entry, pos)
+
+    def InsertSingleString(self, s, pos=MUIV_List_Insert_Bottom):
+        x = c_STRPTR(s) # keep valid the s object until the return
+        return self.InsertSingle(x, pos)
 
     @UseImage.alias
     def UseImage(self, meth, obj, imgnum, flags=0):
