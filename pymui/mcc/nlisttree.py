@@ -31,30 +31,30 @@ MUIC_NListtree = "NListtree.mcc"
 
 MUIA_NListtree_Active           = 0xfec81201  # *** [.SGN]
 MUIA_NListtree_ActiveList       = 0xfec81202  # *** [..GN]
+MUIA_NListtree_AutoVisible      = 0xfec81211  # *** [ISG.]
 MUIA_NListtree_CloseHook        = 0xfec81203  # *** [IS..]
+MUIA_NListtree_CompareHook      = 0xfec8120e  # *** [IS..]
 MUIA_NListtree_ConstructHook    = 0xfec81204  # *** [IS..]
+MUIA_NListtree_CopyToClipHook   = 0xfec81217  # *** [IS..]
 MUIA_NListtree_DestructHook     = 0xfec81205  # *** [IS..]
 MUIA_NListtree_DisplayHook      = 0xfec81206  # *** [IS..]
 MUIA_NListtree_DoubleClick      = 0xfec81207  # *** [ISGN]
 MUIA_NListtree_DragDropSort     = 0xfec81208  # *** [IS..]
-MUIA_NListtree_DupNodeName      = 0xfec81209  # *** [IS..]
-MUIA_NListtree_EmptyNodes       = 0xfec8120a  # *** [IS..]
-MUIA_NListtree_Format           = 0xfec8120b  # *** [IS..]
-MUIA_NListtree_OpenHook         = 0xfec8120c  # *** [IS..]
-MUIA_NListtree_Quiet            = 0xfec8120d  # *** [.S..]
-MUIA_NListtree_CompareHook      = 0xfec8120e  # *** [IS..]
-MUIA_NListtree_Title            = 0xfec8120f  # *** [IS..]
-MUIA_NListtree_TreeColumn       = 0xfec81210  # *** [ISG.]
-MUIA_NListtree_AutoVisible      = 0xfec81211  # *** [ISG.]
-MUIA_NListtree_FindNameHook     = 0xfec81212  # *** [IS..]
-MUIA_NListtree_MultiSelect      = 0xfec81213  # *** [I...]
-MUIA_NListtree_MultiTestHook    = 0xfec81214  # *** [IS..]
-MUIA_NListtree_CopyToClipHook   = 0xfec81217  # *** [IS..]
-MUIA_NListtree_DropType         = 0xfec81218  # *** [..G.]
 MUIA_NListtree_DropTarget       = 0xfec81219  # *** [..G.]
 MUIA_NListtree_DropTargetPos    = 0xfec8121a  # *** [..G.]
+MUIA_NListtree_DropType         = 0xfec81218  # *** [..G.]
+MUIA_NListtree_DupNodeName      = 0xfec81209  # *** [IS..]
+MUIA_NListtree_EmptyNodes       = 0xfec8120a  # *** [IS..]
+MUIA_NListtree_FindNameHook     = 0xfec81212  # *** [IS..]
 MUIA_NListtree_FindUserDataHook = 0xfec8121b  # *** [IS..]
+MUIA_NListtree_Format           = 0xfec8120b  # *** [IS..]
+MUIA_NListtree_MultiSelect      = 0xfec81213  # *** [I...]
+MUIA_NListtree_MultiTestHook    = 0xfec81214  # *** [IS..]
+MUIA_NListtree_OpenHook         = 0xfec8120c  # *** [IS..]
+MUIA_NListtree_Quiet            = 0xfec8120d  # *** [.S..]
 MUIA_NListtree_ShowTree         = 0xfec8121c  # *** [ISG.]
+MUIA_NListtree_Title            = 0xfec8120f  # *** [IS..]
+MUIA_NListtree_TreeColumn       = 0xfec81210  # *** [ISG.]
 
 ### Special attribute values ###
 
@@ -431,6 +431,11 @@ class NListtree(NList):
     Open     = MMethod(MUIM_NListtree_Open, [ ('ListNode', c_pNListtree_TreeNode),
                                               ('TreeNode', c_pNListtree_TreeNode),
                                               ('Flags',    pymui.c_ULONG) ], retype=None)
+    Move     = MMethod(MUIM_NListtree_Move, [ ('OldListNode', c_pNListtree_TreeNode),
+                                              ('OldTreeNode', c_pNListtree_TreeNode),
+                                              ('NewListNode', c_pNListtree_TreeNode),
+                                              ('NewTreeNode', c_pNListtree_TreeNode),
+                                              ('Flags',    pymui.c_ULONG) ])
     Remove   = MMethod(MUIM_NListtree_Remove, [ ('ListNode', c_pNListtree_TreeNode),
                                                 ('TreeNode', c_pNListtree_TreeNode),
                                                 ('Flags',    pymui.c_ULONG) ])
@@ -496,6 +501,13 @@ class NListtree(NList):
                flags=0):
         tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
         meth(self, tnode, text, flags)
+
+    @Move.alias
+    def Move(self, meth,
+             oldlistnode, oldtreenode,
+             newlistnode, newtreenode,
+             flags=MUIV_NListtree_Move_Flag_KeepStructure):
+        return meth(self, oldlistnode, oldtreenode, newlistnode, newtreenode, flags)
 
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
