@@ -419,10 +419,16 @@ class NListtree(NList):
     Close    = MMethod(MUIM_NListtree_Close, [ ('ListNode', c_pNListtree_TreeNode),
                                                ('TreeNode', c_pNListtree_TreeNode),
                                                ('Flags',    pymui.c_ULONG) ], retype=None)
+    Exchange = MMethod(MUIM_NListtree_Exchange, [ ('listnode1', c_pNListtree_TreeNode),
+                                                  ('treenode1', c_pNListtree_TreeNode),
+                                                  ('listnode2', c_pNListtree_TreeNode),
+                                                  ('treenode2', c_pNListtree_TreeNode),
+                                                  ('Flags',    pymui.c_ULONG) ],
+                                                  rettype=None)
     GetEntry = MMethod(MUIM_NListtree_GetEntry, [ ('Node',     c_pNListtree_TreeNode),
                                                   ('Position', pymui.c_LONG),
-                                                  ('Flags',    pymui.c_ULONG),
-                                                ], c_NListtree_TreeNode)
+                                                  ('Flags',    pymui.c_ULONG) ],
+                                                  rettype=c_NListtree_TreeNode)
     Insert   = MMethod(MUIM_NListtree_Insert, [ ('Name',     pymui.c_STRPTR),
                                                 ('User',     pymui.c_APTR),
                                                 ('ListNode', c_pNListtree_TreeNode),
@@ -443,18 +449,31 @@ class NListtree(NList):
                                                 ('newname',  pymui.c_STRPTR),
                                                 ('Flags',    pymui.c_ULONG) ])
 
+    def __asnode(self, x):
+        return (x if isinstance(x, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(x))
+
     @Clear.alias
     def Clear(self, meth):
         meth(self, _c_NListtree_TreeNode_NULL, 0)
         self._ClearAllPyData()
+
+    @Exchange.alias
+    def Exchange(self, meth,
+                 listnode1, treenode1,
+                 listnode2, treenode2,
+                 flags=0):
+        return meth(self,
+                    self.__asnode(listnode1),
+                    self.__asnode(treenode1),
+                    self.__asnode(listnode2),
+                    self.__asnode(treenode2), flags)
 
     @GetEntry.alias
     def GetEntry(self, meth,
                  node=MUIV_NListtree_GetEntry_ListNode_Active,
                  position=MUIV_NListtree_GetEntry_Position_Active,
                  flags=0):
-        node = (node if isinstance(node, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(node))
-        item = meth(self, node, position, flags)
+        item = meth(self, self.__asnode(node), position, flags)
         return (item if long(item) else None)
 
     @Insert.alias
@@ -462,9 +481,7 @@ class NListtree(NList):
                lnode=MUIV_NListtree_Insert_ListNode_Root,
                pnode=MUIV_NListtree_Insert_PrevNode_Tail,
                flags=0, user=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
-        pnode = (pnode if isinstance(pnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(pnode))
-        item = meth(self, name, user, lnode, pnode, flags)
+        item = meth(self, name, user, self.__asnode(lnode), self.__asnode(pnode), flags)
         return (item if long(item) else None)
 
     @Open.alias
@@ -472,42 +489,39 @@ class NListtree(NList):
              lnode=MUIV_NListtree_Open_ListNode_Active,
              tnode=MUIV_NListtree_Open_TreeNode_All,
              flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
-        meth(self, lnode, tnode, flags)
+        meth(self, self.__asnode(lnode), self.__asnode(tnode), flags)
 
     @Close.alias
     def Close(self, meth,
              lnode=MUIV_NListtree_Close_ListNode_Active,
              tnode=MUIV_NListtree_Close_TreeNode_All,
              flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
-        meth(self, lnode, tnode, flags)
+        meth(self, self.__asnode(lnode), self.__asnode(tnode), flags)
 
     @Remove.alias
     def Remove(self, meth,
                lnode=MUIV_NListtree_Remove_ListNode_Active,
                tnode=MUIV_NListtree_Remove_TreeNode_All,
                flags=0):
-        lnode = (lnode if isinstance(lnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(lnode))
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
-        meth(self, lnode, tnode, flags)
+        meth(self, self.__asnode(lnode), self.__asnode(tnode), flags)
 
     @Rename.alias
     def Rename(self, meth,
                tnode=MUIV_NListtree_Rename_TreeNode_Active,
                text='',
                flags=0):
-        tnode = (tnode if isinstance(tnode, c_NListtree_TreeNode) else c_NListtree_TreeNode.from_value(tnode))
-        meth(self, tnode, text, flags)
+        meth(self, self.__asnode(tnode), text, flags)
 
     @Move.alias
     def Move(self, meth,
              oldlistnode, oldtreenode,
              newlistnode, newtreenode,
              flags=MUIV_NListtree_Move_Flag_KeepStructure):
-        return meth(self, oldlistnode, oldtreenode, newlistnode, newtreenode, flags)
+        return meth(self,
+                    self.__asnode(oldlistnode),
+                    self.__asnode(oldtreenode),
+                    self.__asnode(newlistnode),
+                    self.__asnode(newtreenode), flags)
 
     def __init__(self, *a, **k):
         super(NListtree, self).__init__(*a, **k)
@@ -521,6 +535,12 @@ class NListtree(NList):
     def GetLastChild(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
         return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Tail)
     
+    def GetNextItem(self, item=MUIV_NListtree_GetEntry_ListNode_Active):
+        return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Next)
+
+    def GetPreviousItem(self, item=MUIV_NListtree_GetEntry_ListNode_Active):
+        return self.GetEntry(item, MUIV_NListtree_GetEntry_Position_Previous)
+
     def ItemHasChildren(self, item=MUIV_NListtree_GetEntry_ListNode_Root):
         return bool(self.GetFirstChild(item))
 
@@ -544,15 +564,11 @@ class NListtree(NList):
         x = pymui.c_PyObject(data)
         item.tn_User = long(x)
         self.__data[long(item)] = x
-        assert long(x), item.tn_User.value
+        assert long(x) == item.tn_User.value
 
     def GetPyData(self, item):
         if not long(item): return None
         x = self.__data.get(long(item))
-        try:
-            assert long(x) == item.tn_User.value
-        except:
-            print item.tn_Name.contents, hex(long(x)), hex(item.tn_User.value)
-            raise
+        assert long(x) == item.tn_User.value
         return x.value
 

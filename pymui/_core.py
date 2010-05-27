@@ -1273,6 +1273,8 @@ class c_EventHandlerNode(PyMUICStructureType):
                  ('ehn_Class', c_APTR),
                  ('ehn_Events', c_ULONG) ]
 
+MUIA_DoubleClick = 0x8042f057 # private
+
 class Area(Notify): # TODO: unfinished
     CLASSID = MUIC_Area
 
@@ -1284,6 +1286,7 @@ class Area(Notify): # TODO: unfinished
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
     Disabled           = MAttribute(MUIA_Disabled           , 'isg', c_BOOL)
     DoubleBuffer       = MAttribute(MUIA_DoubleBuffer       , 'isg', c_BOOL)
+    DoubleClick        = MAttribute(MUIA_DoubleClick        , '..g', c_LONG)
     Draggable          = MAttribute(MUIA_Draggable          , 'isg', c_BOOL)
     Dropable           = MAttribute(MUIA_Dropable           , 'isg', c_BOOL)
     FillArea           = MAttribute(MUIA_FillArea           , 'is.', c_BOOL)
@@ -1336,7 +1339,10 @@ class Area(Notify): # TODO: unfinished
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
         if v is not None:
-            kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
+            if isinstance(v, (long, int)):
+                kwds['InnerLeft'] = kwds['InnerRight'] = kwds['InnerTop'] = kwds['InnerBottom'] = v
+            else:
+                kwds['InnerLeft'], kwds['InnerRight'], kwds['InnerTop'], kwds['InnerBottom'] = v
         g = globals()
         frame = kwds.get('Frame', None)
         if isinstance(frame, str):
@@ -1378,13 +1384,13 @@ class Area(Notify): # TODO: unfinished
 
 #===============================================================================
 
-MUIA_Dtpic_Scale = 0x8042ca4c # Currently private
+MUIA_Dtpic_Scale    = 0x8042ca4c # Currently private
 
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
 
-    Name  = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
-    Scale = MAttribute(MUIA_Dtpic_Scale, 'isg',  c_LONG)
+    Name     = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
+    Scale    = MAttribute(MUIA_Dtpic_Scale, 'isg',  c_LONG)
 
     def __init__(self, Name=None, **kwds):
         if Name: kwds['Name'] = Name

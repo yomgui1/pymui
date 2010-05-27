@@ -81,6 +81,8 @@ class PyMUICType(object):
     def __long__(self):
         raise NotImplemented("type doesn't implement __long__ method")
 
+    def __notzero__(self):
+        return long(self)
 
 #===============================================================================
 # Sub-categories.

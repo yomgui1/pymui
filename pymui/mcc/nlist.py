@@ -440,21 +440,29 @@ MUIM_NList_UseImage           = 0x9d510080 # GM
 class NList(pymui.Area):
     CLASSID = MUIC_NList
 
+    Active        = MAttribute(MUIA_NList_Active,        'is.', pymui.c_LONG)
+    ConstructHook = MAttribute(MUIA_NList_ConstructHook, 'is.', pymui.c_Hook)
+    DestructHook  = MAttribute(MUIA_NList_DestructHook,  'is.', pymui.c_Hook)
+    DoubleClick   = MAttribute(MUIA_NList_DoubleClick,   '..g', pymui.c_LONG)
     Entries       = MAttribute(MUIA_NList_Entries,       '..g', pymui.c_LONG)
     MinLineHeight = MAttribute(MUIA_NList_MinLineHeight, 'is.', pymui.c_LONG)
     Quiet         = MAttribute(MUIA_NList_Quiet,         '.s.', pymui.c_BOOL)
 
-    Clear       = MMethod(MUIM_NList_Clear, retype=None)
-    CreateImage = MMethod(MUIM_NList_CreateImage, [ ('obj', pymui.c_pMUIObject),
-                                                    ('flags', pymui.c_ULONG) ],
-                          pymui.c_APTR)
-    DeleteImage = MMethod(MUIM_NList_DeleteImage, [ ('obj', pymui.c_APTR) ],
-                          retype=None)
-    InsertSingle = MMethod(MUIM_NList_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ])
-    UseImage    = MMethod(MUIM_NList_UseImage, [ ('obj', pymui.c_pMUIObject),
-                                                 ('imgnum', pymui.c_LONG),
-                                                 ('flags', pymui.c_ULONG) ],
-                          retype=pymui.c_ULONG)
+    Clear        = MMethod(MUIM_NList_Clear, retype=None)
+    CreateImage  = MMethod(MUIM_NList_CreateImage,  [ ('obj', pymui.c_pMUIObject),
+                                                      ('flags', pymui.c_ULONG) ], pymui.c_APTR)
+    DeleteImage  = MMethod(MUIM_NList_DeleteImage,  [ ('obj', pymui.c_APTR) ], retype=None)
+    GetEntry     = MMethod(MUIM_NList_GetEntry,     [ ('pos', pymui.c_LONG), ('entry', pymui.c_APTR.PointerType()) ])
+    InsertSingle = MMethod(MUIM_NList_InsertSingle, [ ('entry', pymui.c_APTR), ('pos', pymui.c_LONG) ])
+    UseImage     = MMethod(MUIM_NList_UseImage,     [ ('obj', pymui.c_pMUIObject),
+                                                      ('imgnum', pymui.c_LONG),
+                                                      ('flags', pymui.c_ULONG) ], retype=pymui.c_ULONG)
+
+    def __init__(self, **kwds):
+        if self._bclassid == MUIC_NList and not self._MCC_:
+            kwds.setdefault('ConstructHook', MUIV_NList_ConstructHook_String)
+            kwds.setdefault('DestructHook', MUIV_NList_DestructHook_String)
+        super(NList, self).__init__(**kwds)
 
     @CreateImage.alias
     def CreateImage(self, meth, obj, flags=0):
@@ -464,9 +472,14 @@ class NList(pymui.Area):
     def InsertSingle(self, meth, entry, pos=MUIV_NList_Insert_Bottom):
         return meth(self, entry, pos)
 
-    def InsertSingleString(self, s, pos=MUIV_List_Insert_Bottom):
-        x = c_STRPTR(s) # keep valid the s object until the return
+    def InsertSingleString(self, s, pos=MUIV_NList_Insert_Bottom):
+        x = pymui.c_STRPTR(s) # keep valid the s object until the return
         return self.InsertSingle(x, pos)
+
+    def GetStringEntry(self, pos=MUIV_NList_GetEntry_Active):
+        ptr = pymui.c_APTR()
+        if self.GetEntry(pos, ptr) and ptr.value:
+            return pymui.c_STRPTR.from_value(ptr.value).contents
 
     @UseImage.alias
     def UseImage(self, meth, obj, imgnum, flags=0):

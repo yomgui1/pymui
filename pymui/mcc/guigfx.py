@@ -86,7 +86,7 @@ class Guigfx(Area):
     CLASSID = MUIC_Guigfx
 
     Picture          = MAttribute(MUIA_Guigfx_Picture          , 'isg', c_APTR)
-    FileName         = MAttribute(MUIA_Guigfx_FileName         , 'is.', c_STRPTR)
+    FileName         = MAttribute(MUIA_Guigfx_FileName         , 'is.', c_STRPTR, keep=True)
     BitmapInfo       = MAttribute(MUIA_Guigfx_BitmapInfo       , 'is.', c_APTR)
     ImageInfo        = MAttribute(MUIA_Guigfx_ImageInfo        , 'is.', c_APTR)
     Transparency     = MAttribute(MUIA_Guigfx_Transparency     , 'isg', c_ULONG)

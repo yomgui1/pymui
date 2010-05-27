@@ -728,7 +728,7 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
 
                         *results = AllocVec(sizeof(STRPTR) * req->fr_NumArgs,
                                             MEMF_PUBLIC|MEMF_SEM_PROTECTED);
-                        if (NULL != *result)
+                        if (NULL != *results)
                         {
                             for (i=0; i < req->fr_NumArgs; i++)
                             {
@@ -736,7 +736,7 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
                             
                                 if (NULL != name)
                                 {
-                                    ULONG size = strlen(req->fr_Drawer) + strlen(name) + 1;
+                                    ULONG size = strlen(req->fr_Drawer) + strlen(name) + 2;
                                     STRPTR str = AllocVec(size, MEMF_PUBLIC|MEMF_SEM_PROTECTED);
 
                                     if (NULL != str)
@@ -764,7 +764,7 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
                             *results = AllocVec(sizeof(STRPTR), MEMF_PUBLIC|MEMF_SEM_PROTECTED);
                             if (NULL != *results)
                             {
-                                ULONG size = strlen(req->fr_File) + strlen(req->fr_Drawer) + 1;
+                                ULONG size = strlen(req->fr_File) + strlen(req->fr_Drawer) + 2;
                                 STRPTR str = AllocVec(size, MEMF_PUBLIC|MEMF_SEM_PROTECTED);
 
                                 if (NULL != str)
@@ -2624,7 +2624,7 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     STRPTR init_drawer = NULL;
     STRPTR init_pat = NULL;
     UBYTE save = FALSE, multiple = FALSE;
-    ULONG dummy, count;
+    ULONG dummy, i, count;
 
     if (!PyArg_ParseTuple(args, "Os|zzbb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save, &multiple))
         return NULL;
