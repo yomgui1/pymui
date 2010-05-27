@@ -1030,7 +1030,7 @@ class Application(Notify): # TODO: unfinished
         global _app
         _app = self
 
-        self.__mainwin = Window
+        self.__mainwin = None
         if Window:
             self.AddChild(Window)
 
