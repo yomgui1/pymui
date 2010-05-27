@@ -26,7 +26,7 @@
 from pymui import *
 
 t1 = 'MainWindow'
-win = Window(t1)
+win = Window(t1, CloseOnReq=True)
 
 assert isinstance(win.Title, c_STRPTR)
 assert win.Title.contents == t1
@@ -34,8 +34,6 @@ assert win.Title.contents == t1
 def onclose(evt, win):
     print "Received 'CloseRequest' from Window:", evt.Source
     win.KillApp()
-
-win.Notify('CloseRequest', True, onclose, win)
 
 app = Application(Window=win)
 

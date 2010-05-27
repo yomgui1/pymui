@@ -704,13 +704,40 @@ class AttributeEvent(Event):
 
 class AttributeNotify:
     def __init__(self, trigvalue, cb, args, kwds):
+        self.trigvalue = trigvalue # keep as it, specially it's an instance of PyMUICType
         self.cb = cb
         self.args = args
         self.kwds = kwds
-        self.trigvalue = trigvalue # keep as it, specially it's an instance of PyMUICType
+        self.mod_args = any(x in (MUIV_TriggerValue, MUIV_NotTiggerValue) for x in args)
+        self.mod_kwds = any(x in (MUIV_TriggerValue, MUIV_NotTiggerValue) for x in kwds.itervalues())
 
     def __call__(self, e):
-        return self.cb(e, *self.args, **self.kwds)
+        # replace all MUIV_(Not)TriggerValue in arguments/keywords
+        if self.mod_args:
+            args = []
+            for v in self.args:
+                if v == MUIV_TriggerValue:
+                    args.append(e.value)
+                elif v == MUIV_NotTiggerValue:
+                    args.append(e.not_value)
+                else:
+                    args.append(v)
+        else:
+            args = self.args
+
+        if self.mod_kwds:
+            self.mod_kwds = {}
+            for k, v in self.kwds.iteritems():
+                if v == MUIV_TriggerValue:
+                    kwds[k] = e.value
+                elif v == MUIV_NotTiggerValue:
+                    kwds[k] = e.not_value
+                else:
+                    kwds[k] = v
+        else:
+            kwds = self.kwds
+        
+        return self.cb(e, *args, **kwds)
 
 class Notify(PyMUIObject, PyMUIBase):
     """rootclass for all MUI sub-classes.
@@ -780,19 +807,26 @@ class Notify(PyMUIObject, PyMUIBase):
         assert isinstance(app, Application)
         app.Quit()
 
-    def Notify(self, attr, trigvalue=MUIV_EveryTime, callback=None, *args, **kwds):
+    def Notify(self, attr, callback, *args, **kwds):
         # TODO
         assert callable(callback)
         attr = self._getMA(attr)
         assert 's' in attr.isg or 'g' in attr.isg
         # Incref self (if it's a temporary object no notification will occures after GC)
-        event = AttributeNotify(trigvalue, callback, args, kwds)
+        tv = kwds.pop('when', MUIV_EveryTime)
+        
+        event = AttributeNotify(tv, callback, args, kwds)
         key = (self, attr.id)
         if key in Notify.__notify_cbdict:
             Notify.__notify_cbdict[key].append(event)
         else:
             Notify.__notify_cbdict[key] = [ event ]
             self._notify(attr.id)
+
+        return (key, event)
+
+    def RemoveNotify(self, code):
+        Notify.__notify_cbdict[code[0]].remove(code[1])
 
 #===============================================================================
 
@@ -930,7 +964,7 @@ class Menuitem(Family):
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
     def Bind(self, callback, *args):
-        self.Notify('Trigger', callback=lambda e, *args: callback(*args), args=args)
+        self.Notify('Trigger', lambda e, *args: callback(*args), args=args)
         
 #===============================================================================
 
@@ -990,29 +1024,30 @@ class Application(Notify): # TODO: unfinished
                                                                     ('node',   c_STRPTR),
                                                                     ('line',   c_LONG) ])
 
-    def __init__(self, mainwin=None, **kwds):
+    def __init__(self, Window=None, **kwds):
         super(Application, self).__init__(**kwds)
 
         global _app
         _app = self
 
-        self.__mainwin = mainwin
-        if mainwin:
-            self.AddChild(mainwin)
-            mainwin.Notify(MUIA_Window_CloseRequest, True, lambda e: e.Source.KillApp())
+        self.__mainwin = Window
+        if Window:
+            self.AddChild(Window)
 
     def AddChild(self, win):
         assert isinstance(win, Window)
         if self.__mainwin is None:
             self.__mainwin = win
+            self.__mainwin_notify = win.Notify(MUIA_Window_CloseRequest, lambda e: e.Source.KillApp(), when=True)
         super(Application, self).AddChild(win)
 
     def RemChild(self, win):
         assert isinstance(win, Window)
         super(Application, self).RemChild(win)
         win.Open = False
-        if self.__mainwin._object == win._object:
-            self.__mainwin = None
+        if self.__mainwin and self.__mainwin._object == win._object:
+            self.RemoveNotify(self.__mainwin_notify)
+            self.__mainwin = self.__mainwin_notify = None
         # win may be not owned anymore, let user decide to dispose it or re-assign it
 
     def Run(self):
@@ -1215,7 +1250,7 @@ class Window(Notify): # TODO: unfinished
         super(Window, self).__init__(**kwds)
 
         if autoclose:
-            self.Notify('CloseRequest', True, lambda e: e.Source.CloseWindow())
+            self.Notify('CloseRequest', lambda e: e.Source.CloseWindow(), when=True)
 
     def OpenWindow(self):
         self.Open = True

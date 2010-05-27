@@ -125,9 +125,10 @@ for line in lines:
 top = HGroup(Child=mylist)
 
 win = Window('PyMUI Test - More Complexe List Test', RootObject=top, CloseOnReq=True)
-win.Notify('CloseRequest', True, lambda e: e.Source.KillApp())
-
-app = Application(Base="PyMUITest_ComplexList", Author="Guillaume ROGUEZ", Copyright="Guillaume ROGUEZ - MIT license")
+app = Application(Window=win,
+                  Base="PyMUITest_ComplexList",
+                  Author="Guillaume ROGUEZ",
+                  Copyright="Guillaume ROGUEZ - MIT license")
 app.AddChild(win)
 
 win.OpenWindow()
