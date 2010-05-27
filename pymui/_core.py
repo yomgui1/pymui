@@ -708,8 +708,8 @@ class AttributeNotify:
         self.cb = cb
         self.args = args
         self.kwds = kwds
-        self.mod_args = any(x in (MUIV_TriggerValue, MUIV_NotTiggerValue) for x in args)
-        self.mod_kwds = any(x in (MUIV_TriggerValue, MUIV_NotTiggerValue) for x in kwds.itervalues())
+        self.mod_args = any(x in (MUIV_TriggerValue, MUIV_NotTriggerValue) for x in args)
+        self.mod_kwds = any(x in (MUIV_TriggerValue, MUIV_NotTriggerValue) for x in kwds.itervalues())
 
     def __call__(self, e):
         # replace all MUIV_(Not)TriggerValue in arguments/keywords
