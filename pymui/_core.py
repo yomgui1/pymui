@@ -848,54 +848,45 @@ class Family(Notify):
             self.AddTail(child)
 
     def AddHead(self, o):
-        o = c_pMUIObject(o).value
         assert o and not self._ischild(o)
-        x = self._do1(MUIM_Family_AddHead, o)
+        x = self._do1(MUIM_Family_AddHead,
+                      (o if isinstance(o, c_pMUIObject) else c_pMUIObject(o)))
         if x:
             o._loosed()
             self._pushchild(o)
         return x
 
     def AddTail(self, o):
-        o = c_pMUIObject(o).value
-        assert o, not self._ischild(o)
-        x = self._do1(MUIM_Family_AddTail, o)
+        assert o and not self._ischild(o)
+        x = self._do1(MUIM_Family_AddTail,
+                      (o if isinstance(o, c_pMUIObject) else c_pMUIObject(o)))
         if x:
             o._loosed()
             self._pushchild(o)
         return x
 
     def Insert(self, o, p):
-        o = c_pMUIObject(o).value
-        p = c_pMUIObject(p).value
-        assert o and p and not self._ischild(o) and self._ischild(p)
-        x = self._do(MUIM_Family_Insert, (o, p))
-        if x:
-            o._loosed()
-            self._pushchild(o)
-        return x
+        pass
 
     def Remove(self, o):
-        o = c_pMUIObject(o).value
-        assert o and self._ischild(o)
-        x = self._do1(MUIM_Family_Remove, o)
-        if x: self._popchild(o)
-        return x
+        pass
 
     def Sort(self, *args):
-        a = c_pMUIObject.ArrayType(len(args)+1)() # transitive object, not needed to be keep
-        a[:] = args
-        return self._do1(MUIM_Family_Sort, a)
+        pass # TODO
+        #a = c_pMUIObject.ArrayType(len(args)+1)() # transitive object, not needed to be keep
+        #a[:] = args
+        #return self._do1(MUIM_Family_Sort, a)
 
     def Transfer(self, f):
-        f = c_pMUIObject(f).value
-        assert f and isinstance(f, Family)
-        x = self._do1(MUIM_Family_Transfer, f)
-        if x:
-            for o in self._children:
-                f._pushchild(o)
-            del self._children
-        return x
+        pass # TODO
+        #f = c_pMUIObject(f).value
+        #assert f and isinstance(f, Family)
+        #x = self._do1(MUIM_Family_Transfer, f)
+        #if x:
+        #    for o in self._children:
+        #        f._pushchild(o)
+        #    del self._children
+        #return x
 
 #===============================================================================
 
@@ -963,8 +954,8 @@ class Menuitem(Family):
         
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
-    def Bind(self, callback, *args):
-        self.Notify('Trigger', lambda e, *args: callback(*args), args=args)
+    def Bind(self, callback, *args, **kwds):
+        self.Notify('Trigger', lambda *a, **k: callback(*a, **k), *args, **kwds)
         
 #===============================================================================
 
