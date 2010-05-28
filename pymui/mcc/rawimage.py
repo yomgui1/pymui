@@ -31,7 +31,7 @@ __all__ = [ 'MUIC_Rawimage', 'MUIA_Rawimage_Data',
 
 MUIC_Rawimage = "Rawimage.mcc"
 
-MUIA_Rawimage_Data = 0xfed10014 # [IS.]  struct MUI_RawimageData *   v20.1 (06.01.2007)
+MUIA_Rawimage_Data = 0xfed10014 # [IS.] struct MUI_RawimageData * v20.1 (06.01.2007)
 
 RAWIMAGE_FORMAT_RAW_ARGB_ID = 0
 RAWIMAGE_FORMAT_BZ2_ARGB_ID = MAKE_ID('B','Z','2','\0')
