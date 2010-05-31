@@ -56,8 +56,7 @@ MUI_MAXMAX = 10000
 
 _app = None
 
-## Currently private defines, but very useful
-MUIA_Window_TabletMessages = 0x804217b7
+## MOS-2.5 SDK
 TABLETA_Dummy        = (TAG_USER + 0x3A000)
 TABLETA_TabletZ      = (TABLETA_Dummy + 1)
 TABLETA_RangeZ       = (TABLETA_Dummy + 2)
@@ -1886,43 +1885,60 @@ class c_List_ConstructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DestructHook(c_Hook): _argtypes_ = (None, long)
 class c_List_DisplayHook(c_Hook): _argtypes_ = (c_pSTRPTR, long)
 
-class List(Group): # TODO: unfinished
+class c_List_TestPos_Result(PyMUICStructureType):
+    _pack_   = 2
+    _fields_ = [ ('entry', c_LONG), # number of entry, -1 if mouse not over valid entry
+                 ('column', c_WORD), # numer of column, -1 if no valid column
+                 ('flags', c_UWORD), # see below
+                 ('xoffset', c_WORD), # x offset of mouse click relative to column start
+                 ('yoffset', c_WORD) ] # y offset of mouse click from center of line
+                                       # (negative values mean click was above center,
+                                       #  positive values mean click was below center)
+
+class List(Group):
     CLASSID = MUIC_List
 
-    Active           = MAttribute(MUIA_List_Active,         'isg', c_LONG)
-    AdjustHeight     = MAttribute(MUIA_List_AdjustHeight,   'i..', c_BOOL)
-    AdjustWidth      = MAttribute(MUIA_List_AdjustWidth,    'i..', c_BOOL)
-    AgainClick       = MAttribute(MUIA_List_AgainClick,     'i.g', c_BOOL)
-    AutoVisible      = MAttribute(MUIA_List_AutoVisible,    'isg', c_BOOL)
-    ClickColumn      = MAttribute(MUIA_List_ClickColumn,    '..g', c_LONG)
-    CompareHook      = MAttribute(MUIA_List_CompareHook,    'is.', c_Hook, keep=True)
-    ConstructHook    = MAttribute(MUIA_List_ConstructHook,  'is.', c_List_ConstructHook, keep=True)
-    DefClickColumn   = MAttribute(MUIA_List_DefClickColumn, 'isg', c_LONG)
-    DestructHook     = MAttribute(MUIA_List_DestructHook,   'is.', c_List_DestructHook, keep=True)
-    DisplayHook      = MAttribute(MUIA_List_DisplayHook,    'is.', c_List_DisplayHook, keep=True)
-    DoubleClick      = MAttribute(MUIA_List_DoubleClick,    'i.g', c_BOOL)
-    DragSortable     = MAttribute(MUIA_List_DragSortable,   'isg', c_BOOL)
-    DragType         = MAttribute(MUIA_List_DragType,       'isg', c_LONG)
-    DropMark         = MAttribute(MUIA_List_DropMark,       '..g', c_LONG)
-    Entries          = MAttribute(MUIA_List_Entries,        '..g', c_LONG)
-    First            = MAttribute(MUIA_List_First,          '..g', c_LONG)
-    Format           = MAttribute(MUIA_List_Format,         'isg', c_STRPTR, keep=True)
-    Input            = MAttribute(MUIA_List_Input,          'i..', c_BOOL)
-    InsertPosition   = MAttribute(MUIA_List_InsertPosition, '..g', c_LONG)
-    MinLineHeight    = MAttribute(MUIA_List_MinLineHeight,  'i..', c_LONG)
-    MultiSelect      = MAttribute(MUIA_List_MultiSelect,    'i..', c_LONG)
-    MultiTestHook    = MAttribute(MUIA_List_MultiTestHook,  'is.', c_Hook, keep=True)
-    # Pool           = MAttribute(MUIA_List_Pool,           'i.g', c_APTR)
-    # PoolPuddleSize = MAttribute(MUIA_List_PoolPuddleSize, 'i..', c_ULONG)
-    # PoolThreshSize = MAttribute(MUIA_List_PoolThreshSize, 'i..', c_ULONG)
-    Quiet            = MAttribute(MUIA_List_Quiet,          '.s.', c_BOOL)
-    ScrollerPos      = MAttribute(MUIA_List_ScrollerPos,    'i..', c_BOOL)
-    SelectChange     = MAttribute(MUIA_List_SelectChange,   '..g', c_BOOL)
-    ShowDropMarks    = MAttribute(MUIA_List_ShowDropMarks,  'isg', c_BOOL)
-    SourceArray      = MAttribute(MUIA_List_SourceArray,    'i..', c_APTR)
-    Title            = MAttribute(MUIA_List_Title,          'isg', c_STRPTR, keep=True)
-    TitleClick       = MAttribute(MUIA_List_TitleClick,     '..g', c_LONG)
-    Visible          = MAttribute(MUIA_List_Visible,        '..g', c_LONG)
+    Active              = MAttribute(MUIA_List_Active,              'isg', c_LONG)
+    AdjustHeight        = MAttribute(MUIA_List_AdjustHeight,        'i..', c_BOOL)
+    AdjustWidth         = MAttribute(MUIA_List_AdjustWidth,         'i..', c_BOOL)
+    AgainClick          = MAttribute(MUIA_List_AgainClick,          'i.g', c_BOOL)
+    AutoLineHeight      = MAttribute(MUIA_List_AutoLineHeight,      'i..', c_BOOL)
+    AutoVisible         = MAttribute(MUIA_List_AutoVisible,         'isg', c_BOOL)
+    ClickColumn         = MAttribute(MUIA_List_ClickColumn,         '..g', c_LONG)
+    ColumnOrder         = MAttribute(MUIA_List_ColumnOrder,         '.sg', c_BYTE.PointerType())
+    CompareHook         = MAttribute(MUIA_List_CompareHook,         'is.', c_Hook, keep=True)
+    ConstructHook       = MAttribute(MUIA_List_ConstructHook,       'is.', c_List_ConstructHook, keep=True)
+    DefClickColumn      = MAttribute(MUIA_List_DefClickColumn,      'isg', c_LONG)
+    DestructHook        = MAttribute(MUIA_List_DestructHook,        'is.', c_List_DestructHook, keep=True)
+    DisplayHook         = MAttribute(MUIA_List_DisplayHook,         'is.', c_List_DisplayHook, keep=True)
+    DoubleClick         = MAttribute(MUIA_List_DoubleClick,         'i.g', c_BOOL)
+    DragSortable        = MAttribute(MUIA_List_DragSortable,        'isg', c_BOOL)
+    DragType            = MAttribute(MUIA_List_DragType,            'isg', c_LONG)
+    DropMark            = MAttribute(MUIA_List_DropMark,            '..g', c_LONG)
+    Entries             = MAttribute(MUIA_List_Entries,             '..g', c_LONG)
+    First               = MAttribute(MUIA_List_First,               '..g', c_LONG)
+    Format              = MAttribute(MUIA_List_Format,              'isg', c_STRPTR, keep=True)
+    HScrollerVisibility = MAttribute(MUIA_List_HScrollerVisibility, 'i..', c_LONG)
+    Input               = MAttribute(MUIA_List_Input,               'i..', c_BOOL)
+    InsertPosition      = MAttribute(MUIA_List_InsertPosition,      '..g', c_LONG)
+    LineHeight          = MAttribute(MUIA_List_LineHeight,          '.sg', c_ULONG)
+    MinLineHeight       = MAttribute(MUIA_List_MinLineHeight,       'i..', c_LONG)
+    MultiSelect         = MAttribute(MUIA_List_MultiSelect,         'i..', c_LONG)
+    MultiTestHook       = MAttribute(MUIA_List_MultiTestHook,       'is.', c_Hook, keep=True)
+    # Pool              = MAttribute(MUIA_List_Pool,                'i.g', c_APTR)
+    # PoolPuddleSize    = MAttribute(MUIA_List_PoolPuddleSize,      'i..', c_ULONG)
+    # PoolThreshSize    = MAttribute(MUIA_List_PoolThreshSize,      'i..', c_ULONG)
+    Quiet               = MAttribute(MUIA_List_Quiet,               '.s.', c_BOOL)
+    ScrollerPos         = MAttribute(MUIA_List_ScrollerPos,         'i..', c_BOOL)
+    SelectChange        = MAttribute(MUIA_List_SelectChange,        '..g', c_BOOL)
+    ShowDropMarks       = MAttribute(MUIA_List_ShowDropMarks,       'isg', c_BOOL)
+    SourceArray         = MAttribute(MUIA_List_SourceArray,         'i..', c_APTR)
+    Title               = MAttribute(MUIA_List_Title,               'isg', c_STRPTR, keep=True)
+    TitleClick          = MAttribute(MUIA_List_TitleClick,          '..g', c_LONG)
+    TopPixel            = MAttribute(MUIA_List_TopPixel,            '..g', c_LONG)
+    TotalPixel          = MAttribute(MUIA_List_TotalPixel,          '..g', c_LONG)
+    Visible             = MAttribute(MUIA_List_Visible,             '..g', c_LONG)
+    VisiblePixel        = MAttribute(MUIA_List_VisiblePixel,        '..g', c_LONG)
 
     Clear              = MMethod(MUIM_List_Clear)
     Compare            = MMethod(MUIM_List_Compare,      [ ('entry1', c_APTR), ('entry2', c_APTR) ], rettype=c_LONG)
@@ -1931,15 +1947,22 @@ class List(Group): # TODO: unfinished
     DeleteImage        = MMethod(MUIM_List_DeleteImage,  [ ('listimg', c_APTR) ])
     Destruct           = MMethod(MUIM_List_Destruct,     [ ('entry', c_APTR), ('pool', c_APTR) ])
     Display            = MMethod(MUIM_List_Display,      [ ('entry', c_APTR), ('array', c_pSTRPTR) ])
+    Exchange           = MMethod(MUIM_List_Exchange,     [ ('pos1', c_LONG), ('pos2', c_LONG) ])
     GetEntry           = MMethod(MUIM_List_GetEntry,     [ ('pos', c_LONG), ('entry', c_APTR.PointerType()) ])
     Insert             = MMethod(MUIM_List_Insert,       [ ('entries', c_APTR), ('count', c_LONG), ('pos', c_LONG) ])
     InsertSingle       = MMethod(MUIM_List_InsertSingle, [ ('entry', c_APTR), ('pos', c_LONG) ])
     Jump               = MMethod(MUIM_List_Jump,         [ ('pos', c_LONG) ])
+    Move               = MMethod(MUIM_List_Move,         [ ('from', c_LONG), ('to', c_LONG) ])
+    NextSelected       = MMethod(MUIM_List_NextSelected, [ ('pos', c_LONG.PointerType()) ])
+    Redraw             = MMethod(MUIM_List_Redraw,       [ ('pos', c_LONG), ('entry', c_APTR) ])
     Remove             = MMethod(MUIM_List_Remove,       [ ('pos', c_LONG) ])
+    Select             = MMethod(MUIM_List_Select,       [ ('pos', c_LONG), ('seltype', c_LONG), ('state', c_LONG.PointerType()) ])
     Sort               = MMethod(MUIM_List_Sort)
+    TestPos            = MMethod(MUIM_List_TestPos,      [ ('x', c_LONG), ('y', c_LONG), ('res', c_List_TestPos_Result.PointerType()) ])
 
     def __init__(self, **kwds):
-        if not self._MCC_:
+        ovl = getattr(self, '_pymui_overloaded_', {}):
+        if MUIM_List_Construct not in ovl and MUIM_List_Destruct not in ovl:
             kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
             kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)
         super(List, self).__init__(**kwds)
