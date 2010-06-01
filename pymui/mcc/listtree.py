@@ -231,6 +231,12 @@ class c_Listtree_TreeNode(pymui.PyMUICStructureType):
                  ('tn_Flags', pymui.c_UWORD),
                  ('tn_User',  pymui.c_APTR) ]
 
+    def SetUserData(self, v):
+        self.tn_User = int(v)
+
+    def GetUserData(self):
+        return self.tn_User.value
+
 c_pListtree_TreeNode = c_Listtree_TreeNode.PointerType()
 
 class c_Listtree_TestPosResult(pymui.PyMUICStructureType):
@@ -323,17 +329,24 @@ class Listtree(pymui.List):
                                                 ('Result', pymui.c_APTR) ], None)
 
     def __init__(self, **kwds):
-        ovl = getattr(self, '_pymui_overloaded_', {})
-        if pymui.MUIM_List_Construct not in ovl and pymui.MUIM_List_Destruct not in ovl:
-            kwds.setdefault('ConstructHook', MUIV_Listtree_ConstructHook_String)
-            kwds.setdefault('DestructHook', MUIV_Listtree_DestructHook_String)
+        #ovl = getattr(self, '_pymui_overloaded_', {})
+        #if pymui.MUIM_List_Construct not in ovl and pymui.MUIM_List_Destruct not in ovl:
+        #    kwds.setdefault('ConstructHook', MUIV_Listtree_ConstructHook_String)
+        #    kwds.setdefault('DestructHook', MUIV_Listtree_DestructHook_String)
         super(Listtree, self).__init__(**kwds)
 
     def __asnode(self, x):
         return (x if isinstance(x, c_Listtree_TreeNode) else c_Listtree_TreeNode.from_value(x))
 
-    def SetUserData(self, node, v):
-        node.tn_User = int(v)
+    def InsertString(self, meth, name,
+                     lnode=MUIV_Listtree_Insert_ListNode_Root,
+                     pnode=MUIV_Listtree_Insert_PrevNode_Tail,
+                     flags=0):
+        """This method should be used to replace Insert
+        if you use MUIV_Listtree_ConstructHook_String
+        as ConstructHook attribute value.
+        """
+        return self.Insert(name, self.__asnode(lnode), self.__asnode(pnode), flags, long(name))
 
     @Close.alias
     def Close(self, meth,
