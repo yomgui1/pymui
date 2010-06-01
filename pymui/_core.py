@@ -996,9 +996,9 @@ class Application(Notify): # TODO: unfinished
     AboutMUI         = MMethod(MUIM_Application_AboutMUI,         [ ('refwindow', c_pMUIObject) ])
     ##AddInputHandler
     ##BuildSettingsPanel
-    CheckRefresh     = MMethod(MUIM_Application_CheckRefresh)
+    CheckRefresh     = MMethod(MUIM_Application_CheckRefresh, rettype=None)
     ##DefaultConfigItem
-    InputBuffered    = MMethod(MUIM_Application_InputBuffered)
+    InputBuffered    = MMethod(MUIM_Application_InputBuffered, rettype=None)
     Load             = MMethod(MUIM_Application_Load,             [ ('name', c_STRPTR) ])
     #NewInput         = MMethod(MUIM_Application_NewInput,         [ ('signal', c_ULONG.PointerType()) ])
     OpenConfigWindow = MMethod(MUIM_Application_OpenConfigWindow, [ ('flags', c_ULONG),
@@ -1961,7 +1961,7 @@ class List(Group):
     TestPos            = MMethod(MUIM_List_TestPos,      [ ('x', c_LONG), ('y', c_LONG), ('res', c_List_TestPos_Result.PointerType()) ])
 
     def __init__(self, **kwds):
-        ovl = getattr(self, '_pymui_overloaded_', {}):
+        ovl = getattr(self, '_pymui_overloaded_', {})
         if MUIM_List_Construct not in ovl and MUIM_List_Destruct not in ovl:
             kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
             kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)

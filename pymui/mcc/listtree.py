@@ -23,7 +23,10 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui.mcc.nlist import *
+import pymui
+
+MAttribute = pymui.MAttribute
+MMethod = pymui.MMethod
 
 MUIC_Listtree = "Listtree.mcc"
 
@@ -242,18 +245,25 @@ TNF_LIST     = (1<<1)
 TNF_FROZEN   = (1<<2)
 TNF_NOSIGN   = (1<<3)
 
+### Hooks ###
+
+class c_ListTree_CloseHook(pymui.c_Hook): _argtypes_ = (None, c_pListtree_TreeNode)
+class c_ListTree_ConstructHook(pymui.c_Hook): _argtypes_ = (None, pymui.c_APTR)
+class c_ListTree_DestructHook(pymui.c_Hook): _argtypes_ = (None, pymui.c_APTR)
+class c_ListTree_DisplayHook(pymui.c_Hook): _argtypes_ = (pymui.c_pSTRPTR, c_pListtree_TreeNode)
+class c_ListTree_OpenHook(pymui.c_Hook): _argtypes_ = (None, c_pListtree_TreeNode)
+class c_ListTree_SortHook(pymui.c_Hook): _argtypes_ = (c_pListtree_TreeNode, c_pListtree_TreeNode)
+
 ### Class ###
 
-!!! ATTRIBUTE FLAGS TO VERIFY BEFORE RELEASE !!!
-
-class Listtree(List):
+class Listtree(pymui.List):
     CLASSID = MUIC_Listtree
     
     Active            = MAttribute(MUIA_Listtree_Active,            '.sg', c_pListtree_TreeNode)
-    CloseHook         = MAttribute(MUIA_Listtree_CloseHook,         'is.', pymui.c_Hook, keep=True)
-    ConstructHook     = MAttribute(MUIA_Listtree_ConstructHook,     'is.', pymui.c_Hook, keep=True)
-    DestructHook      = MAttribute(MUIA_Listtree_DestructHook,      'is.', pymui.c_Hook, keep=True)
-    DisplayHook       = MAttribute(MUIA_Listtree_DisplayHook,       'is.', pymui.c_Hook, keep=True)
+    CloseHook         = MAttribute(MUIA_Listtree_CloseHook,         'is.', c_ListTree_CloseHook.PointerType(), keep=True)
+    ConstructHook     = MAttribute(MUIA_Listtree_ConstructHook,     'is.', c_ListTree_ConstructHook.PointerType(), keep=True)
+    DestructHook      = MAttribute(MUIA_Listtree_DestructHook,      'is.', c_ListTree_DestructHook.PointerType(), keep=True)
+    DisplayHook       = MAttribute(MUIA_Listtree_DisplayHook,       'is.', c_ListTree_DisplayHook.PointerType(), keep=True)
     DoubleClick       = MAttribute(MUIA_Listtree_DoubleClick,       'isg', pymui.c_ULONG)
     DragDropSort      = MAttribute(MUIA_Listtree_DragDropSort,      'is.', pymui.c_BOOL)
     DuplicateNodeName = MAttribute(MUIA_Listtree_DuplicateNodeName, 'is.', pymui.c_BOOL)
@@ -261,20 +271,20 @@ class Listtree(List):
     Format            = MAttribute(MUIA_Listtree_Format,            'is.', pymui.c_STRPTR)
     MultiSelect       = MAttribute(MUIA_Listtree_MultiSelect,       'i..', pymui.c_ULONG)
     NList             = MAttribute(MUIA_Listtree_NList,             'i..', pymui.c_pMUIObject)
-    OpenHook          = MAttribute(MUIA_Listtree_OpenHook,          'is.', pymui.c_Hook, keep=True)
+    OpenHook          = MAttribute(MUIA_Listtree_OpenHook,          'is.', c_ListTree_OpenHook.PointerType(), keep=True)
     Quiet             = MAttribute(MUIA_Listtree_Quiet,             '.s.', pymui.c_BOOL)
-    SortHook          = MAttribute(MUIA_Listtree_SortHook,          'isg', pymui.c_Hook, keep=True)
+    SortHook          = MAttribute(MUIA_Listtree_SortHook,          'is.', c_ListTree_SortHook.PointerType(), keep=True)
     Title             = MAttribute(MUIA_Listtree_Title,             'is.', pymui.c_BOOL)
-    TreeColumn        = MAttribute(MUIA_Listtree_TreeColumn,        'isg', pymui.c_ULONG)
+    TreeColumn        = MAttribute(MUIA_Listtree_TreeColumn,        'is.', pymui.c_ULONG)
 
     Close    = MMethod(MUIM_Listtree_Close, [ ('ListNode', c_pListtree_TreeNode),
                                               ('TreeNode', c_pListtree_TreeNode),
-                                              ('Flags',    pymui.c_ULONG) ])
+                                              ('Flags',    pymui.c_ULONG) ], None)
     Exchange = MMethod(MUIM_Listtree_Exchange, [ ('ListLode1', c_pListtree_TreeNode),
                                                  ('TreeLode1', c_pListtree_TreeNode),
                                                  ('ListLode2', c_pListtree_TreeNode),
                                                  ('TreeLode2', c_pListtree_TreeNode),
-                                                 ('Flags',    pymui.c_ULONG) ])
+                                                 ('Flags',    pymui.c_ULONG) ], None)
     FindName = MMethod(MUIM_Listtree_FindName, [ ('ListNode', c_pListtree_TreeNode),
                                                  ('Name', pymui.c_STRPTR),
                                                  ('listnode2', c_pListtree_TreeNode),
@@ -284,7 +294,7 @@ class Listtree(List):
                                                  ('Position', pymui.c_LONG),
                                                  ('Flags',    pymui.c_ULONG) ], c_Listtree_TreeNode)
     GetNr    = MMethod(MUIM_Listtree_GetNr, [ ('TreeNode', c_pListtree_TreeNode),
-                                              ('Flags',    pymui.c_ULONG) ], c_Listtree_TreeNode)
+                                              ('Flags',    pymui.c_ULONG) ])
     Insert   = MMethod(MUIM_Listtree_Insert, [ ('Name',     pymui.c_STRPTR),
                                                ('User',     pymui.c_APTR),
                                                ('ListNode', c_pListtree_TreeNode),
@@ -294,27 +304,27 @@ class Listtree(List):
                                              ('OldTreeNode', c_pListtree_TreeNode),
                                              ('NewListNode', c_pListtree_TreeNode),
                                              ('NewTreeNode', c_pListtree_TreeNode),
-                                             ('Flags',    pymui.c_ULONG) ])
+                                             ('Flags',    pymui.c_ULONG) ], None)
     Open     = MMethod(MUIM_Listtree_Open, [ ('ListNode', c_pListtree_TreeNode),
                                              ('TreeNode', c_pListtree_TreeNode),
-                                             ('Flags',    pymui.c_ULONG) ])
+                                             ('Flags',    pymui.c_ULONG) ], None)
     Remove   = MMethod(MUIM_Listtree_Remove, [ ('ListNode', c_pListtree_TreeNode),
                                                ('TreeNode', c_pListtree_TreeNode),
-                                               ('Flags',    pymui.c_ULONG) ])
+                                               ('Flags',    pymui.c_ULONG) ], None)
     Rename   = MMethod(MUIM_Listtree_Rename, [ ('TreeNode', c_pListtree_TreeNode),
                                                ('NewName',  pymui.c_STRPTR),
-                                               ('Flags',    pymui.c_ULONG) ])
+                                               ('Flags',    pymui.c_ULONG) ], c_Listtree_TreeNode)
     SetDropMark = MMethod(MUIM_Listtree_SetDropMark, [ ('Entry',  pymui.c_LONG),
-                                                       ('Values', pymui.c_ULONG) ])
+                                                       ('Values', pymui.c_ULONG) ], None)
     Sort     = MMethod(MUIM_Listtree_Sort, [ ('ListNode', c_pListtree_TreeNode),
-                                             ('Flags',    pymui.c_ULONG) ])
+                                             ('Flags',    pymui.c_ULONG) ], None)
     TestPos  = MMethod(MUIM_Listtree_TestPos, [ ('X', pymui.c_LONG),
                                                 ('Y', pymui.c_LONG),
-                                                ('Result', pymui.c_APTR),])
+                                                ('Result', pymui.c_APTR) ], None)
 
     def __init__(self, **kwds):
-        ovl = getattr(self, '_pymui_overloaded_', {}):
-        if MUIM_Listtree_Construct not in ovl and MUIM_List_Destruct not in ovl:
+        ovl = getattr(self, '_pymui_overloaded_', {})
+        if pymui.MUIM_List_Construct not in ovl and pymui.MUIM_List_Destruct not in ovl:
             kwds.setdefault('ConstructHook', MUIV_Listtree_ConstructHook_String)
             kwds.setdefault('DestructHook', MUIV_Listtree_DestructHook_String)
         super(Listtree, self).__init__(**kwds)
@@ -377,12 +387,12 @@ class Listtree(List):
     def Move(self, meth,
              oldlistnode, oldtreenode,
              newlistnode, newtreenode,
-             flags=MUIV_Listtree_Move_Flag_KeepStructure):
-        return meth(self,
-                    self.__asnode(oldlistnode),
-                    self.__asnode(oldtreenode),
-                    self.__asnode(newlistnode),
-                    self.__asnode(newtreenode), flags)
+             flags=0):
+        meth(self,
+             self.__asnode(oldlistnode),
+             self.__asnode(oldtreenode),
+             self.__asnode(newlistnode),
+             self.__asnode(newtreenode), flags)
 
     @Open.alias
     def Open(self, meth,
@@ -409,3 +419,5 @@ class Listtree(List):
              lnode=MUIV_Listtree_Sort_ListNode_Active,
              flags=0):
         meth(self, self.__asnode(lnode), flags)
+
+del MAttribute, MMethod
