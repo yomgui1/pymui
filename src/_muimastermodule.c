@@ -232,6 +232,12 @@ typedef struct ObjectNode_STRUCT {
     LONG           flags;
 } ObjectNode;
 
+typedef struct PyRasterObject_STRUCT {
+    PyObject_HEAD
+
+    struct RastPort *rp;
+} PyRasterObject;
+
 typedef struct PyBOOPSIObject_STRUCT {
     PyObject_HEAD
     Object *       bObject;
@@ -242,8 +248,8 @@ typedef struct PyBOOPSIObject_STRUCT {
 } PyBOOPSIObject;
 
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject base;
-    ULONG          dummy;
+    PyBOOPSIObject   base;
+    PyRasterObject * raster;    /* cached value, /!\ not always valid */
 } PyMUIObject;
 
 typedef struct CHookObject_STRUCT {
@@ -303,6 +309,7 @@ static PyTypeObject PyMUIObject_Type;
 static PyTypeObject CHookObject_Type;
 static PyTypeObject PyMethodMsgObject_Type;
 static PyTypeObject PyEventHandlerObject_Type;
+static PyTypeObject PyRasterObject_Type;
 
 static Object *gApp = NULL; /* Non-NULL if mainloop is running */
 static PyObject *gBOOPSI_Objects_Dict = NULL;
@@ -493,6 +500,9 @@ PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 
     if (bObj == gApp)
         gApp = NULL;
+
+    if (PyMUIObject_Check(pObj))
+        Py_CLEAR(((PyMUIObject *)pObj)->raster);
 
     /* remove BOOPSI object reference from the objects db */
     objdb_remove(bObj);
@@ -1659,16 +1669,41 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
-        /* NOTHING TO DO YET */ ;
+        self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
+        if (NULL != self->raster)
+            return (PyObject *)self;
+
+        Py_DECREF((PyObject *)self);
     }
 
-    return (PyObject *)self;
+    return NULL;
+}
+//-
+//+ muiobject_traverse
+static int
+muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->raster);
+
+    return 0;
+}
+//-
+//+ muiobject_clear
+static int
+muiobject_clear(PyMUIObject *self)
+{
+    DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
+
+    Py_CLEAR(self->raster);
+
+    return 0;
 }
 //-
 //+ muiobject_dealloc
 static void
 muiobject_dealloc(PyMUIObject *self)
 {
+    muiobject_clear(self);
     boopsi_dealloc((PyBOOPSIObject *)self);
 }
 //-
@@ -1878,6 +1913,23 @@ muiobject_get_srange(PyMUIObject *self, void *closure)
         return PyInt_FromLong(scr->Height-1);
 }
 //-
+//+ muiobject_get_rp
+static PyObject *
+muiobject_get_rp(PyMUIObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    self->raster->rp = _rp(obj);
+    Py_INCREF((PyObject *)self->raster);
+
+    return (PyObject *)self->raster;
+}
+//-
+
 
 static PyGetSetDef muiobject_getseters[] = {
     {"MLeft",   (getter)muiobject_get_data, NULL, "_mleft(obj)",   (APTR) PYMUI_DATA_MLEFT},
@@ -1891,6 +1943,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
+    {"_rp",     (getter)muiobject_get_rp,      NULL, "RastPort", NULL},
     {NULL} /* sentinel */
 };
 
@@ -1907,12 +1960,12 @@ static PyTypeObject PyMUIObject_Type = {
     tp_base         : &PyBOOPSIObject_Type,
     tp_name         : "_muimaster.PyMUIObject",
     tp_basicsize    : sizeof(PyMUIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE/* | Py_TPFLAGS_HAVE_GC*/,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "MUI Objects",
 
     tp_new          : (newfunc)muiobject_new,
-    //tp_traverse     : (traverseproc)muiobject_traverse,
-    //tp_clear        : (inquiry)muiobject_clear,
+    tp_traverse     : (traverseproc)muiobject_traverse,
+    tp_clear        : (inquiry)muiobject_clear,
     tp_dealloc      : (destructor)muiobject_dealloc,
     
     tp_methods      : muiobject_methods,
@@ -2407,6 +2460,156 @@ static PyTypeObject PyEventHandlerObject_Type = {
 };
 
 /*******************************************************************************************
+** RasterObject_Type
+*/
+
+//+ raster_dealloc
+static void
+raster_dealloc(PyRasterObject *self)
+{
+    self->rp = NULL;
+    self->ob_type->tp_free((PyObject *)self);
+}
+//-
+//+ raster_blit8
+PyDoc_STRVAR(raster_blit8_doc,
+"Blit8(buffer, dst_x, dst_y, src_w, src_h, src_x=0, src_y=0)\n\
+\n\
+Blit given RGB8 buffer on the raster.\n\
+\n\
+src_x, src_y: top-left corner of source rectangle to blit.\n\
+src_w: source rectangle width.\n\
+src_h: source rectangle height.\n\
+dst_x: destination position on X-axis in the raster.\n\
+dst_y: destination position on Y-axis in the raster.");
+
+static PyObject *
+raster_blit8(PyRasterObject *self, PyObject *args)
+{
+    char *buf;
+    UWORD src_x=0, src_y=0, dst_x, dst_y, src_w, src_h;
+    int buf_size;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s#HHHH|HH:Blit8", &buf, &buf_size,
+                          &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
+        return NULL;
+
+    WritePixelArray(buf, src_x, src_y, buf_size/src_h, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_RGB);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_scaled_blit8
+PyDoc_STRVAR(raster_scaled_blit8_doc,
+"ScaledBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
+\n\
+Blit given RGB8 buffer on the raster. If src and dst size are different,\n\
+performs a scaling before blitting at given raster position.\n\
+\n\
+src_w: source rectangle width.\n\
+src_h: source rectangle height.\n\
+dst_x: destination position on X-axis in the raster.\n\
+dst_y: destination position on Y-axis in the raster.\n\
+dst_w: destination width.\n\
+dst_h: destination height.\n\
+");
+
+static PyObject *
+raster_scaled_blit8(PyRasterObject *self, PyObject *args)
+{
+    char *buf;
+    UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+    int buf_size;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s#HHHHHH:ScaledBlit8", &buf, &buf_size,
+                          &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
+        return NULL;
+
+    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGB);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_scroll
+static PyObject *
+raster_scroll(PyRasterObject *self, PyObject *args)
+{
+    LONG dx, dy, minx, maxx, miny, maxy;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "iiiiii:Scroll", &dx, &dy, &minx, &maxx, &miny, &maxy)) /* BR */
+        return NULL;
+
+    ScrollRaster(self->rp, dx, dy, minx, maxx, miny, maxy);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_rect
+static PyObject *
+raster_rect(PyRasterObject *self, PyObject *args)
+{
+    LONG l, t, r, b;
+    UBYTE pen, fill=FALSE;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "Biiii|B:Rect", &pen, &l, &t, &r, &b, &fill)) /* BR */
+        return NULL;
+
+    SetAPen(self->rp, pen);
+    if (fill)
+        RectFill(self->rp, l, t, r, b);
+    else {
+        Move(self->rp, l, t);
+        Draw(self->rp, r, t);
+        Draw(self->rp, r, b);
+        Draw(self->rp, l, b);
+        Draw(self->rp, l, t);
+    }
+
+    Py_RETURN_NONE;
+}
+//-
+
+static struct PyMethodDef raster_methods[] = {
+    {"Blit8",       (PyCFunction)raster_blit8,        METH_VARARGS, raster_blit8_doc},
+    {"ScaledBlit8", (PyCFunction)raster_scaled_blit8, METH_VARARGS, raster_scaled_blit8_doc},
+    {"Scroll",      (PyCFunction)raster_scroll,       METH_VARARGS, NULL},
+    {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},
+    {NULL} /* sentinel */
+};
+
+static PyTypeObject PyRasterObject_Type = {
+    PyObject_HEAD_INIT(NULL)
+
+    tp_name         : "_muimaster.PyRasterObject",
+    tp_basicsize    : sizeof(PyRasterObject),
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_doc          : "Raster Objects",
+
+    tp_dealloc      : (destructor)raster_dealloc,
+    tp_methods      : raster_methods,
+};
+
+/*******************************************************************************************
 ** Module Functions
 **
 ** List of functions exported by this module reside here
@@ -2685,6 +2888,45 @@ _muimaster_request(PyObject *self, PyObject *args)
     return PyInt_FromLong(result);
 }
 //-
+//+ _muimaster_addclipping
+static PyObject *
+_muimaster_addclipping(PyObject *self, PyObject *args)
+{
+    PyBOOPSIObject *pyo;
+    Object *obj;
+    APTR handle;
+
+    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &pyo))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject(pyo);
+    if (NULL == obj)
+        return NULL;
+
+    handle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+    return PyLong_FromVoidPtr(handle);
+}
+//-
+//+ _muimaster_removeclipping
+static PyObject *
+_muimaster_removeclipping(PyObject *self, PyObject *args)
+{
+    PyBOOPSIObject *pyo;
+    Object *obj;
+    APTR handle;
+
+    if (!PyArg_ParseTuple(args, "O!k", &PyMUIObject_Type, &pyo, &handle))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject(pyo);
+    if (NULL == obj)
+        return NULL;
+
+    MUI_RemoveClipping(muiRenderInfo(obj), handle);
+
+    Py_RETURN_NONE;
+}
+//-
 
 
 /* module methods */
@@ -2695,6 +2937,8 @@ static PyMethodDef _muimaster_methods[] = {
     {"_ptr2pymui", _muimaster_ptr2pymui, METH_VARARGS, NULL},
     {"getfilename", _muimaster_getfilename, METH_VARARGS, NULL},
     {"request", _muimaster_request, METH_VARARGS, NULL},
+    {"_AddClipping", _muimaster_addclipping, METH_VARARGS, NULL},
+    {"_RemoveClipping", _muimaster_removeclipping, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -2703,9 +2947,9 @@ static PyMethodDef _muimaster_methods[] = {
 ** Public Functions
 */
 
-//+ PyMorphOS_CloseModule
+//+ PyMorphOS_TermModule
 void
-PyMorphOS_CloseModule(void)
+PyMorphOS_TermModule(void)
 {
     ObjectNode *node;
     MCCNode *mcc_node;
@@ -2838,6 +3082,7 @@ INITFUNC(void) {
                         int error = 0;
 
                         /* New Python types initialization */
+                        error |= PyType_Ready(&PyRasterObject_Type);
                         error |= PyType_Ready(&PyBOOPSIObject_Type);
                         error |= PyType_Ready(&PyMUIObject_Type);
                         error |= PyType_Ready(&CHookObject_Type);

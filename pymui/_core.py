@@ -794,7 +794,11 @@ class Notify(PyMUIObject, PyMUIBase):
         muiargs = []
         for k, v in kwds.iteritems():
             attr = self._getMAByName(k)
-            muiargs.append( (attr.id, attr.init(self, v)) )
+            try:
+                muiargs.append( (attr.id, attr.init(self, v)) )
+            except:
+                print "Error on keywords '%s'" % k
+                raise
         
         self._create(self._bclassid, muiargs + extra, self.__class__._MCC_)
 
@@ -1558,10 +1562,10 @@ class Text(Area):
     def KeyButton(cl, label, key=None, **kwds):
         kwds.update(Contents=label,
                     Font=MUIV_Font_Button,
-                    Frame=MUIV_Frame_Button,
+                    Frame='Button',
                     PreParse=MUIX_C,
-                    InputMode=MUIV_InputMode_RelVerify,
-                    Background=MUII_ButtonBack)
+                    InputMode='RelVerify',
+                    Background='ButtonBack')
         if key:
             kwds['HiChar'] = key
             kwds['ControlChar'] = key

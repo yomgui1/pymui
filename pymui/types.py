@@ -143,7 +143,10 @@ class c_UWORD(PyMUICSimpleType, _ct.c_ushort): pass
 class c_WORD(PyMUICSimpleType, _ct.c_short): pass
 class c_UBYTE(PyMUICSimpleType, _ct.c_ubyte): pass
 class c_BYTE(PyMUICSimpleType, _ct.c_byte): pass
-class c_CHAR(PyMUICSimpleType, _ct.c_char): pass
+
+class c_CHAR(PyMUICSimpleType, _ct.c_char): 
+    def __long__(self):
+        return ord(self.value)
 
 # It could be logic to think that c_APTR is a subclass
 # of PyMUICPointerType. But it's not the case and remains

@@ -15,5 +15,5 @@ setup(name = 'PyMUI',
                                ['src/_muimastermodule.c'],
                                libraries = ['syscall'],
                                extra_compile_args = opt)],
-      data_files=[('/Docs/PyMUI', ('LICENSE', 'HISTORY'))],
+      data_files=[('Docs/PyMUI', ('LICENSE', 'HISTORY'))],
       )
