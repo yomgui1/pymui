@@ -207,6 +207,11 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
                     PyErr_Clear();                                  \
             } })
 
+#ifdef WITH_PYCAIRO
+#define CHECK_FOR_PYCAIRO \
+    if (NULL == Pycairo_CAPI) return PyErr_Format(PyExc_ImportError, "No PyCairo module found");
+#endif
+
 #define _between(a,x,b) ((x)>=(a) && (x)<=(b))
 #define _isinobject(x,y) (_between(_mleft(obj),(x),_mright(obj)) && _between(_mtop(obj),(y),_mbottom(obj)))
 
@@ -1995,6 +2000,8 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
     if (NULL == obj)
         return NULL;
 
+    CHECK_FOR_PYCAIRO;
+
     /* Destroy context if object size changed */
     if ((NULL != self->pycairo_obj) &&
         ((cairo_image_surface_get_width(self->cairo_surface) != _mwidth(obj)) ||
@@ -3296,7 +3303,11 @@ INITFUNC(void) {
                                     gBOOPSI_Objects_Dict = d;
 
 #ifdef WITH_PYCAIRO
+                                    if (PyErr_Occurred())
+                                        return;
+
                                     Pycairo_IMPORT;
+                                    PyErr_Clear();
 #endif
 
                                     return;
