@@ -1461,12 +1461,12 @@ class Rectangle(Area):
         return g
 
     @classmethod
-    def mkHBar(cl, space):
-        return cl(HBar=True, InnerTop=space, InnerBottom=space, VertWeight=0)
+    def mkHBar(cl, space, **kwds):
+        return cl(HBar=True, InnerTop=space, InnerBottom=space, VertWeight=0, **kwds)
 
     @classmethod
-    def mkVBar(cl, space):
-        return cl(VBar=True, InnerLeft=space, InnerRight=space, HorizWeight=0)
+    def mkVBar(cl, space, **kwds):
+        return cl(VBar=True, InnerLeft=space, InnerRight=space, HorizWeight=0, **kwds)
 
 HVSpace = Rectangle.mkHVSpace
 HSpace  = Rectangle.mkHSpace
@@ -1496,6 +1496,7 @@ class Image(Area):
     OldImage        = MAttribute(MUIA_Image_OldImage        , 'i..', c_APTR, keep=True)
     Spec            = MAttribute(MUIA_Image_Spec            , 'i..', c_STRPTR, keep=True)
     State           = MAttribute(MUIA_Image_State           , 'is.', c_LONG)
+
 
 class CheckMark(Image):
     def __init__(self, selected=False, key=None, **kwds):
@@ -1709,12 +1710,6 @@ class Slider(Numeric):
 
     Horiz = MAttribute(MUIA_Slider_Horiz, 'isg', c_BOOL)
     Quiet = MAttribute(MUIA_Slider_Quiet, 'i..', c_BOOL)
-
-#===============================================================================
-
-# TODO
-#class Prop(Slider):
-#    CLASSID = MUIC_Prop
 
 #===============================================================================
 
@@ -2101,6 +2096,7 @@ class Virtgroup(Group):
     Left   = MAttribute(MUIA_Virtgroup_Left   , 'isg' , c_LONG)
     Top    = MAttribute(MUIA_Virtgroup_Top    , 'isg' , c_LONG)
     Width  = MAttribute(MUIA_Virtgroup_Width  , '..g' , c_LONG)
+    TryFit = MAttribute(MUIA_Virtgroup_TryFit , 'isg' , c_BOOL)
 
     # Factory class methods
 
@@ -2150,7 +2146,16 @@ class Scrollgroup(Group):
 
 #===============================================================================
 
-class Scrollbar(Group):
+class Prop(Slider):
+    CLASSID = MUIC_Prop
+
+    First   = MAttribute(MUIA_Prop_First, 'isg', c_LONG)
+    Entries = MAttribute(MUIA_Prop_Entries, 'isg', c_LONG)
+    Visible = MAttribute(MUIA_Prop_Visible, 'isg', c_LONG)
+
+#===============================================================================
+
+class Scrollbar(Group, Prop):
     CLASSID = MUIC_Scrollbar
 
     Type = MAttribute(MUIA_Scrollbar_Type, 'i..', c_LONG)

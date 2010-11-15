@@ -129,7 +129,5 @@ app = Application(Window=win,
                   Base="PyMUITest_ComplexList",
                   Author="Guillaume ROGUEZ",
                   Copyright="Guillaume ROGUEZ - MIT license")
-app.AddChild(win)
-
 win.OpenWindow()
 app.Run()

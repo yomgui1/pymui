@@ -24,6 +24,7 @@
 ###############################################################################
 
 from pymui import *
+from array import array as _array
 
 __all__ = [ 'MUIC_Rawimage', 'MUIA_Rawimage_Data',
             'RAWIMAGE_FORMAT_RAW_ARGB_ID', 'RAWIMAGE_FORMAT_BZ2_ARGB_ID',
@@ -49,13 +50,13 @@ def mkRawimageData(w, h, data, f=RAWIMAGE_FORMAT_RAW_ARGB_ID):
     obj.ri_Height  = h
     obj.ri_Format  = f
     obj.ri_Size    = size
-    obj.ri_Data[:] = [ ord(x) for x in data ]
+    obj.ri_Data[:] = _array('B', data)
     return obj
 
 class Rawimage(Area):
     CLASSID = MUIC_Rawimage
 
-    Picture = MAttribute(MUIA_Rawimage_Data, 'is.', c_APTR, keep=True)
+    Picture = MAttribute(MUIA_Rawimage_Data, 'isg', c_APTR, keep=True)
 
     def __init__(self, Picture=None, **kw):
         if Picture:

@@ -3,6 +3,15 @@
 from distutils.core import setup, Extension
 
 opt = ['-Wall -Wuninitialized -Wstrict-prototypes -Wno-pointer-sign']
+libraries = ['syscall']
+include_dirs = []
+
+with_cairo = True
+
+if with_cairo:
+    opt += ['-DWITH_PYCAIRO']
+    include_dirs += ['/usr/local/include/pycairo', '/usr/local/include/cairo']
+    libraries += ['cairo', 'pixman-1', 'freetype']
 
 setup(name = 'PyMUI',
       version = '0.4',
@@ -13,7 +22,8 @@ setup(name = 'PyMUI',
       packages = ['pymui', 'pymui.mcc'],
       ext_modules = [Extension('pymui._muimaster',
                                ['src/_muimastermodule.c'],
-                               libraries = ['syscall'],
+                               include_dirs=include_dirs,
+                               libraries=libraries,
                                extra_compile_args = opt)],
       data_files=[('Docs/PyMUI', ('LICENSE', 'HISTORY'))],
       )

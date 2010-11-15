@@ -97,6 +97,11 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 #include <sys/param.h>
 
+#ifdef WITH_PYCAIRO
+#include <pycairo.h>
+static Pycairo_CAPI_t *Pycairo_CAPI;
+#endif
+
 extern void dprintf(char*fmt, ...);
 
 #ifndef PYTHON_BASE_NAME
@@ -248,8 +253,14 @@ typedef struct PyBOOPSIObject_STRUCT {
 } PyBOOPSIObject;
 
 typedef struct PyMUIObject_STRUCT {
-    PyBOOPSIObject   base;
-    PyRasterObject * raster;    /* cached value, /!\ not always valid */
+    PyBOOPSIObject    base;
+    PyRasterObject *  raster;    /* cached value, /!\ not always valid */
+#ifdef WITH_PYCAIRO
+    APTR              cairo_data;
+    cairo_surface_t * cairo_surface;
+    cairo_t *         cairo_context;
+    PyObject *        pycairo_obj;
+#endif
 } PyMUIObject;
 
 typedef struct CHookObject_STRUCT {
@@ -1669,6 +1680,8 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     self = (PyMUIObject *)boopsi_new(type, args); /* NR */
     if (NULL != self) {
+        self->pycairo_obj = NULL;
+        self->cairo_data = NULL;
         self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
         if (NULL != self->raster)
             return (PyObject *)self;
@@ -1683,6 +1696,9 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
+#ifdef WITH_PYCAIRO
+    Py_VISIT(self->pycairo_obj);
+#endif
     Py_VISIT(self->raster);
 
     return 0;
@@ -1694,6 +1710,14 @@ muiobject_clear(PyMUIObject *self)
 {
     DPRINT("Clearing PyMUIObject: %p [%s]\n", self, OBJ_TNAME(self));
 
+#ifdef WITH_PYCAIRO
+    DPRINT("Cairo obj @ %p\n", self->pycairo_obj);
+    if (NULL != self->pycairo_obj)
+    {
+        Py_CLEAR(self->pycairo_obj);
+        PyMem_Free(self->cairo_data);
+    }
+#endif
     Py_CLEAR(self->raster);
 
     return 0;
@@ -1828,6 +1852,37 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 }
 //-
 
+#ifdef WITH_PYCAIRO
+//+ muiobject_blit_cairo_context
+PyDoc_STRVAR(muiobject_blit_cairo_context_doc,
+"blit_cairo_context() -> None\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
+{
+    Object *mo;
+    int src_width, src_height, src_stride;
+
+    mo = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == mo)
+        return NULL;
+
+    if (NULL == self->pycairo_obj)
+        return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
+
+    src_width = cairo_image_surface_get_width(self->cairo_surface);
+    src_height = cairo_image_surface_get_height(self->cairo_surface);
+    src_stride = cairo_image_surface_get_stride(self->cairo_surface);
+
+    WritePixelArray(self->cairo_data, 0, 0, src_stride, _rp(mo), _mleft(mo), _mtop(mo), src_width, src_height, RECTFMT_ARGB);
+
+    Py_RETURN_NONE;
+}
+//-
+#endif
+
 //+ muiobject_get_data
 static PyObject *
 muiobject_get_data(PyMUIObject *self, void *closure)
@@ -1929,6 +1984,61 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
     return (PyObject *)self->raster;
 }
 //-
+#ifdef WITH_PYCAIRO
+//+ muiobject_get_cairo_context
+static PyObject *
+muiobject_get_cairo_context(PyMUIObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    /* Destroy context if object size changed */
+    if ((NULL != self->pycairo_obj) &&
+        ((cairo_image_surface_get_width(self->cairo_surface) != _mwidth(obj)) ||
+         (cairo_image_surface_get_height(self->cairo_surface) != _mheight(obj))))
+    {
+        Py_CLEAR(self->pycairo_obj);
+        PyMem_Free(self->cairo_data);
+    }
+
+    if (NULL == self->pycairo_obj)
+    {
+        int stride;
+
+        stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, _mwidth(obj));
+        self->cairo_data = PyMem_Malloc(stride * _mheight(obj));
+        if (NULL != self->cairo_data)
+        {
+            ReadPixelArray(self->cairo_data, 0, 0, stride,
+                           _rp(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj), RECTFMT_ARGB);
+            self->cairo_surface = cairo_image_surface_create_for_data(self->cairo_data, CAIRO_FORMAT_ARGB32,
+                                                                      _mwidth(obj), _mheight(obj), stride);
+            self->cairo_context = cairo_create(self->cairo_surface);
+            self->pycairo_obj = PycairoContext_FromContext(self->cairo_context, &PycairoContext_Type, NULL); /* NR */
+            if (NULL != self->pycairo_obj)
+            {
+                Py_INCREF(self->pycairo_obj);
+            }
+            else
+            {
+                PyMem_Free(self->cairo_data);
+                self->cairo_data = NULL;
+                PyErr_SetString(PyExc_RuntimeError, "Failed to create cairo context");
+            }
+        }
+        else
+            PyErr_SetString(PyExc_MemoryError, "Failed to allocate cairo data buffer");
+    }
+    else
+        Py_INCREF(self->pycairo_obj);
+
+    return self->pycairo_obj;
+}
+//-
+#endif
 
 
 static PyGetSetDef muiobject_getseters[] = {
@@ -1944,6 +2054,9 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "RastPort", NULL},
+#ifdef WITH_PYCAIRO
+    {"cairo_context", (getter)muiobject_get_cairo_context, NULL, "Cairo context", NULL},
+#endif
     {NULL} /* sentinel */
 };
 
@@ -1951,6 +2064,9 @@ static struct PyMethodDef muiobject_methods[] = {
     {"_notify", (PyCFunction) muiobject__notify, METH_VARARGS, muiobject__notify_doc},
     {"_nnset",  (PyCFunction) muiobject__nnset,  METH_VARARGS, muiobject__nnset_doc},
     {"Redraw",  (PyCFunction) muiobject__redraw, METH_VARARGS, muiobject__redraw_doc},
+#ifdef WITH_PYCAIRO
+    {"BlitCairoContext",  (PyCFunction) muiobject_blit_cairo_context, METH_VARARGS, muiobject_blit_cairo_context_doc},
+#endif
     {NULL} /* sentinel */
 };
 
@@ -2499,7 +2615,7 @@ raster_blit8(PyRasterObject *self, PyObject *args)
                           &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
         return NULL;
 
-    WritePixelArray(buf, src_x, src_y, buf_size/src_h, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_RGB);
+    WritePixelArray(buf, src_x, src_y, buf_size/src_h, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
@@ -2559,6 +2675,31 @@ raster_scroll(PyRasterObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ raster_get_apen
+static PyObject *
+raster_get_apen(PyRasterObject *self, APTR closure)
+{
+    return PyInt_FromLong(GetAPen(self->rp));
+}
+//-
+//+ raster_set_apen
+static int
+raster_set_apen(PyRasterObject *self, PyObject *value, APTR closure)
+{
+    if (NULL != value)
+    {
+        ULONG pen = PyInt_AsLong(value);
+
+        if (PyErr_Occurred())
+            return 1;
+
+        SetAPen(self->rp, pen);
+    }
+
+    return 0;
+}
+
+//-
 //+ raster_rect
 static PyObject *
 raster_rect(PyRasterObject *self, PyObject *args)
@@ -2588,12 +2729,57 @@ raster_rect(PyRasterObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ raster_move
+static PyObject *
+raster_move(PyRasterObject *self, PyObject *args)
+{
+    LONG x, y;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "ii:Move", &x, &y)) /* BR */
+        return NULL;
+
+    Move(self->rp, y, y);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ raster_draw
+static PyObject *
+raster_draw(PyRasterObject *self, PyObject *args)
+{
+    LONG x1, y1;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "ii:Draw", &x1, &y1)) /* BR */
+        return NULL;
+
+    Draw(self->rp, x1, y1);
+
+    Py_RETURN_NONE;
+}
+//-
+
+static PyGetSetDef raster_getseters[] = {
+    {"APen", (getter)raster_get_apen, (setter)raster_set_apen, "RastPort APen value", NULL},
+    {NULL} /* sentinel */
+};
 
 static struct PyMethodDef raster_methods[] = {
     {"Blit8",       (PyCFunction)raster_blit8,        METH_VARARGS, raster_blit8_doc},
     {"ScaledBlit8", (PyCFunction)raster_scaled_blit8, METH_VARARGS, raster_scaled_blit8_doc},
     {"Scroll",      (PyCFunction)raster_scroll,       METH_VARARGS, NULL},
     {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},
+    {"Move",        (PyCFunction)raster_move,         METH_VARARGS, NULL},
+    {"Draw",        (PyCFunction)raster_draw,         METH_VARARGS, NULL},
     {NULL} /* sentinel */
 };
 
@@ -2607,6 +2793,7 @@ static PyTypeObject PyRasterObject_Type = {
 
     tp_dealloc      : (destructor)raster_dealloc,
     tp_methods      : raster_methods,
+    tp_getset       : raster_getseters,
 };
 
 /*******************************************************************************************
@@ -2761,6 +2948,7 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
     PyBOOPSIObject_SET_OBJECT(pObj, bObj);
     ((PyBOOPSIObject *)pObj)->flags = 0;
     ((PyBOOPSIObject *)pObj)->node = NULL;
+    ((PyBOOPSIObject *)pObj)->used_cnt = NULL;
     ((PyBOOPSIObject *)pObj)->wreflist = NULL;
 
     /* record this new PyBOOPSIObject into the DB (Empty also) */
@@ -2798,8 +2986,8 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
         }
     }
 
-    /* New PyBOOPSIObject */
-    pObj = (PyObject *)PyObject_New(PyMUIObject, &PyMUIObject_Type); /* NR */
+    /* New PyMUIObject */
+    pObj = (PyObject *)PyObject_GC_New(PyMUIObject, &PyMUIObject_Type); /* NR */
     if (NULL == pObj)
         return NULL;
 
@@ -2807,10 +2995,14 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     PyBOOPSIObject_SET_OBJECT(pObj, bObj);
     ((PyBOOPSIObject *)pObj)->flags = 0;
     ((PyBOOPSIObject *)pObj)->node = NULL;
+    ((PyBOOPSIObject *)pObj)->used_cnt = NULL;
     ((PyBOOPSIObject *)pObj)->wreflist = NULL;
 
-    /* record this new PyBOOPSIObject into the DB (Empty also) */
-    if (objdb_add(bObj, pObj))
+    ((PyMUIObject *)pObj)->pycairo_obj = NULL;
+    ((PyMUIObject *)pObj)->cairo_data = NULL;
+    ((PyMUIObject *)pObj)->raster = NULL;
+
+    if (objdb_add(bObj, pObj)) /* record this new PyBOOPSIObject into the DB (Empty also) */
         Py_CLEAR(pObj);
 
     return pObj;
@@ -3101,8 +3293,12 @@ INITFUNC(void) {
                                     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
                             
                                     PyModule_AddObject(m, "_obj_dict", d);
-                            
                                     gBOOPSI_Objects_Dict = d;
+
+#ifdef WITH_PYCAIRO
+                                    Pycairo_IMPORT;
+#endif
+
                                     return;
                                 }
 
