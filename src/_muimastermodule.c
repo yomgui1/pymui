@@ -261,7 +261,11 @@ typedef struct PyMUIObject_STRUCT {
     PyBOOPSIObject    base;
     PyRasterObject *  raster;    /* cached value, /!\ not always valid */
 #ifdef WITH_PYCAIRO
+    APTR              cairo_data_pyobj;
     APTR              cairo_data;
+    ULONG             cairo_surface_width;
+    ULONG             cairo_surface_height;
+    ULONG             cairo_surface_stride;
     cairo_surface_t * cairo_surface;
     cairo_t *         cairo_context;
     PyObject *        pycairo_obj;
@@ -1702,6 +1706,7 @@ static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
 #ifdef WITH_PYCAIRO
+    Py_VISIT(self->cairo_data_pyobj);
     Py_VISIT(self->pycairo_obj);
 #endif
     Py_VISIT(self->raster);
@@ -1720,7 +1725,7 @@ muiobject_clear(PyMUIObject *self)
     if (NULL != self->pycairo_obj)
     {
         Py_CLEAR(self->pycairo_obj);
-        PyMem_Free(self->cairo_data);
+        Py_CLEAR(self->cairo_data_pyobj);
     }
 #endif
     Py_CLEAR(self->raster);
@@ -1868,7 +1873,6 @@ static PyObject *
 muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
 {
     Object *mo;
-    int src_width, src_height, src_stride;
 
     mo = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == mo)
@@ -1877,11 +1881,10 @@ muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
     if (NULL == self->pycairo_obj)
         return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
 
-    src_width = cairo_image_surface_get_width(self->cairo_surface);
-    src_height = cairo_image_surface_get_height(self->cairo_surface);
-    src_stride = cairo_image_surface_get_stride(self->cairo_surface);
-
-    WritePixelArray(self->cairo_data, 0, 0, src_stride, _rp(mo), _mleft(mo), _mtop(mo), src_width, src_height, RECTFMT_ARGB);
+    cairo_surface_flush(self->cairo_surface);
+    WritePixelArray(self->cairo_data, 0, 0, self->cairo_surface_stride,
+                    _rp(mo), _mleft(mo), _mtop(mo),
+                    self->cairo_surface_width, self->cairo_surface_height, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
@@ -2004,11 +2007,11 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
 
     /* Destroy context if object size changed */
     if ((NULL != self->pycairo_obj) &&
-        ((cairo_image_surface_get_width(self->cairo_surface) != _mwidth(obj)) ||
-         (cairo_image_surface_get_height(self->cairo_surface) != _mheight(obj))))
+        ((self->cairo_surface_width != _mwidth(obj)) ||
+         (self->cairo_surface_height != _mheight(obj))))
     {
         Py_CLEAR(self->pycairo_obj);
-        PyMem_Free(self->cairo_data);
+        Py_CLEAR(self->cairo_data_pyobj);
     }
 
     if (NULL == self->pycairo_obj)
@@ -2016,25 +2019,43 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
         int stride;
 
         stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, _mwidth(obj));
-        self->cairo_data = PyMem_Malloc(stride * _mheight(obj));
-        if (NULL != self->cairo_data)
+        self->cairo_data_pyobj = PyBuffer_New(stride * _mheight(obj));
+        if (NULL != self->cairo_data_pyobj)
         {
+            PycairoSurface *pyo;
+            Py_ssize_t size;
+
+            PyObject_AsWriteBuffer(self->cairo_data_pyobj, &self->cairo_data, &size);
             ReadPixelArray(self->cairo_data, 0, 0, stride,
                            _rp(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj), RECTFMT_ARGB);
-            self->cairo_surface = cairo_image_surface_create_for_data(self->cairo_data, CAIRO_FORMAT_ARGB32,
-                                                                      _mwidth(obj), _mheight(obj), stride);
-            self->cairo_context = cairo_create(self->cairo_surface);
-            self->pycairo_obj = PycairoContext_FromContext(self->cairo_context, &PycairoContext_Type, NULL); /* NR */
-            if (NULL != self->pycairo_obj)
+
+            pyo = (PycairoSurface *)PyObject_CallMethod((PyObject *)&PycairoImageSurface_Type, "create_for_data",
+                                                          "OIIII", (ULONG)self->cairo_data_pyobj,
+                                                          CAIRO_FORMAT_ARGB32,
+                                                          _mwidth(obj), _mheight(obj), stride); /* NR */
+            if (NULL != pyo)
             {
-                Py_INCREF(self->pycairo_obj);
+                self->cairo_surface = pyo->surface;
+                self->pycairo_obj = PyObject_CallFunction((PyObject *)&PycairoContext_Type, "N", pyo); /* NR */
+                self->cairo_surface_width = _mwidth(obj);
+                self->cairo_surface_height = _mheight(obj);
+                self->cairo_surface_stride = stride;
+
+                /*self->cairo_surface = cairo_image_surface_create_for_data(self->cairo_data, CAIRO_FORMAT_ARGB32,
+                                                                          _mwidth(obj), _mheight(obj), stride);
+                self->cairo_context = cairo_create(self->cairo_surface);
+                self->pycairo_obj = PycairoContext_FromContext(self->cairo_context, &PycairoContext_Type, NULL); */
+
+                if (NULL != self->pycairo_obj)
+                    Py_INCREF(self->pycairo_obj);
+                else
+                    self->cairo_data = NULL;
             }
             else
-            {
-                PyMem_Free(self->cairo_data);
                 self->cairo_data = NULL;
-                PyErr_SetString(PyExc_RuntimeError, "Failed to create cairo context");
-            }
+
+            if (NULL == self->cairo_data)
+                Py_CLEAR(self->cairo_data_pyobj);
         }
         else
             PyErr_SetString(PyExc_MemoryError, "Failed to allocate cairo data buffer");
