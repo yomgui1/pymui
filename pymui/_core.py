@@ -800,7 +800,10 @@ class Notify(PyMUIObject, PyMUIBase):
                 print "Error on keywords '%s'" % k
                 raise
         
-        self._create(self._bclassid, muiargs + extra, self.__class__._MCC_)
+        if self.__class__._MCC_:
+            self._create(self._bclassid, muiargs + extra, self.__class__._pymui_overloaded_)
+        else:
+            self._create(self._bclassid, muiargs + extra)
 
     def NNSet(self, attr, v):
         self._getMA(attr).setter(self, v, nn=True)
@@ -1355,15 +1358,19 @@ class Area(Notify): # TODO: unfinished
     Window             = MAttribute(MUIA_Window             , '..g', c_APTR)
     WindowObject       = MAttribute(MUIA_WindowObject       , '..g', c_pMUIObject)
 
-    AskMinMax   = MMethod(MUIM_AskMinMax,   [ ('MinMaxInfo', c_MinMax.PointerType()) ])
-    Cleanup     = MMethod(MUIM_Cleanup)
-    DragQuery   = MMethod(MUIM_DragQuery,   [ ('obj', c_pMUIObject) ])
-    DragDrop    = MMethod(MUIM_DragDrop,    [ ('obj', c_pMUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
-    Draw        = MMethod(MUIM_Draw,        [ ('flags', c_ULONG) ])
-    HandleEvent = MMethod(MUIM_HandleEvent, [ ('imsg', c_IntuiMessage.PointerType()),
-                                              ('muikey', c_LONG),
-                                              ('ehn', c_EventHandlerNode.PointerType()) ])
-    Setup       = MMethod(MUIM_Setup,       [ ('RenderInfo', c_APTR) ])
+    AskMinMax      = MMethod(MUIM_AskMinMax,        [ ('MinMaxInfo', c_MinMax.PointerType()) ])
+    Cleanup        = MMethod(MUIM_Cleanup)
+    DragQuery      = MMethod(MUIM_DragQuery,        [ ('obj', c_pMUIObject) ])
+    DragDrop       = MMethod(MUIM_DragDrop,         [ ('obj', c_pMUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
+    Draw           = MMethod(MUIM_Draw,             [ ('flags', c_ULONG) ])
+    DrawBackground = MMethod(MUIM_DrawBackground,   [ ('left', c_LONG), ('top', c_LONG),
+                                                      ('width', c_LONG), ('height', c_LONG),
+                                                      ('xoffset', c_LONG), ('yoffset', c_LONG),
+                                                      ('flags', c_LONG) ])
+    HandleEvent    = MMethod(MUIM_HandleEvent,      [ ('imsg', c_IntuiMessage.PointerType()),
+                                                      ('muikey', c_LONG),
+                                                      ('ehn', c_EventHandlerNode.PointerType()) ])
+    Setup          = MMethod(MUIM_Setup,            [ ('RenderInfo', c_APTR) ])
 
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)

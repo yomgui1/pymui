@@ -84,6 +84,9 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <cybergraphx/cybergraphics.h>
 #include <libraries/asl.h>
 #include <hardware/atomic.h>
+#include <graphics/rpattr.h>
+
+#define __NOLIBBASE__ 1
 
 #include <proto/alib.h>
 #include <proto/exec.h>
@@ -103,6 +106,10 @@ static Pycairo_CAPI_t *Pycairo_CAPI;
 #endif
 
 extern void dprintf(char*fmt, ...);
+extern struct Library *IntuitionBase;
+extern struct Library *DOSBase;
+extern struct Library *UtilityBase;
+extern struct Library *GfxBase;
 
 #ifndef PYTHON_BASE_NAME
 #define PYTHON_BASE_NAME PythonBase
@@ -190,6 +197,7 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 #define PyBOOPSIObject_REM_FLAGS(o, x) (((PyBOOPSIObject *)(o))->flags &= ~(x))
 #define PyBOOPSIObject_ISOWNER(o) (0 != (((PyBOOPSIObject *)(o))->flags & FLAG_OWNER))
 #define PyBOOPSIObject_HAS_FLAGS(o, m) (0 != (((PyBOOPSIObject *)(o))->flags & (m)))
+#define PyBOOPSIObject_OVERLOADED_DICT(o) (((PyBOOPSIObject *)(o))->overloaded_dict)
 
 #define PyBOOPSIObject_SET_NODE(o, n) ({ \
     PyBOOPSIObject *_o = (PyBOOPSIObject *)(o); \
@@ -255,6 +263,7 @@ typedef struct PyBOOPSIObject_STRUCT {
     ULONG          flags;
     ULONG          used_cnt;
     PyObject *     wreflist;
+    PyObject *     overloaded_dict;
 } PyBOOPSIObject;
 
 typedef struct PyMUIObject_STRUCT {
@@ -834,6 +843,34 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
 }
 //-
 
+#ifdef WITH_PYCAIRO
+//+ blit_cairo_surface
+void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
+{
+    struct Rectangle r;
+    WORD xmin, ymin;
+    UWORD w, h;
+
+    w = pyo->cairo_surface_width;
+    h = pyo->cairo_surface_height;
+
+    GetRPAttrs(_rp(mo), RPTAG_DrawBounds, (ULONG)&r, TAG_DONE);
+    if (r.MinX <= r.MaxX)
+    {
+        xmin = MAX(r.MinX-_mleft(mo), 0);
+        ymin = MAX(r.MinY-_mtop(mo), 0);
+        w = MIN(MAX(r.MaxX-_mleft(mo), 0) - xmin + 1, w);
+        h = MIN(MAX(r.MaxY-_mtop(mo), 0) - ymin + 1, h);
+    }
+    else
+        xmin = ymin = 0;
+
+    cairo_surface_flush(pyo->cairo_surface);
+    WritePixelArray(pyo->cairo_data, xmin, ymin, pyo->cairo_surface_stride,
+                    _rp(mo), xmin+_mleft(mo), ymin+_mtop(mo), w, h, RECTFMT_ARGB);
+}
+//-
+#endif
 
 /*******************************************************************************************
 ** MCC MUI Object
@@ -846,87 +883,119 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
     PyGILState_STATE gstate;
     PyObject *pyo, *erro;
     ULONG result;
-    BOOL resultok;
+    BOOL callsuper;
 
-    if (!Py_IsInitialized())
-        return DoSuperMethodA(cl, obj, msg);
-
-    resultok = FALSE;
+    callsuper = TRUE;
     result = 0;
 
     gstate = PyGILState_Ensure();
 
-    if (PyErr_Occurred())
-        goto bye;
+    erro = PyErr_Occurred();
+    if (NULL == erro)
+    {
+        /* existing a python object for this MUI object ? */
+        pyo = objdb_get(obj); /* BR */
+        DPRINT("pyo: %p-'%s', MID=$%08x\n", pyo, OBJ_TNAME_SAFE(pyo), msg->MethodID);
+        if (NULL != pyo)
+        {
+            PyObject *overloaded_dict;
 
-    /* existing a python object for this MUI object ? */
-    pyo = objdb_get(obj); /* BR */
-    DPRINT("pyo: %p-'%s', MID=$%08x\n", pyo, OBJ_TNAME_SAFE(pyo), msg->MethodID);
-    if (NULL != pyo) {
-        PyObject *overloaded_dict;
+            Py_INCREF(pyo);
 
-        Py_INCREF(pyo);
-        overloaded_dict = PyObject_GetAttrString(pyo, "_pymui_overloaded_"); /* NR */
-        if (NULL != overloaded_dict) {
-            PyObject *key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
-            if (NULL != key) {
-                PyObject *value = PyDict_GetItem(overloaded_dict, key); /* BR */
-                Py_DECREF(key);
-                if (NULL != value) {
-                    PyMethodMsgObject *msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
-                    if (NULL != msg_obj) {
-                        PyObject *o;
-                        DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
-                               pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
+            overloaded_dict = PyBOOPSIObject_OVERLOADED_DICT(pyo);
+            if (NULL != overloaded_dict)
+            {
+                Py_INCREF(overloaded_dict);
 
-                        Py_INCREF(value);
-                        o = PyObject_CallFunction(value, "ON", pyo, msg_obj);
-                        DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
-                        Py_DECREF(value);
+                PyObject *key = PyLong_FromUnsignedLong(msg->MethodID); /* NR */
+                if (NULL != key)
+                {
+                    PyObject *value = PyDict_GetItem(overloaded_dict, key); /* BR */
 
-                        resultok = TRUE;
+                    Py_DECREF(key);
 
-                        /* No Python errors */
-                        if (NULL != o) {
-                            int ok = py2long(o, &result);
+                    if (NULL != value)
+                    {
+                        PyMethodMsgObject *msg_obj = PyMethodMsg_New(cl, obj, msg); /* NR */
+                        if (NULL != msg_obj)
+                        {
+                            PyObject *o;
 
-                            Py_DECREF(o);
+                            DPRINT("pyo=%p-%s (MID: 0x%08x, callable: %p, MethodMsg: %p)\n",
+                                   pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
 
-                            /* result convertion failed? */
-                            if (!ok)
-                                result = 0;
-                        } else if (msg_obj->mmsg_SuperCalled)
-                            result = msg_obj->mmsg_SuperResult;
-                        else
-                            resultok = FALSE;
+                            Py_INCREF(value);
+                            o = PyObject_CallFunction(value, "ON", pyo, msg_obj);
+                            DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
+                            Py_DECREF(value);
+
+                            /* No Python errors */
+                            if (NULL != o)
+                            {
+                                py2long(o, &result);
+                                Py_DECREF(o);
+
+                                /* let the python code decide if super needs to be called or not */
+                                callsuper = FALSE; 
+
+#ifdef WITH_PYCAIRO
+                                /* Handle cairo surface during draw method */
+                                if ((MUIM_Draw == msg->MethodID) &&
+                                    (((struct MUIP_Draw *)msg)->flags & MADF_DRAWOBJECT) &&
+                                    PyMUIObject_Check(pyo) && (NULL != ((PyMUIObject *)pyo)->pycairo_obj))
+                                {
+                                    PyMUIObject *muio = (PyMUIObject *)pyo;
+
+                                    /* Delete cairo objects if object size has changed */
+                                    if ((muio->cairo_surface_width != _mwidth(obj)) ||
+                                        (muio->cairo_surface_height != _mheight(obj)))
+                                    {
+                                        Py_CLEAR(muio->pycairo_obj);
+                                        Py_CLEAR(muio->cairo_data_pyobj);
+                                    }
+                                    else /* Blit it on object rast port */
+                                        blit_cairo_surface((PyMUIObject *)pyo, obj);
+                                }
+#endif
+                            }
+                            else if (msg_obj->mmsg_SuperCalled)
+                            {
+                                callsuper = FALSE;
+                                result = msg_obj->mmsg_SuperResult;
+                            } /* else callsuper = TRUE */
+                        }
                     }
                 }
+
+                Py_DECREF(overloaded_dict);
             }
 
-            Py_DECREF(overloaded_dict);
-        } else
-            PyErr_Clear();
+            Py_DECREF(pyo);
+        }
+        else
+            DPRINT("No python object for MUI obj %p (method $%08x)\n", obj, msg->MethodID);
 
-        Py_DECREF(pyo);
-    } else
-        DPRINT("No python object for MUI obj %p (method $%08x)\n", obj, msg->MethodID);
-
-bye:
-    erro = PyErr_Occurred();
-    PyGILState_Release(gstate);
-
-    if (NULL != erro) {
-        Object *app = _app(obj);
-        DPRINT("python exception occured (%p), app=%p, obj=%p, MethodID=%x\n", erro, app, obj, msg->MethodID);
-
-        if (NULL != app)
-            DoMethod(app, MUIM_Application_ReturnID, ID_BREAK);
-
-        result = 0;
-    } else if (!resultok) {
-        DPRINT("DoSuper(cl=%p, obj=%p, msg=%p)...\n", cl, obj, msg);
-        result = DoSuperMethodA(cl, obj, msg);
+        erro = PyErr_Occurred();
     }
+
+    /* Need to pass the msg to the super ? */
+    if (callsuper)
+    {
+        PyObject *type, *value, *tb;
+        
+        DPRINT("DoSuper(cl=%p, obj=%p, msg=%p)...\n", cl, obj, msg);
+
+        /* Save/restore exception if needed */
+        if (erro) PyErr_Fetch(&type, &value, &tb);
+
+        Py_BEGIN_ALLOW_THREADS
+        result = DoSuperMethodA(cl, obj, msg);
+        Py_END_ALLOW_THREADS
+
+        if (erro) PyErr_Restore(type, value, tb);
+    }
+
+    PyGILState_Release(gstate);
 
     return result;
 }
@@ -953,7 +1022,11 @@ DISPATCHER(mcc)
             result = DoSuperMethodA(cl, obj, msg);
             break;
 
-        default: result = mCheckPython(cl, obj, (APTR)msg);
+        default:
+            if (Py_IsInitialized())
+                result = mCheckPython(cl, obj, (APTR)msg);
+            else
+                result = DoSuperMethodA(cl, obj, msg);
     }
 
     //DPRINT("meth: %08x result: %08x\n", msg->MethodID, result);
@@ -982,10 +1055,27 @@ boopsi_new(PyTypeObject *type, PyObject *args)
             self->used_cnt = 0;
             self->node = NULL;
             self->wreflist = NULL;
+            self->overloaded_dict = NULL;
         }
     }
 
     return (PyObject *)self;
+}
+//-
+//+ boopsi_traverse
+static int
+boopsi_traverse(PyBOOPSIObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->overloaded_dict);
+    return 0;
+}
+//-
+//+ boopsi_clear
+static int
+boopsi_clear(PyBOOPSIObject *self)
+{
+    Py_CLEAR(self->overloaded_dict);
+    return 0;
 }
 //-
 //+ boopsi_dealloc
@@ -996,6 +1086,8 @@ boopsi_dealloc(PyBOOPSIObject *self)
 
     if (NULL != PyBOOPSIObject_GET_OBJECT(self))
         PyBOOPSIObject_DisposeObject(self);
+
+    boopsi_clear(self);
 
     if (NULL != self->wreflist)
         PyObject_ClearWeakRefs((PyObject *)self);
@@ -1256,28 +1348,30 @@ static PyObject *
 boopsi__create(PyBOOPSIObject *self, PyObject *args)
 {
     UBYTE *classid;
-    PyObject *err = NULL, *fast, *params = NULL;
-    struct MUI_CustomClass *mcc = NULL;
+    PyObject *err=NULL, *fast, *params, *overloaded_dict;
+    struct MUI_CustomClass *mcc=NULL;
     struct TagItem *tags;
     Object *bObj;
     ObjectNode *node;
-    LONG isMCC = FALSE;
     BOOL isMUI;
     ULONG n;
 
     /* Protect againts doubles */
-    if (NULL != PyBOOPSIObject_GET_OBJECT(self)) {
+    if (NULL != PyBOOPSIObject_GET_OBJECT(self))
+    {
         PyErr_SetString(PyExc_RuntimeError, "Already created BOOPSI Object");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s|Oi:PyBOOPSIObject", &classid, &params, &isMCC)) /* BR */
+    params = overloaded_dict = NULL;
+    if (!PyArg_ParseTuple(args, "s|OO:PyBOOPSIObject", &classid, &params, &overloaded_dict)) /* BR */
         return NULL;
 
-    DPRINT("ClassID: '%s', isMCC: %d\n", classid, isMCC);
+    DPRINT("ClassID: '%s', isMCC: %d\n", classid, NULL!=overloaded_dict);
 
     isMUI = PyMUIObject_Check(self);
-    if (!isMUI && isMCC) {
+    if (!isMUI && (NULL != overloaded_dict))
+    {
         PyErr_SetString(PyExc_TypeError, "MCC feature requested on a non-MUI object");
         return NULL;
     }
@@ -1288,17 +1382,20 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         return NULL;
 
     n = PySequence_Fast_GET_SIZE(fast);
-    if (n > 0) {
+    if (n > 0)
+    {
         PyObject **tuples = PySequence_Fast_ITEMS(fast);
         ULONG i;
 
         tags = PyMem_Malloc(sizeof(struct TagItem) * (n+1));
-        if (NULL == tags) {
+        if (NULL == tags)
+        {
             Py_DECREF(fast);
             return PyErr_NoMemory();
         }
 
-        for (i=0; i < n; i++) {
+        for (i=0; i < n; i++)
+        {
             PyObject *tag_id = PyTuple_GetItem(tuples[i], 0);
             PyObject *tag_value = PyTuple_GetItem(tuples[i], 1);
 
@@ -1314,7 +1411,8 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
             DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, (LONG)tags[i].ti_Data, (ULONG)tags[i].ti_Data, tags[i].ti_Data);
         }
         
-        if (PyErr_Occurred()) {
+        if (PyErr_Occurred())
+        {
             Py_DECREF(fast);
             PyMem_Free(tags);
             return NULL;
@@ -1323,7 +1421,8 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         tags[n].ti_Tag = TAG_DONE;
         
         Py_DECREF(fast);
-    } else
+    }
+    else
         tags = NULL;
     DPRINT("tags: %p (%lu)\n", tags, n);
 
@@ -1333,7 +1432,8 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
      * is not valid during this cleanup stage.
      */
     node = AllocMem(sizeof(ObjectNode), MEMF_PUBLIC | MEMF_CLEAR | MEMF_SEM_PROTECTED);
-    if (NULL == node) {
+    if (NULL == node)
+    {
         err = PyErr_NoMemory();
         goto bye_err;
     }
@@ -1341,27 +1441,33 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     DPRINT("Node created @ %p\n", node);
 
     /* Need to create a new MCC or a simple MUI object instance ? */
-    if (isMCC) {
+    if (NULL != overloaded_dict)
+    {
         MCCNode *mccnode = NULL, *next;
 
         DPRINT("Search for MCC based on: '%s'\n", classid);
 
-        ForeachNode(&gMCCList, next) {
-            if ((NULL != next->mcc->mcc_Super->cl_ID) && !strcmp(classid, next->mcc->mcc_Super->cl_ID)) {
+        ForeachNode(&gMCCList, next)
+        {
+            if ((NULL != next->mcc->mcc_Super->cl_ID) && !strcmp(classid, next->mcc->mcc_Super->cl_ID))
+            {
                 mccnode = next;
                 break;
             }
         }
 
-        if (NULL == mccnode) {
+        if (NULL == mccnode)
+        {
             mccnode = AllocMem(sizeof(MCCNode), MEMF_PUBLIC | MEMF_SEM_PROTECTED | MEMF_CLEAR);
-            if (NULL == mccnode) {
+            if (NULL == mccnode)
+            {
                 PyErr_SetString(PyExc_MemoryError, "Not enough memory to create a new MCC for this object");
                 goto bye_err;
             }
 
             mcc = MUI_CreateCustomClass(NULL, classid, NULL, sizeof(MCCData), DISPATCHER_REF(mcc));
-            if (NULL == mcc) {
+            if (NULL == mcc)
+            {
                 FreeMem(mccnode, sizeof(MCCNode));
                 PyErr_Format(PyExc_MemoryError, "MUI_CreateCustomClass() failed with classid %s", classid);
                 goto bye_err;
@@ -1369,14 +1475,16 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
             mccnode->mcc = mcc;
             ADDTAIL(&gMCCList, mccnode);
-        } else
+        }
+        else
             mcc = mccnode->mcc;
 
         DPRINT("MCC: %p (SuperID: '%s')\n", mcc, mccnode->mcc->mcc_Super->cl_ID);
     }
 
     /* Creating the BOOPSI/MUI object */
-    if (isMUI) {
+    if (isMUI)
+    {
         if (NULL != mcc)
             bObj = NewObjectA(mcc->mcc_Class, NULL, tags);
         else
@@ -1387,16 +1495,19 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
     else
         bObj = NewObjectA(NULL, classid, tags);
 
-    if (NULL != tags) {
+    if (NULL != tags)
+    {
         PyMem_Free(tags);
         tags = NULL;
     }
 
-    if (NULL != bObj) {
+    if (NULL != bObj)
+    {
         DPRINT("New '%s' object @ %p (self=%p-'%s')\n", classid, bObj, self, OBJ_TNAME(self));
 
         /* Add an entry into the BOOPSI objects database */
-        if (objdb_add(bObj, (PyObject *) self)) {
+        if (objdb_add(bObj, (PyObject *) self))
+        {
             if (PyMUIObject_Check(self))
                 MUI_DisposeObject(bObj);
             else
@@ -1408,6 +1519,8 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         PyBOOPSIObject_SET_OBJECT(self, bObj);
         PyBOOPSIObject_ADD_FLAGS(self, FLAG_OWNER);
         PyBOOPSIObject_SET_NODE(self, node);
+        PyBOOPSIObject_OVERLOADED_DICT(self) = overloaded_dict;
+        Py_XINCREF(overloaded_dict);
 
         ADDTAIL(&gObjectList, node);
 
@@ -1662,10 +1775,12 @@ static PyTypeObject PyBOOPSIObject_Type = {
 
     tp_name         : "_muimaster.PyBOOPSIObject",
     tp_basicsize    : sizeof(PyBOOPSIObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "BOOPSI Objects",
     
     tp_new          : (newfunc)boopsi_new,
+    tp_traverse     : (traverseproc)boopsi_traverse,
+    tp_clear        : (inquiry)boopsi_clear,
     tp_dealloc      : (destructor)boopsi_dealloc,
     tp_weaklistoffset : offsetof(PyBOOPSIObject, wreflist),
 
@@ -1881,10 +1996,7 @@ muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
     if (NULL == self->pycairo_obj)
         return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
 
-    cairo_surface_flush(self->cairo_surface);
-    WritePixelArray(self->cairo_data, 0, 0, self->cairo_surface_stride,
-                    _rp(mo), _mleft(mo), _mtop(mo),
-                    self->cairo_surface_width, self->cairo_surface_height, RECTFMT_ARGB);
+    blit_cairo_surface(self, mo);
 
     Py_RETURN_NONE;
 }
@@ -1976,6 +2088,29 @@ muiobject_get_srange(PyMUIObject *self, void *closure)
         return PyInt_FromLong(scr->Height-1);
 }
 //-
+//+ muiobject_get_drawbounds
+static PyObject *
+muiobject_get_drawbounds(PyMUIObject *self, void *closure)
+{
+    struct Rectangle r;
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    if (NULL == _rp(obj))
+        Py_RETURN_NONE;
+
+    GetRPAttrs(_rp(obj), RPTAG_DrawBounds, (ULONG)&r, TAG_DONE);
+
+    return Py_BuildValue("HHHH",
+                         MAX(r.MinX-_mleft(obj), 0),
+                         MAX(r.MinY-_mtop(obj), 0),
+                         MIN(r.MaxX-_mleft(obj), _mwidth(obj)-1),
+                         MIN(r.MaxY-_mtop(obj), _mheight(obj)-1));
+}
+//-
 //+ muiobject_get_rp
 static PyObject *
 muiobject_get_rp(PyMUIObject *self, void *closure)
@@ -2026,8 +2161,6 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
             Py_ssize_t size;
 
             PyObject_AsWriteBuffer(self->cairo_data_pyobj, &self->cairo_data, &size);
-            ReadPixelArray(self->cairo_data, 0, 0, stride,
-                           _rp(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj), RECTFMT_ARGB);
 
             pyo = (PycairoSurface *)PyObject_CallMethod((PyObject *)&PycairoImageSurface_Type, "create_for_data",
                                                           "OIIII", (ULONG)self->cairo_data_pyobj,
@@ -2063,6 +2196,15 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
     else
         Py_INCREF(self->pycairo_obj);
 
+    if (NULL != self->pycairo_obj)
+    {
+        cairo_surface_set_device_offset(self->cairo_surface, 0, 0);
+        ReadPixelArray(self->cairo_data, 0, 0,
+                       self->cairo_surface_stride,
+                       _rp(obj), _mleft(obj), _mtop(obj),
+                       _mwidth(obj), _mheight(obj), RECTFMT_ARGB);
+    }
+
     return self->pycairo_obj;
 }
 //-
@@ -2081,6 +2223,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
+    {"DrawBounds", (getter)muiobject_get_drawbounds, NULL, "RastPort draw bounds", (APTR)~0},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "RastPort", NULL},
 #ifdef WITH_PYCAIRO
     {"cairo_context", (getter)muiobject_get_cairo_context, NULL, "Cairo context", NULL},
@@ -2860,20 +3003,22 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
      * That should be checked by the caller!
      */
 
-    DPRINT("Goes into mainloop...\n");
+    DPRINT("Goes into mainloop... (app=%p)\n", app);
     gApp = app; Py_INCREF(pyapp);
     PyBOOPSIObject_FORBID(pyapp);
 
-    for (;;) {
+    for (;;)
+    {
         ULONG id;
-        PyThreadState *_save;
+        //PyThreadState *_save;
         ObjectNode *node, *next;
 
-        Py_UNBLOCK_THREADS;
+        Py_BEGIN_ALLOW_THREADS
         id = DoMethod(app, MUIM_Application_NewInput, (ULONG) &sigs);
-        Py_BLOCK_THREADS;
+        Py_END_ALLOW_THREADS
 
-        ForeachNodeSafe(&gToDisposeList, node, next) {
+        ForeachNodeSafe(&gToDisposeList, node, next)
+        {
             Object *bObj = node->obj;
 
             /* BOOPSI/MUI destroy */
@@ -2891,11 +3036,13 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
         if ((MUIV_Application_ReturnID_Quit == id) || PyErr_Occurred())
             break;
 
-        if (sigs) {
-            Py_UNBLOCK_THREADS;
+        if (sigs)
+        {
+            Py_BEGIN_ALLOW_THREADS
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
-            Py_BLOCK_THREADS;
-        } else
+            Py_END_ALLOW_THREADS
+        }
+        else
             sigs = SetSignal(0, 0);
 
         if (sigs & SIGBREAKF_CTRL_C)
@@ -2907,13 +3054,15 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     Py_DECREF(pyapp);
     gApp = NULL;
 
-    if (sigs & SIGBREAKF_CTRL_C) {
+    if (sigs & SIGBREAKF_CTRL_C)
+    {
         PyErr_SetNone(PyExc_KeyboardInterrupt);
         DPRINT("bye mainloop with Keyboard Interruption...\n");
         return NULL;
     }
 
-    if (PyErr_Occurred()) {
+    if (PyErr_Occurred())
+    {
         DPRINT("bye mainloop with error...\n");
         return NULL;
     }
@@ -2972,12 +3121,13 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
     }
 
     /* New PyBOOPSIObject */
-    pObj = (PyObject *)PyObject_New(PyBOOPSIObject, &PyBOOPSIObject_Type); /* NR */
+    pObj = (PyObject *)PyObject_GC_New(PyBOOPSIObject, &PyBOOPSIObject_Type); /* NR */
     PyBOOPSIObject_SET_OBJECT(pObj, bObj);
     ((PyBOOPSIObject *)pObj)->flags = 0;
     ((PyBOOPSIObject *)pObj)->node = NULL;
     ((PyBOOPSIObject *)pObj)->used_cnt = NULL;
     ((PyBOOPSIObject *)pObj)->wreflist = NULL;
+    ((PyBOOPSIObject *)pObj)->overloaded_dict = NULL;
 
     /* record this new PyBOOPSIObject into the DB (Empty also) */
     if (objdb_add(bObj, pObj))
@@ -3025,6 +3175,7 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
     ((PyBOOPSIObject *)pObj)->node = NULL;
     ((PyBOOPSIObject *)pObj)->used_cnt = NULL;
     ((PyBOOPSIObject *)pObj)->wreflist = NULL;
+    ((PyBOOPSIObject *)pObj)->overloaded_dict = NULL;
 
     ((PyMUIObject *)pObj)->pycairo_obj = NULL;
     ((PyMUIObject *)pObj)->cairo_data = NULL;
@@ -3177,10 +3328,12 @@ PyMorphOS_TermModule(void)
 
     DPRINT("Closing module...\n");
 
-    ForeachNodeSafe(&gObjectList, node, next) {
+    ForeachNodeSafe(&gObjectList, node, next)
+    {
         Object *app, *obj = node->obj;
 
-        if (NULL != obj) {
+        if (NULL != obj)
+        {
             /* Python is not perfect, PyMUI not also and user design even less :-P
              * If PyMUI user has forgotten to 'loose' the owner flag or if Python hasn't
              * disposed all Python objects when module is cleaned, the object node is here.
@@ -3188,32 +3341,40 @@ PyMorphOS_TermModule(void)
              * But for MUIA_Parentobject, we can check if the object is really a child or not.
              * If it's a child, the object is not disposed.
              */
-            if (node->flags & NODE_FLAG_MUI) {
+            if (node->flags & NODE_FLAG_MUI)
+            {
                 Object *parent;
 
                 DPRINT("Forgotten object [%p-'%s', node: %p]\n",
                     obj, OCLASS(obj)->cl_ID?(char *)OCLASS(obj)->cl_ID:(char *)"<MCC>", node);
 
                 app = parent = NULL;
-                if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent)) {
+                if (get(obj, MUIA_ApplicationObject, &app) && get(obj, MUIA_Parent, &parent))
+                {
                     DPRINT("[%p] app=%p, parent=%p\n", obj, app, parent);
 
                     /* Keep the application object disposal for later */
-                    if (obj == app) {
+                    if (obj == app)
+                    {
                         DPRINT("[%p] Application => disposed later\n", obj);
                         continue;
                     }
 
                     /* No parents ? */
-                    if (!TypeOfMem(app) && !TypeOfMem(parent)) {
+                    if (!TypeOfMem(app) && !TypeOfMem(parent))
+                    {
                         DPRINT("[%p] Disposing a MUI object...\n", obj);
                         MUI_DisposeObject(obj);
                         DPRINT("[%p] Disposed\n", obj);
-                    } else
+                    }
+                    else
                         DPRINT("[%p] Has a parent, let it dispose the object\n", obj);
-                } else
+                }
+                else
                     DPRINT("[%p] Bad object!\n", obj);
-            } else {
+            }
+            else
+            {
                 DPRINT("[%p] Disposing a BOOPSI object ...\n", obj);
                 DisposeObject(obj);
                 DPRINT("[%p] Disposed\n", obj);
@@ -3224,7 +3385,8 @@ PyMorphOS_TermModule(void)
     }
 
     /* Second round for applications objects */
-    ForeachNodeSafe(&gObjectList, node, next) {
+    ForeachNodeSafe(&gObjectList, node, next)
+    {
         Object *obj = node->obj;
 
         DPRINT("[%p] Disposing application...\n", obj);
@@ -3235,31 +3397,36 @@ PyMorphOS_TermModule(void)
     }   
 
     /* MCC disposing */
-    ForeachNodeSafe(&gMCCList, mcc_node, next) {
+    ForeachNodeSafe(&gMCCList, mcc_node, next)
+    {
         DPRINT("Disposing MCC node @ %p (mcc=%p-'%s')\n", mcc_node, mcc_node->mcc, mcc_node->mcc->mcc_Super->cl_ID);
         MUI_DeleteCustomClass(mcc_node->mcc);
         FreeMem(mcc_node, sizeof(*mcc_node));
     }
 
-    if (NULL != CyberGfxBase) {
+    if (NULL != CyberGfxBase)
+    {
         DPRINT("Closing cybergfx library...\n");
         CloseLibrary(CyberGfxBase);
         CyberGfxBase = NULL;
     }
 
-    if (NULL != LayersBase) {
+    if (NULL != LayersBase)
+    {
         DPRINT("Closing layers library...\n");
         CloseLibrary(LayersBase);
         LayersBase = NULL;
     }
  
-    if (NULL != MUIMasterBase) {
+    if (NULL != MUIMasterBase)
+    {
         DPRINT("Closing muimaster library...\n");
         CloseLibrary(MUIMasterBase);
         MUIMasterBase = NULL;
     }
 
-    if (NULL != gMemPool) {
+    if (NULL != gMemPool)
+    {
         DeletePool(gMemPool);
         gMemPool = NULL;
     }
@@ -3289,16 +3456,21 @@ INITFUNC(void) {
     INIT_HOOK(&OnAttrChangedHook, OnAttrChanged);
 
     gMemPool = CreatePool(MEMF_PUBLIC|MEMF_SEM_PROTECTED, 1024, 512);
-    if (NULL != gMemPool) {
+    if (NULL != gMemPool)
+    {
         MUIMasterBase = OpenLibrary(MUIMASTER_NAME, MUIMASTER_VLATEST);
-        if (NULL != MUIMasterBase) {
+        if (NULL != MUIMasterBase)
+        {
             LayersBase = OpenLibrary("layers.library", 50);
-            if (NULL != LayersBase) {
+            if (NULL != LayersBase)
+            {
                 CyberGfxBase = OpenLibrary("cybergraphics.library", 50);
-                if (NULL != CyberGfxBase) {
+                if (NULL != CyberGfxBase)
+                {
                     /* object -> pyobject database */
                     d = PyDict_New(); /* NR */
-                    if (NULL != d) {
+                    if (NULL != d)
+                    {
                         int error = 0;
 
                         /* New Python types initialization */
@@ -3309,12 +3481,15 @@ INITFUNC(void) {
                         error |= PyType_Ready(&PyMethodMsgObject_Type);
                         error |= PyType_Ready(&PyEventHandlerObject_Type);
 
-                        if (!error) {
+                        if (!error)
+                        {
                             /* Module creation/initialization */
                             m = Py_InitModule3(MODNAME, _muimaster_methods, _muimaster__doc__);
-                            if (NULL != m) {
+                            if (NULL != m)
+                            {
                                 error = all_ins(m);
-                                if (!error) {
+                                if (!error)
+                                {
                                     ADD_TYPE(m, "PyBOOPSIObject", &PyBOOPSIObject_Type);
                                     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
                                     ADD_TYPE(m, "_CHook", &CHookObject_Type);
@@ -3339,24 +3514,29 @@ INITFUNC(void) {
                         }
 
                         Py_DECREF(d);
-                    } else
+                    }
+                    else
                         DPRINT("Failed to create object->pyobject dict\n");
 
                     CloseLibrary(CyberGfxBase);
                     CyberGfxBase = NULL;
-                } else
+                }
+                else
                     DPRINT("Can't open library %s, V%u.\n", "cybergraphics.library", 50);
 
                 CloseLibrary(LayersBase);
                 LayersBase = NULL;
-            } else
+            }
+            else
                 DPRINT("Can't open library %s, V%u.\n", "layers.library", 50);
 
             CloseLibrary(MUIMasterBase);
             MUIMasterBase = NULL;
-        } else
+        }
+        else
             DPRINT("Can't open library %s, V%u.\n", MUIMASTER_NAME, MUIMASTER_VLATEST);
-    } else
+    }
+    else
         DPRINT("Failed to create a global memory pool\n");
 }
 //-
