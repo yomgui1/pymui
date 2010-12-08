@@ -1444,16 +1444,16 @@ class Rectangle(Area):
     # Factory class methods
 
     @classmethod
-    def mkHVSpace(cl):
-        return cl()
+    def mkHVSpace(cl, **kwds):
+        return cl(**kwds)
 
     @classmethod
-    def mkHSpace(cl, x):
-        return cl(VertWeight=x)
+    def mkHSpace(cl, x, **kwds):
+        return cl(VertWeight=x, **kwds)
 
     @classmethod
-    def mkVSpace(cl, x):
-        return cl(HorizWeight=x)
+    def mkVSpace(cl, x, **kwds):
+        return cl(HorizWeight=x, **kwds)
 
     @classmethod
     def mkHCenter(cl, o, **kwds):

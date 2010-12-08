@@ -97,6 +97,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <proto/cybergraphics.h>
 #include <proto/layers.h>
 #include <proto/graphics.h>
+#include <proto/keymap.h>
 
 #include <sys/param.h>
 
@@ -110,6 +111,7 @@ extern struct Library *IntuitionBase;
 extern struct Library *DOSBase;
 extern struct Library *UtilityBase;
 extern struct Library *GfxBase;
+extern struct Library *KeymapBase;
 
 #ifndef PYTHON_BASE_NAME
 #define PYTHON_BASE_NAME PythonBase
@@ -275,6 +277,7 @@ typedef struct PyMUIObject_STRUCT {
     ULONG             cairo_surface_width;
     ULONG             cairo_surface_height;
     ULONG             cairo_surface_stride;
+    cairo_rectangle_int_t cairo_paint_area;
     cairo_surface_t * cairo_surface;
     cairo_t *         cairo_context;
     PyObject *        pycairo_obj;
@@ -848,26 +851,47 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
 void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
 {
     struct Rectangle r;
-    WORD xmin, ymin;
-    UWORD w, h;
 
-    w = pyo->cairo_surface_width;
-    h = pyo->cairo_surface_height;
-
+    /* Ask for the current drawing area to refresh */
     GetRPAttrs(_rp(mo), RPTAG_DrawBounds, (ULONG)&r, TAG_DONE);
+    DPRINT("(%d, %d, %d, %d), ", r.MinX, r.MaxX, r.MinY, r.MaxY);
+    DPRINT("(%d, %d, %d, %d), ", _mleft(mo), _mright(mo), _mtop(mo), _mbottom(mo));
+
     if (r.MinX <= r.MaxX)
     {
-        xmin = MAX(r.MinX-_mleft(mo), 0);
-        ymin = MAX(r.MinY-_mtop(mo), 0);
-        w = MIN(MAX(r.MaxX-_mleft(mo), 0) - xmin + 1, w);
-        h = MIN(MAX(r.MaxY-_mtop(mo), 0) - ymin + 1, h);
+        /* Clip to the object area */
+        r.MinX = MAX(r.MinX, _mleft(mo))-_mleft(mo);
+        r.MinY = MAX(r.MinY, _mtop(mo))-_mtop(mo);
+        r.MaxX = MIN(r.MaxX, _mright(mo))-_mleft(mo);
+        r.MaxY = MIN(r.MaxY, _mbottom(mo))-_mtop(mo);
     }
     else
-        xmin = ymin = 0;
+    {
+        /* No system clip, use the object area */
+        r.MinX = 0;
+        r.MinY = 0;
+        r.MaxX = _mright(mo)-_mleft(mo);
+        r.MaxY = _mbottom(mo)-_mtop(mo);
+    }
+    DPRINT("(%d, %d, %d, %d), ", r.MinX, r.MaxX, r.MinY, r.MaxY);
+
+    if ((r.MinX > r.MaxX) || (r.MinY > r.MaxY))
+        return;
+
+    /* Clip to the user area (relative to the cairo surface) */
+    r.MinX = MAX(r.MinX, pyo->cairo_paint_area.x);
+    r.MinY = MAX(r.MinY, pyo->cairo_paint_area.y);
+    r.MaxX = MIN(r.MaxX, pyo->cairo_paint_area.x+pyo->cairo_paint_area.width-1);
+    r.MaxY = MIN(r.MaxY, pyo->cairo_paint_area.y+pyo->cairo_paint_area.height-1);
+    DPRINT("(%d, %d, %d, %d)\n", r.MinX, r.MaxX, r.MinY, r.MaxY);
+
+    if ((r.MinX > r.MaxX) || (r.MinY > r.MaxY))
+        return;
 
     cairo_surface_flush(pyo->cairo_surface);
-    WritePixelArray(pyo->cairo_data, xmin, ymin, pyo->cairo_surface_stride,
-                    _rp(mo), xmin+_mleft(mo), ymin+_mtop(mo), w, h, RECTFMT_ARGB);
+    WritePixelArrayAlpha(pyo->cairo_data, r.MinX, r.MinY, pyo->cairo_surface_stride,
+                         _rp(mo), _mleft(mo)+r.MinX, _mtop(mo)+r.MinY,
+                         r.MaxX-r.MinX+1, r.MaxY-r.MinY+1, 0xffffffff);
 }
 //-
 #endif
@@ -1980,7 +2004,7 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 #ifdef WITH_PYCAIRO
 //+ muiobject_blit_cairo_context
 PyDoc_STRVAR(muiobject_blit_cairo_context_doc,
-"blit_cairo_context() -> None\n\
+"BlitCairoContext() -> None\n\
 \n\
 Sorry, Not documented yet :-(");
 
@@ -1997,6 +2021,37 @@ muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
         return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
 
     blit_cairo_surface(self, mo);
+
+    Py_RETURN_NONE;
+}
+//-
+//+ muiobject_clip_cairo_paint_area
+PyDoc_STRVAR(muiobject_clip_cairo_paint_area_doc,
+"ClipCairoPaintArea() -> None\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+muiobject_clip_cairo_paint_area(PyMUIObject *self, PyObject *args)
+{
+    cairo_rectangle_int_t clip;
+    int x2, y2;
+
+    if (NULL == self->pycairo_obj)
+        return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
+
+    if (PyArg_ParseTuple(args, "iiii", &clip.x, &clip.y, &clip.width, &clip.height) < 0)
+        return NULL;
+
+    x2 = self->cairo_paint_area.x + self->cairo_paint_area.width - 1;
+    x2 = MIN(x2, MAX(0, clip.x + clip.width - 1));
+    y2 = self->cairo_paint_area.y + self->cairo_paint_area.height - 1;
+    y2 = MIN(y2, MAX(0, clip.y + clip.height - 1));
+
+    self->cairo_paint_area.x = MAX(self->cairo_paint_area.x, MIN(x2, clip.x));
+    self->cairo_paint_area.y = MAX(self->cairo_paint_area.y, MIN(y2, clip.y));
+    self->cairo_paint_area.width = x2 - self->cairo_paint_area.x + 1;
+    self->cairo_paint_area.height = y2 - self->cairo_paint_area.y + 1;
 
     Py_RETURN_NONE;
 }
@@ -2107,8 +2162,8 @@ muiobject_get_drawbounds(PyMUIObject *self, void *closure)
     return Py_BuildValue("HHHH",
                          MAX(r.MinX-_mleft(obj), 0),
                          MAX(r.MinY-_mtop(obj), 0),
-                         MIN(r.MaxX-_mleft(obj), _mwidth(obj)-1),
-                         MIN(r.MaxY-_mtop(obj), _mheight(obj)-1));
+                         MIN(r.MaxX-r.MinX+1, _mwidth(obj)),
+                         MIN(r.MaxY-r.MinY+1, _mheight(obj)));
 }
 //-
 //+ muiobject_get_rp
@@ -2161,6 +2216,7 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
             Py_ssize_t size;
 
             PyObject_AsWriteBuffer(self->cairo_data_pyobj, &self->cairo_data, &size);
+            bzero(self->cairo_data, size);
 
             pyo = (PycairoSurface *)PyObject_CallMethod((PyObject *)&PycairoImageSurface_Type, "create_for_data",
                                                           "OIIII", (ULONG)self->cairo_data_pyobj,
@@ -2180,7 +2236,10 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
                 self->pycairo_obj = PycairoContext_FromContext(self->cairo_context, &PycairoContext_Type, NULL); */
 
                 if (NULL != self->pycairo_obj)
+                {
+                    self->cairo_context = ((PycairoContext *)self->pycairo_obj)->ctx;
                     Py_INCREF(self->pycairo_obj);
+                }
                 else
                     self->cairo_data = NULL;
             }
@@ -2196,20 +2255,39 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
     else
         Py_INCREF(self->pycairo_obj);
 
-    if (NULL != self->pycairo_obj)
+    /* Reset the paint area to the full surface */
+    if (self->pycairo_obj)
     {
-        cairo_surface_set_device_offset(self->cairo_surface, 0, 0);
-        ReadPixelArray(self->cairo_data, 0, 0,
-                       self->cairo_surface_stride,
-                       _rp(obj), _mleft(obj), _mtop(obj),
-                       _mwidth(obj), _mheight(obj), RECTFMT_ARGB);
+        self->cairo_paint_area.x = 0;
+        self->cairo_paint_area.y = 0;
+        self->cairo_paint_area.width = self->cairo_surface_width;
+        self->cairo_paint_area.height = self->cairo_surface_height;
     }
 
     return self->pycairo_obj;
 }
 //-
-#endif
+//+ muiobject_fill_cairo_context
+static PyObject *
+muiobject_fill_cairo_context(PyMUIObject *self)
+{
+    Object *obj;
 
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    CHECK_FOR_PYCAIRO;
+
+    ReadPixelArray(self->cairo_data, 0, 0, self->cairo_surface_stride,
+                   _rp(obj), _mleft(obj), _mtop(obj),
+                   self->cairo_surface_width, self->cairo_surface_height,
+                   RECTFMT_ARGB);
+
+    Py_RETURN_NONE;
+}
+//-
+#endif
 
 static PyGetSetDef muiobject_getseters[] = {
     {"MLeft",   (getter)muiobject_get_data, NULL, "_mleft(obj)",   (APTR) PYMUI_DATA_MLEFT},
@@ -2237,6 +2315,8 @@ static struct PyMethodDef muiobject_methods[] = {
     {"Redraw",  (PyCFunction) muiobject__redraw, METH_VARARGS, muiobject__redraw_doc},
 #ifdef WITH_PYCAIRO
     {"BlitCairoContext",  (PyCFunction) muiobject_blit_cairo_context, METH_VARARGS, muiobject_blit_cairo_context_doc},
+    {"ClipCairoPaintArea",  (PyCFunction) muiobject_clip_cairo_paint_area, METH_VARARGS, muiobject_clip_cairo_paint_area_doc},
+    {"FillCairoContext", (PyCFunction)muiobject_fill_cairo_context, METH_NOARGS, "Copy rastport on cairo"},
 #endif
     {NULL} /* sentinel */
 };
@@ -2633,7 +2713,7 @@ evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
 
         o_tags = PyList_New(0); /* NR */
         if (NULL == o_tags)
-            return 0;
+            return NULL;
 
         while (NULL != (tag = NextTagItem(&tags))) {
             PyObject *item = Py_BuildValue("II", tag->ti_Tag, tag->ti_Data); /* NR */
@@ -2641,14 +2721,14 @@ evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
             if ((NULL == item) || (PyList_Append(o_tags, item) != 0)) {
                 Py_XDECREF(item);
                 Py_DECREF(o_tags);
-                return 0;
+                return NULL;
             }
         }
 
         error = PyDict_MergeFromSeq2(self->TabletTagsList, o_tags, TRUE); /* NR */
         Py_DECREF(o_tags);
         if (error)
-            return 0;
+            return NULL;
 
         self->tabletdata = *((struct ExtIntuiMessage *)msg->imsg)->eim_TabletData;
     } else
@@ -2674,11 +2754,36 @@ evthandler_get_up(PyEventHandlerObject *self, void *closure)
     return PyBool_FromLong((self->imsg.Code & IECODE_UP_PREFIX) == IECODE_UP_PREFIX);
 }
 //-
+//+ evthandler_get_rawkey
+static PyObject *
+evthandler_get_rawkey(PyEventHandlerObject *self, void *closure)
+{
+    return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
+}
+//-
 //+ evthandler_get_key
 static PyObject *
 evthandler_get_key(PyEventHandlerObject *self, void *closure)
 {
-    return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
+    struct InputEvent ie;
+
+    if (IDCMP_RAWKEY == self->imsg.Class)
+    {
+        int len;
+        char c[4];
+
+        ie.ie_Class        = IECLASS_RAWKEY;
+        ie.ie_SubClass     = 0;
+        ie.ie_Code         = self->imsg.Code & ~IECODE_UP_PREFIX;
+        ie.ie_Qualifier    = self->imsg.Qualifier;
+        ie.ie_EventAddress = (APTR *)*((ULONG *)self->imsg.IAddress);
+
+        len = MapRawKey(&ie, c, sizeof(c), NULL);
+        if (len > 0)
+            return PyString_FromStringAndSize(c, len);
+    }
+
+    Py_RETURN_NONE;
 }
 //-
 //+ evthandler_get_handler
@@ -2692,7 +2797,8 @@ evthandler_get_handler(PyEventHandlerObject *self, void *closure)
 static PyGetSetDef evthandler_getseters[] = {
     {"handler", (getter)evthandler_get_handler, NULL, "Address of the MUI_EventHandlerNode", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
-    {"Key", (getter)evthandler_get_key, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
+    {"RawKey", (getter)evthandler_get_rawkey, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
+    {"Key", (getter)evthandler_get_key, NULL, "Mapped key using the rawkey (None if Class is not IDCMP_RAWKEY)", NULL},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
     {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
     {NULL} /* sentinel */
