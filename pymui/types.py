@@ -251,6 +251,8 @@ class c_pSTRPTR(c_STRPTR.PointerType()):
             super(c_pSTRPTR, self).__init__()
         else:
             if isinstance(x, (list, tuple)):
+                if x[-1] is not 0:
+                    x = list(x)+[0]
                 x = c_STRPTR.ArrayType(len(x))(*tuple(c_STRPTR(s) for s in x))[0]
             super(c_pSTRPTR, self).__init__(x)
 
