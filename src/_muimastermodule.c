@@ -371,7 +371,7 @@ for more information on calls.");
 
 /**
  * Python-BOOPSI relations database.
- * 
+ *
  * Purpose of this DB is to give a way to retrieve which Python objet handles
  * a BOOPSI objet by giving this last.
  * So at each instant, one BOOPSI object is always linked to only one Python object.
@@ -469,7 +469,7 @@ PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
 
     if (NULL != bo)
         return bo;
-    
+
     PyErr_SetString(PyExc_TypeError, "no BOOPSI object associated");
     return NULL;
 }
@@ -548,7 +548,7 @@ bye:
         err = PyErr_Occurred();
         if (NULL != err)
             PyErr_WriteUnraisable(err);
-        
+
         PyErr_Restore(ptype, pvalue, ptb);
     }
 
@@ -775,7 +775,7 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
                             for (i=0; i < req->fr_NumArgs; i++)
                             {
                                 BYTE *name = req->fr_ArgList[i].wa_Name;
-                            
+
                                 if (NULL != name)
                                 {
                                     ULONG size = strlen(req->fr_Drawer) + strlen(name) + 2;
@@ -960,7 +960,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
                                 Py_DECREF(o);
 
                                 /* let the python code decide if super needs to be called or not */
-                                callsuper = FALSE; 
+                                callsuper = FALSE;
 
 #ifdef WITH_PYCAIRO
                                 /* Handle cairo surface during draw method */
@@ -1006,7 +1006,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
     if (callsuper)
     {
         PyObject *type, *value, *tb;
-        
+
         DPRINT("DoSuper(cl=%p, obj=%p, msg=%p)...\n", cl, obj, msg);
 
         /* Save/restore exception if needed */
@@ -1146,7 +1146,7 @@ static PyObject *
 boopsi_repr(PyBOOPSIObject *self)
 {
     Object *obj;
-    
+
     obj = PyBOOPSIObject_GET_OBJECT(self);
     if (NULL != obj)
         return PyString_FromFormat("<%s at %p, BOOPSI at %p>", OBJ_TNAME(self), self, obj);
@@ -1325,7 +1325,7 @@ boopsi__remchild(PyBOOPSIObject *self, PyObject *args)
             goto bye;
     }
 
-    DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);         
+    DPRINT("OM_REMMEMBER: parent=%p, obj=%p\n", obj, child);
     ret = PyInt_FromLong(DoMethod(obj, OM_REMMEMBER, (ULONG)child));
 
     /* Note: object is not owned anymore!
@@ -1431,10 +1431,10 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
 
             if (PyErr_Occurred())
                 break;
-           
+
             DPRINT("#  args[%u]: %d, %u, 0x%08x\n", i, (LONG)tags[i].ti_Data, (ULONG)tags[i].ti_Data, tags[i].ti_Data);
         }
-        
+
         if (PyErr_Occurred())
         {
             Py_DECREF(fast);
@@ -1443,7 +1443,7 @@ boopsi__create(PyBOOPSIObject *self, PyObject *args)
         }
 
         tags[n].ti_Tag = TAG_DONE;
-        
+
         Py_DECREF(fast);
     }
     else
@@ -1624,7 +1624,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
     DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on BOOPSI obj @ %p\n", attr, (LONG)value, value, value, obj);
     set(obj, attr, value); /* may call some python code (notifications) */
     DPRINT("- done\n");
-        
+
     PyBOOPSIObject_PERMIT(self);
 
     if (PyErr_Occurred())
@@ -1801,7 +1801,7 @@ static PyTypeObject PyBOOPSIObject_Type = {
     tp_basicsize    : sizeof(PyBOOPSIObject),
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "BOOPSI Objects",
-    
+
     tp_new          : (newfunc)boopsi_new,
     tp_traverse     : (traverseproc)boopsi_traverse,
     tp_clear        : (inquiry)boopsi_clear,
@@ -1905,7 +1905,7 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
     DPRINT("+ Attr 0x%lx set to value: %ld %ld %#lx on MUI obj @ %p\n", attr, (LONG)value, value, value, obj);
     nnset(obj, attr, value);
     DPRINT("- done\n");
-    
+
     PyBOOPSIObject_PERMIT(self);
 
     if (PyErr_Occurred())
@@ -2080,7 +2080,7 @@ muiobject_get_data(PyMUIObject *self, void *closure)
         default:
             return PyErr_Format(PyExc_SystemError, "[INTERNAL ERROR] bad closure given to muiobject_get_data()");
     }
-    
+
     return PyInt_FromLong(data);
 }
 //-
@@ -2334,7 +2334,7 @@ static PyTypeObject PyMUIObject_Type = {
     tp_traverse     : (traverseproc)muiobject_traverse,
     tp_clear        : (inquiry)muiobject_clear,
     tp_dealloc      : (destructor)muiobject_dealloc,
-    
+
     tp_methods      : muiobject_methods,
     //tp_members      : muiobject_members,
     tp_getset       : muiobject_getseters,
@@ -2630,7 +2630,7 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
     PyBOOPSIObject_FORBID(pyo_tgt);
     DoMethod(win, MUIM_Window_AddEventHandler, (ULONG)&self->handler);
     PyBOOPSIObject_PERMIT(pyo_tgt);
-    
+
     if (PyErr_Occurred())
         return NULL;
 
@@ -3097,7 +3097,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     ULONG sigs = 0;
     PyObject *pyapp;
     Object *app;
-    
+
     if (!PyArg_ParseTuple(args, "O!:mainloop", &PyMUIObject_Type, &pyapp))
         return NULL;
 
@@ -3404,6 +3404,37 @@ _muimaster_removeclipping(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ _muimaster_setwinpointer
+static PyObject *
+_muimaster_setwinpointer(PyObject *self, PyObject *args)
+{
+    PyObject *pyo;
+    Object *obj;
+    struct Window *win;
+    ULONG type;
+
+    /* The given object is not necessary a window object.
+     * It could be any MUI object with a window object as parent.
+     */
+    if (!PyArg_ParseTuple(args, "O!I", &PyMUIObject_Type, &pyo, &type))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject((PyObject *)pyo);
+    if (NULL == obj)
+        return NULL;
+
+    /* Catch the window parent object */
+    win = NULL; /* protection against bugged OM_GET implementations */
+    if (!get(obj, MUIA_Window, &win) || (NULL == win))
+    {
+        PyErr_SetString(PyExc_TypeError, "Unable to obtain attached Window object");
+        return NULL;
+    }
+
+    SetWindowPointer(win, WA_PointerType, type, TAG_DONE);
+    Py_RETURN_NONE;
+}
+//-
 
 
 /* module methods */
@@ -3416,6 +3447,7 @@ static PyMethodDef _muimaster_methods[] = {
     {"request", _muimaster_request, METH_VARARGS, NULL},
     {"_AddClipping", _muimaster_addclipping, METH_VARARGS, NULL},
     {"_RemoveClipping", _muimaster_removeclipping, METH_VARARGS, NULL},
+    {"_setwinptr", _muimaster_setwinpointer, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
@@ -3500,7 +3532,7 @@ PyMorphOS_TermModule(void)
         DPRINT("[%p] Application disposed\n", obj);
 
         FreeMem(node, sizeof(*node));
-    }   
+    }
 
     /* MCC disposing */
     ForeachNodeSafe(&gMCCList, mcc_node, next)
@@ -3523,7 +3555,7 @@ PyMorphOS_TermModule(void)
         CloseLibrary(LayersBase);
         LayersBase = NULL;
     }
- 
+
     if (NULL != MUIMasterBase)
     {
         DPRINT("Closing muimaster library...\n");
@@ -3600,7 +3632,7 @@ INITFUNC(void) {
                                     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
                                     ADD_TYPE(m, "_CHook", &CHookObject_Type);
                                     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
-                            
+
                                     PyModule_AddObject(m, "_obj_dict", d);
                                     gBOOPSI_Objects_Dict = d;
 

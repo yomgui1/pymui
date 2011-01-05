@@ -222,7 +222,7 @@ class MAttribute(property):
 
     This class generates class properties to define MUI attributes when you wrap
     a MUI class with PyMUI. Just use it as the property Python class.
-    
+
     This property is used by instances of your class to set/get MUI attribute
     as GetAttr() and SetAttrs() do in the insane C world.
 
@@ -255,10 +255,10 @@ class MAttribute(property):
 
     Other keywords are directly given to the property class __init__ constructor.
     """
-    
+
     def __init__(self, id, isg, ctype, keep=False, **kwds):
         assert issubclass(ctype, PyMUICType)
-        
+
         self.__isg = isg
         self.__id = id
         self.__ctype = ctype
@@ -360,7 +360,7 @@ class MAttribute(property):
     def isg(self):
         "MUI ISG flags of the MUI attribute"
         return self.__isg
-    
+
     @property
     def ctype(self):
         "PyMUICType class of the MUI attribute"
@@ -377,7 +377,7 @@ class MMethod(property):
             self.__retconv = lambda x: None
         else:
             self.__retconv = rettype.from_value
-        
+
         if fields:
             self.__msgtype = type('c_MUIP_%x' % id, (PyMUICStructureType,), {'_pack_': 4, '_fields_': [ ('MethodID', c_ULONG) ] + fields})
             buftp = (_ct.c_ulong * (len(fields)+1))
@@ -475,7 +475,7 @@ class BOOPSIMetaClass(type):
         attrs_id = {}
         meths = {}
         meths_id = {}
-        
+
         for k, v in dct.iteritems():
             if isinstance(v, MAttribute):
                 attrs[k] = v
@@ -483,7 +483,7 @@ class BOOPSIMetaClass(type):
             elif isinstance(v, MMethod):
                 meths[k] = v
                 meths_id[v.id] = v
-                
+
         dct['_pymui_attrs_'] = attrs
         dct['_pymui_attrs_id_'] = attrs_id
         dct['_pymui_meths_'] = meths
@@ -495,9 +495,9 @@ class BOOPSIMetaClass(type):
            dct[name+'_'+k] = v
         for k, v in meths.iteritems():
            dct[name+'_'+k] = v
-        
+
         return type.__new__(metacl, name, bases, dct)
-        
+
 
 class MUIMetaClass(BOOPSIMetaClass):
     def __init__(cl, name, bases, dct):
@@ -556,7 +556,7 @@ class PyMUIBase(object):
         if isinstance(o, str):
             return cl._getMAByName(o)
         return cl._getMAByID(o)
-        
+
     @classmethod
     def _getMAByName(cl, name):
         # lookup in class first
@@ -626,7 +626,7 @@ class PyMUIBase(object):
     def SetAttr(self, *args, **kwds):
         if args:
             self._getMA(args[0]).__set__(self, args[1])
-            
+
         for k in kwds:
             setattr(self, k, kwds[k])
 
@@ -735,13 +735,13 @@ class AttributeNotify:
                     kwds[k] = v
         else:
             kwds = self.kwds
-        
+
         return self.cb(e, *args, **kwds)
 
 class Notify(PyMUIObject, PyMUIBase):
     """rootclass for all MUI sub-classes.
     """
-    
+
     __metaclass__ = MUIMetaClass
     __notify_cbdict = {}
     CLASSID = MUIC_Notify
@@ -768,7 +768,7 @@ class Notify(PyMUIObject, PyMUIBase):
         self.precreate(**kwds)
         self.create(**kwds)
         self.postcreate(**kwds)
-        
+
     def _notify_cb(self, a, v, nv):
         key = (self, a)
         l = Notify.__notify_cbdict[key]
@@ -782,12 +782,12 @@ class Notify(PyMUIObject, PyMUIBase):
         self._keep_db = {}
         PyMUIObject.__init__(self)
         PyMUIBase.__init__(self)
-        
+
     def postcreate(self, **kwds): pass
 
     def create(self, **kwds):
         if self._object: return
-        
+
         extra = kwds.pop('muiargs', [])
 
         # convert given keywords as long
@@ -799,7 +799,7 @@ class Notify(PyMUIObject, PyMUIBase):
             except:
                 print "Error on keywords '%s'" % k
                 raise
-        
+
         if self.__class__._MCC_:
             self._create(self._bclassid, muiargs + extra, self.__class__._pymui_overloaded_)
         else:
@@ -820,7 +820,7 @@ class Notify(PyMUIObject, PyMUIBase):
         assert 's' in attr.isg or 'g' in attr.isg
         # Incref self (if it's a temporary object no notification will occures after GC)
         tv = kwds.pop('when', MUIV_EveryTime)
-        
+
         event = AttributeNotify(tv, callback, args, kwds)
         key = (self, attr.id)
         if key in Notify.__notify_cbdict:
@@ -838,7 +838,7 @@ class Notify(PyMUIObject, PyMUIBase):
 
 class Family(Notify):
     CLASSID = MUIC_Family
-    
+
     Child = MAttribute(MUIA_Family_Child, 'i..', c_pMUIObject, postSet=postset_child, keep=True)
     List  = MAttribute(MUIA_Family_List , '..g', c_pMinList)
 
@@ -898,7 +898,7 @@ class Family(Notify):
 
 class Menustrip(Family):
     CLASSID = MUIC_Menustrip
-    
+
     Enabled = MAttribute(MUIA_Menustrip_Enabled, 'isg', c_BOOL)
 
     InitChange = MMethod(MUIM_Menustrip_InitChange)
@@ -925,7 +925,7 @@ class Menustrip(Family):
 
 class Menu(Family):
     CLASSID = MUIC_Menu
-    
+
     Enabled = MAttribute(MUIA_Menu_Enabled, 'isg', c_BOOL)
     Title   = MAttribute(MUIA_Menu_Title  , 'isg', c_STRPTR, keep=True)
 
@@ -936,7 +936,7 @@ class Menu(Family):
 
 class Menuitem(Family):
     CLASSID = MUIC_Menuitem
-    
+
     Checked       = MAttribute(MUIA_Menuitem_Checked       , 'isg', c_BOOL)
     Checkit       = MAttribute(MUIA_Menuitem_Checkit       , 'isg', c_BOOL)
     CommandString = MAttribute(MUIA_Menuitem_CommandString , 'isg', c_BOOL)
@@ -955,14 +955,14 @@ class Menuitem(Family):
                 kwds['CommandString'] = True
             else:
                 kwds['CommandString'] = False
-                
+
         if Title == '-': Title = NM_BARLABEL
-        
+
         super(Menuitem, self).__init__(Title=Title, **kwds)
 
     def Bind(self, callback, *args, **kwds):
         self.Notify('Trigger', lambda *a, **k: callback(*a, **k), *args, **kwds)
-        
+
 #===============================================================================
 
 class Application(Notify): # TODO: unfinished
@@ -1255,7 +1255,9 @@ class Window(Notify): # TODO: unfinished
     def CloseWindow(self):
         self.Open = False
 
-    #pointer = property(fset=_muimaster._setwinpointer, doc="Window mouse pointer")
+    # PROPERTIES
+
+    pointer = property(fset=_muimaster._setwinptr, doc="Window mouse pointer type")
 
 #===============================================================================
 
@@ -1269,7 +1271,7 @@ class AboutMUI(Window):
         # We don't call app.AddChild() because this object do it itself during its OM_NEW
         # So we need to call _loosed yourself.
         self._loosed()
- 
+
 #===============================================================================
 
 class c_MinMax(PyMUICStructureType):
@@ -1487,14 +1489,14 @@ VBar    = Rectangle.mkVBar
 
 class Balance(Area):
     CLASSID = MUIC_Balance
-    
+
     Quiet = MAttribute(MUIA_Balance_Quiet, 'i..', c_LONG)
 
 #===============================================================================
 
 class Image(Area):
     CLASSID = MUIC_Image
-    
+
     FontMatch       = MAttribute(MUIA_Image_FontMatch       , 'i..', c_BOOL)
     FontMatchHeight = MAttribute(MUIA_Image_FontMatchHeight , 'i..', c_BOOL)
     FontMatchWidth  = MAttribute(MUIA_Image_FontMatchWidth  , 'i..', c_BOOL)
@@ -1511,7 +1513,7 @@ class CheckMark(Image):
         if key is not None:
             kwds['ControlChar'] = key
         kwds.update(Frame='ImageButton',
-                    Background='ButtonBack', 
+                    Background='ButtonBack',
                     InputMode='Toggle',
                     Spec=MUII_CheckMark,
                     FreeVert=True,
@@ -1602,7 +1604,7 @@ CFreeLabel = functools.partial(FreeLabel, align='c')
 
 class Gadget(Area):
     CLASSID = MUIC_Gadget
-    
+
     Gadget = MAttribute(MUIA_Gadget_Gadget, '..g', c_APTR, keep=True) # struct Gadget *
 
 #===============================================================================
@@ -1639,7 +1641,7 @@ class String(Area):
 
 # TODO
 #class Boopsi(String):
-#    CLASSID = MUIC_Boopsi   
+#    CLASSID = MUIC_Boopsi
 
 #===============================================================================
 
@@ -1659,7 +1661,7 @@ class Scale(Area):
     CLASSID = MUIC_Scale
 
     Horiz = MAttribute(MUIA_Scale_Horiz, 'isg', c_BOOL)
-    
+
 #===============================================================================
 
 class Colorfield(Area):
@@ -1797,7 +1799,7 @@ class Group(Area): # TODO: unfinished
 
     def __init__(self, **kwds):
         child = kwds.pop('Child', None)
-        
+
         x = kwds.pop('GroupTitle', None)
         if x:
             kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
@@ -1972,7 +1974,7 @@ class List(Group):
             kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
             kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)
         super(List, self).__init__(**kwds)
-        
+
     @Insert.alias
     def Insert(self, meth, objs, pos=MUIV_List_Insert_Bottom):
         n = len(objs)
@@ -1999,7 +2001,7 @@ class Floattext(List):
     SkipChars = MAttribute(MUIA_Floattext_SkipChars, 'is.', c_STRPTR, keep=True)
     TabSize   = MAttribute(MUIA_Floattext_TabSize,   'is.', c_LONG)
     Text      = MAttribute(MUIA_Floattext_Text,      'isg', c_STRPTR, keep=True)
-    
+
 #===============================================================================
 
 class Volumelist(List):
@@ -2030,7 +2032,7 @@ class Dirlist(List):
     SortHighLow   = MAttribute(MUIA_Dirlist_SortHighLow,   'is.', c_BOOL)
     SortType      = MAttribute(MUIA_Dirlist_SortType,      'is.', c_LONG)
     Status        = MAttribute(MUIA_Dirlist_Status,        '..g', c_LONG)
-    
+
     ReRead = MMethod(MUIM_Dirlist_ReRead)
 
 #===============================================================================
@@ -2209,7 +2211,7 @@ class Cycle(Group):
 
 class Coloradjust(Group):
     CLASSID = MUIC_Coloradjust
-    
+
     Blue   = MAttribute(MUIA_Coloradjust_Blue   , 'isg', c_ULONG)
     Green  = MAttribute(MUIA_Coloradjust_Green  , 'isg', c_ULONG)
     ModeID = MAttribute(MUIA_Coloradjust_ModeID , 'isg', c_ULONG)
@@ -2262,7 +2264,7 @@ class Pubscreenlist(Group):
     CLASSID = MUIC_Pubscreenlist
 
     Selection = MAttribute(MUIA_Pubscreenlist_Selection, '..g', c_STRPTR)
-    
+
 #===============================================================================
 
 class Popobject(Popstring):
