@@ -157,6 +157,7 @@ MUIM_Process_Kill                        = 0x804264cf
 MUIM_Process_Launch                      = 0x80425df7
 MUIM_Process_Process                     = 0x804230aa
 MUIM_Process_Signal                      = 0x8042e791
+MUIM_Title_Close                         = 0x8042303a
 MUIA_ApplicationObject                   = 0x8042d3ee
 MUIA_AppMessage                          = 0x80421955
 MUIA_HelpLine                            = 0x8042a825

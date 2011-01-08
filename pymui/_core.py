@@ -1314,7 +1314,7 @@ class Area(Notify): # TODO: unfinished
 
     Background         = MAttribute(MUIA_Background         , 'is.', c_STRPTR, keep=True)
     BottomEdge         = MAttribute(MUIA_BottomEdge         , '..g', c_LONG)
-    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_pMUIObject, postSet=postset_child, keep=True)
+    ContextMenu        = MAttribute(MUIA_ContextMenu        , 'isg', c_pMUIObject, keep=True)
     ContextMenuTrigger = MAttribute(MUIA_ContextMenuTrigger , '..g', c_pMUIObject)
     ControlChar        = MAttribute(MUIA_ControlChar        , 'isg', c_CHAR)
     CycleChain         = MAttribute(MUIA_CycleChain         , 'isg', c_LONG)
@@ -1422,13 +1422,17 @@ class Area(Notify): # TODO: unfinished
 
 #===============================================================================
 
-MUIA_Dtpic_Scale    = 0x8042ca4c # Currently private
+MUIA_Dtpic_Scale     = 0x8042ca4c # V20 isg LONG (private)
+MUIA_Dtpic_MinWidth  = 0x8042c417 # V20 i.g BOOL (private)
+MUIA_Dtpic_MinHeight = 0x80423ecc # V20 i.g BOOL (private)
 
 class Dtpic(Area):
     CLASSID = MUIC_Dtpic
 
-    Name     = MAttribute(MUIA_Dtpic_Name, 'isg',  c_STRPTR, keep=True)
-    Scale    = MAttribute(MUIA_Dtpic_Scale, 'isg',  c_LONG)
+    Name      = MAttribute(MUIA_Dtpic_Name,      'isg', c_STRPTR, keep=True)
+    MinWidth  = MAttribute(MUIA_Dtpic_MinWidth,  'i.g', c_BOOL)
+    MinHeight = MAttribute(MUIA_Dtpic_MinHeight, 'i.g', c_BOOL)
+    Scale     = MAttribute(MUIA_Dtpic_Scale,     'isg', c_LONG)
 
     def __init__(self, Name=None, **kwds):
         if Name: kwds['Name'] = Name
@@ -2425,6 +2429,19 @@ class Colorring(Group):
 # TODO
 #class Aboutpage(Mccprefs):
 #    CLASSID = MUIC_Aboutpage
+
+#===============================================================================
+
+class Title(Group):
+    CLASSID = MUIC_Title
+
+    Clickable = MAttribute(MUIA_Title_Clickable, 'i..', c_LONG)
+    Closable  = MAttribute(MUIA_Title_Closable, 'isg', c_BOOL)
+    Dragable  = MAttribute(MUIA_Title_Dragable, 'isg', c_BOOL)
+    Newable   = MAttribute(MUIA_Title_Newable, 'isg', c_BOOL)
+    Position  = MAttribute(MUIA_Title_Position, 'isg', c_LONG)
+
+    Close = MMethod(MUIM_Title_Close, [ ('tito', c_pObject) ])
 
 ################################################################################
 #################################  END OF FILE  ################################

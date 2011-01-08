@@ -889,9 +889,15 @@ void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
         return;
 
     cairo_surface_flush(pyo->cairo_surface);
+#if 0
     WritePixelArrayAlpha(pyo->cairo_data, r.MinX, r.MinY, pyo->cairo_surface_stride,
                          _rp(mo), _mleft(mo)+r.MinX, _mtop(mo)+r.MinY,
                          r.MaxX-r.MinX+1, r.MaxY-r.MinY+1, 0xffffffff);
+#else
+    WritePixelArray(pyo->cairo_data, r.MinX, r.MinY, pyo->cairo_surface_stride,
+                    _rp(mo), _mleft(mo)+r.MinX, _mtop(mo)+r.MinY,
+                    r.MaxX-r.MinX+1, r.MaxY-r.MinY+1, RECTFMT_ARGB);
+#endif
 }
 //-
 #endif
@@ -3408,7 +3414,7 @@ _muimaster_removeclipping(PyObject *self, PyObject *args)
 static PyObject *
 _muimaster_setwinpointer(PyObject *self, PyObject *args)
 {
-    PyObject *pyo;
+    PyBOOPSIObject *pyo;
     Object *obj;
     struct Window *win;
     ULONG type;
@@ -3419,7 +3425,7 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!I", &PyMUIObject_Type, &pyo, &type))
         return NULL;
 
-    obj = PyBOOPSIObject_GetObject((PyObject *)pyo);
+    obj = PyBOOPSIObject_GetObject(pyo);
     if (NULL == obj)
         return NULL;
 
