@@ -1027,6 +1027,7 @@ class Application(Notify): # TODO: unfinished
         global _app
         _app = self
 
+        self.__closeonlast = bool(kwds.get('CloseOnLast', False))
         self.__mainwin = None
         if Window:
             self.AddChild(Window)
@@ -1035,7 +1036,8 @@ class Application(Notify): # TODO: unfinished
         assert isinstance(win, Window)
         if self.__mainwin is None:
             self.__mainwin = win
-            self.__mainwin_notify = win.Notify(MUIA_Window_CloseRequest, lambda e: e.Source.KillApp(), when=True)
+            if self.__closeonlast:
+                self.__mainwin_notify = win.Notify(MUIA_Window_CloseRequest, lambda e: e.Source.KillApp(), when=True)
         super(Application, self).AddChild(win)
 
     def RemChild(self, win):
