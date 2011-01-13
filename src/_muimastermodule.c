@@ -850,45 +850,62 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
 //+ blit_cairo_surface
 void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
 {
+    ULONG doublebuffer = FALSE;
     struct Rectangle r;
 
-    /* Ask for the current drawing area to refresh */
-    GetRPAttrs(_rp(mo), RPTAG_DrawBounds, (ULONG)&r, TAG_DONE);
-    DPRINT("(%d, %d, %d, %d), ", r.MinX, r.MaxX, r.MinY, r.MaxY);
-    DPRINT("(%d, %d, %d, %d), ", _mleft(mo), _mright(mo), _mtop(mo), _mbottom(mo));
+    DPRINT("MuiBounds: (%d, %d, %d, %d), ", _mleft(mo), _mright(mo), _mtop(mo), _mbottom(mo));
 
-    if (r.MinX <= r.MaxX)
+    if (get(mo, MUIA_DoubleBuffer, &doublebuffer) && !doublebuffer)
     {
-        /* Clip to the object area */
-        r.MinX = MAX(r.MinX, _mleft(mo))-_mleft(mo);
-        r.MinY = MAX(r.MinY, _mtop(mo))-_mtop(mo);
-        r.MaxX = MIN(r.MaxX, _mright(mo))-_mleft(mo);
-        r.MaxY = MIN(r.MaxY, _mbottom(mo))-_mtop(mo);
+        /* Ask for the current drawing area to refresh */
+        GetRPAttrs(_rp(mo), RPTAG_DrawBounds, (ULONG)&r, TAG_DONE);
+        DPRINT("SysBounds: (%d, %d, %d, %d), ", r.MinX, r.MaxX, r.MinY, r.MaxY);
+
+        if (r.MinX <= r.MaxX)
+        {
+            /* Clip to the object area and translate to object origin */
+            r.MinX = MAX(r.MinX, _mleft(mo))   - _mleft(mo);
+            r.MinY = MAX(r.MinY, _mtop(mo))    - _mtop(mo);
+            r.MaxX = MIN(r.MaxX, _mright(mo))  - _mleft(mo);
+            r.MaxY = MIN(r.MaxY, _mbottom(mo)) - _mtop(mo);
+        }
+        else
+        {
+            /* No system clip, use the object area */
+            r.MinX = 0;
+            r.MinY = 0;
+            r.MaxX = _mright(mo)-_mleft(mo);
+            r.MaxY = _mbottom(mo)-_mtop(mo);
+        }
     }
     else
     {
-        /* No system clip, use the object area */
+        /* Use the object area */
         r.MinX = 0;
         r.MinY = 0;
         r.MaxX = _mright(mo)-_mleft(mo);
         r.MaxY = _mbottom(mo)-_mtop(mo);
     }
+
     DPRINT("(%d, %d, %d, %d), ", r.MinX, r.MaxX, r.MinY, r.MaxY);
 
     if ((r.MinX > r.MaxX) || (r.MinY > r.MaxY))
         return;
 
-    /* Clip to the user area (relative to the cairo surface) */
+    /* Clip to the user requested area */
     r.MinX = MAX(r.MinX, pyo->cairo_paint_area.x);
     r.MinY = MAX(r.MinY, pyo->cairo_paint_area.y);
     r.MaxX = MIN(r.MaxX, pyo->cairo_paint_area.x+pyo->cairo_paint_area.width-1);
     r.MaxY = MIN(r.MaxY, pyo->cairo_paint_area.y+pyo->cairo_paint_area.height-1);
-    DPRINT("(%d, %d, %d, %d)\n", r.MinX, r.MaxX, r.MinY, r.MaxY);
 
+    DPRINT("FinalBounds: (%d, %d, %d, %d)\n", r.MinX, r.MaxX, r.MinY, r.MaxY);
+
+    /* Sanity checks */
     if ((r.MinX > r.MaxX) || (r.MinY > r.MaxY))
         return;
 
     cairo_surface_flush(pyo->cairo_surface);
+
 #if 0
     WritePixelArrayAlpha(pyo->cairo_data, r.MinX, r.MinY, pyo->cairo_surface_stride,
                          _rp(mo), _mleft(mo)+r.MinX, _mtop(mo)+r.MinY,
@@ -2262,7 +2279,7 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
         Py_INCREF(self->pycairo_obj);
 
     /* Reset the paint area to the full surface */
-    if (self->pycairo_obj)
+    if (NULL != self->pycairo_obj)
     {
         self->cairo_paint_area.x = 0;
         self->cairo_paint_area.y = 0;
