@@ -1810,10 +1810,6 @@ class Group(Area): # TODO: unfinished
         if x:
             kwds.update(Frame=MUIV_Frame_Group, FrameTitle=x, Background=MUII_GroupBack)
 
-        x = kwds.pop('InnerSpacing', None)
-        if x:
-            kwds.update(InnerLeft=x[0], InnerRight=x[0], InnerTop=x[1], InnerBottom=x[1])
-
         super(Group, self).__init__(**kwds)
 
         # Add PyMUIObject passed as argument
