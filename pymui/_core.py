@@ -1834,25 +1834,34 @@ class Group(Area): # TODO: unfinished
         try:
             for o in children:
                 self.Remove(o)
-                super(Group, self).RemChild(o)
         finally:
             if lock: self.ExitChange()
+            
+    @Remove.alias
+    def Remove(self, meth, obj):
+        assert self._ischild(obj)
+        meth(self, obj)
+        self._popchild(obj)
 
     @AddHead.alias
     def AddHead(self, meth, obj, lock=False):
+        assert not self._ischild(obj)
         if lock: self.InitChange()
         try:
             obj._loosed() # first to be sure if exceptions.
             meth(self, obj)
+            self._pushchild(obj)
         finally:
             if lock: self.ExitChange()
 
     @AddTail.alias
     def AddTail(self, meth, obj, lock=False):
+        assert not self._ischild(obj)
         if lock: self.InitChange()
         try:
             obj._loosed() # first to be sure if exceptions.
             meth(self, obj)
+            self._pushchild(obj)
         finally:
             if lock: self.ExitChange()
 
