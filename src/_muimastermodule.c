@@ -2079,6 +2079,38 @@ muiobject_clip_cairo_paint_area(PyMUIObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 //-
+//+ muiobject_add_cairo_paint_area
+PyDoc_STRVAR(muiobject_add_cairo_paint_area_doc,
+"AddCairoPaintArea() -> None\n\
+\n\
+Sorry, Not documented yet :-(");
+
+static PyObject *
+muiobject_add_cairo_paint_area(PyMUIObject *self, PyObject *args)
+{
+    cairo_rectangle_int_t clip;
+    int x2, y2;
+
+    if (NULL == self->pycairo_obj)
+        return PyErr_Format(PyExc_TypeError, "No cairo context found on this object");
+
+    if (PyArg_ParseTuple(args, "iiii", &clip.x, &clip.y, &clip.width, &clip.height) < 0)
+        return NULL;
+
+    x2 = self->cairo_paint_area.x + self->cairo_paint_area.width;
+    y2 = self->cairo_paint_area.y + self->cairo_paint_area.height;
+    
+    self->cairo_paint_area.x = MIN(self->cairo_paint_area.x, clip.x);
+    self->cairo_paint_area.y = MIN(self->cairo_paint_area.y, clip.y);
+    
+    clip.x += clip.width;
+    clip.y += clip.height;
+    self->cairo_paint_area.width = MAX(x2, clip.x) - self->cairo_paint_area.x;
+    self->cairo_paint_area.height = MAX(y2, clip.y) - self->cairo_paint_area.y;
+
+    Py_RETURN_NONE;
+}
+//-
 #endif
 
 //+ muiobject_get_data
@@ -2339,7 +2371,8 @@ static struct PyMethodDef muiobject_methods[] = {
 #ifdef WITH_PYCAIRO
     {"BlitCairoContext",  (PyCFunction) muiobject_blit_cairo_context, METH_VARARGS, muiobject_blit_cairo_context_doc},
     {"ClipCairoPaintArea",  (PyCFunction) muiobject_clip_cairo_paint_area, METH_VARARGS, muiobject_clip_cairo_paint_area_doc},
-    {"FillCairoContext", (PyCFunction)muiobject_fill_cairo_context, METH_NOARGS, "Copy rastport on cairo"},
+    {"AddCairoPaintArea",  (PyCFunction) muiobject_add_cairo_paint_area, METH_VARARGS, muiobject_add_cairo_paint_area_doc},
+    {"FillCairoContext", (PyCFunction) muiobject_fill_cairo_context, METH_NOARGS, "Copy rastport on cairo"},
 #endif
     {NULL} /* sentinel */
 };
@@ -2891,7 +2924,7 @@ raster_dealloc(PyRasterObject *self)
 PyDoc_STRVAR(raster_blit8_doc,
 "Blit8(buffer, dst_x, dst_y, src_w, src_h, src_x=0, src_y=0)\n\
 \n\
-Blit given RGB8 buffer on the raster.\n\
+Blit given ARGB8 buffer on the raster.\n\
 \n\
 src_x, src_y: top-left corner of source rectangle to blit.\n\
 src_w: source rectangle width.\n\
@@ -2904,18 +2937,18 @@ raster_blit8(PyRasterObject *self, PyObject *args)
 {
     char *buf;
     UWORD src_x=0, src_y=0, dst_x, dst_y, src_w, src_h;
-    int buf_size;
+    unsigned int buf_size, stride;
 
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s#HHHH|HH:Blit8", &buf, &buf_size,
+    if (!PyArg_ParseTuple(args, "s#kHHHH|HH:Blit8", &buf, &buf_size, &stride,
                           &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
         return NULL;
 
-    WritePixelArray(buf, src_x, src_y, buf_size/src_h, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
+    WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
 
     Py_RETURN_NONE;
 }
@@ -2940,18 +2973,18 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 {
     char *buf;
     UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
-    int buf_size;
+    unsigned int buf_size, stride;
 
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s#HHHHHH:ScaledBlit8", &buf, &buf_size,
+    if (!PyArg_ParseTuple(args, "s#kHHHHHH:ScaledBlit8", &buf, &buf_size, &stride,
                           &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    ScalePixelArray(buf, src_w, src_h, buf_size/src_h, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGB);
+    ScalePixelArray(buf, src_w, src_h, stride, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGB);
 
     Py_RETURN_NONE;
 }
@@ -3393,17 +3426,19 @@ static PyObject *
 _muimaster_addclipping(PyObject *self, PyObject *args)
 {
     PyBOOPSIObject *pyo;
+    ULONG w,h;
+    LONG x,y;
     Object *obj;
     APTR handle;
 
-    if (!PyArg_ParseTuple(args, "O!", &PyMUIObject_Type, &pyo))
+    if (!PyArg_ParseTuple(args, "O!|iiII", &PyMUIObject_Type, &pyo, &x, &y, &w, &h))
         return NULL;
 
     obj = PyBOOPSIObject_GetObject(pyo);
     if (NULL == obj)
         return NULL;
 
-    handle = MUI_AddClipping(muiRenderInfo(obj), _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+    handle = MUI_AddClipping(muiRenderInfo(obj), x,y, w, h);
     return PyLong_FromVoidPtr(handle);
 }
 //-

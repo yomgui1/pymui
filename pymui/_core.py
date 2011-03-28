@@ -80,7 +80,9 @@ class c_Object(c_ULONG):
         if x is None:
             return c_ULONG.__new__(cl)
         assert isinstance(x, PyBOOPSIObject)
-        return cl.from_address(x._object)
+        obj = cl.from_address(x._object)
+        obj.__base = x
+        return obj
 
     def __init__(self, x=None):
         c_ULONG.__init__(self)
@@ -549,7 +551,7 @@ def muimethod(mid):
 
 class PyMUIBase(object):
     def __init__(self):
-        self.__chld = []
+        self.__chld = {}
 
     @classmethod
     def _getMA(cl, o):
@@ -639,10 +641,10 @@ class PyMUIBase(object):
         return o._object in self.__chld
 
     def _pushchild(self, o):
-        self.__chld.append(o._object)
+        self.__chld[o._object] = o
 
     def _popchild(self, o):
-        self.__chld.remove(o._object)
+        del self.__chld[o._object]
 
     def AddChild(self, o):
         assert not self._ischild(o)
@@ -1402,7 +1404,7 @@ class Area(Notify): # TODO: unfinished
 
         super(Area, self).__init__(**kwds)
 
-    def AddClipping(self):
+    def AddClipping(self, area=None):
         """AddClipping() -> None
 
         Call MUI_AddClipping() for the full area.
@@ -1411,7 +1413,10 @@ class Area(Notify): # TODO: unfinished
         And method RemoveClipping shall be called before leaving the MUIM_Draw method.
         """
 
-        self.__cliphandle =_muimaster._AddClipping(self)
+        if area is None:
+            self.__cliphandle = _muimaster._AddClipping(self, self.MLeft, self.MTop, self.MWidth, self.MHeight)
+        else:
+            self.__cliphandle = _muimaster._AddClipping(self, *area)
 
     def RemoveClipping(self):
         """RemoveClipping(self) -> None
