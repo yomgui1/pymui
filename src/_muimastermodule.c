@@ -2803,21 +2803,18 @@ evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
         return PyFloat_FromDouble((double)self->tabletdata.td_TabletY / self->tabletdata.td_RangeY);
 }
 //-
-//+ evthandler_get_up
 static PyObject *
 evthandler_get_up(PyEventHandlerObject *self, void *closure)
 {
     return PyBool_FromLong((self->imsg.Code & IECODE_UP_PREFIX) == IECODE_UP_PREFIX);
 }
-//-
-//+ evthandler_get_rawkey
+
 static PyObject *
 evthandler_get_rawkey(PyEventHandlerObject *self, void *closure)
 {
     return PyInt_FromLong(self->imsg.Code & ~IECODE_UP_PREFIX);
 }
-//-
-//+ evthandler_get_key
+
 static PyObject *
 evthandler_get_key(PyEventHandlerObject *self, void *closure)
 {
@@ -2831,7 +2828,7 @@ evthandler_get_key(PyEventHandlerObject *self, void *closure)
         ie.ie_Class        = IECLASS_RAWKEY;
         ie.ie_SubClass     = 0;
         ie.ie_Code         = self->imsg.Code & ~IECODE_UP_PREFIX;
-        ie.ie_Qualifier    = self->imsg.Qualifier;
+        ie.ie_Qualifier    = self->imsg.Qualifier & (ULONG)closure;
         ie.ie_EventAddress = (APTR *)*((ULONG *)self->imsg.IAddress);
 
         len = MapRawKey(&ie, c, sizeof(c), NULL);
@@ -2841,20 +2838,20 @@ evthandler_get_key(PyEventHandlerObject *self, void *closure)
 
     Py_RETURN_NONE;
 }
-//-
-//+ evthandler_get_handler
+
 static PyObject *
 evthandler_get_handler(PyEventHandlerObject *self, void *closure)
 {
     return PyLong_FromVoidPtr(&self->handler);
 }
-//-
+
 
 static PyGetSetDef evthandler_getseters[] = {
     {"handler", (getter)evthandler_get_handler, NULL, "Address of the MUI_EventHandlerNode", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
     {"RawKey", (getter)evthandler_get_rawkey, NULL, "IntuiMessage Code field without UP prefix if exists", NULL},
-    {"Key", (getter)evthandler_get_key, NULL, "Mapped key using the rawkey (None if Class is not IDCMP_RAWKEY)", NULL},
+    {"Key", (getter)evthandler_get_key, NULL, "Mapped key using the rawkey (None if Class is not IDCMP_RAWKEY)", (void*)0xFFF},
+    {"SimpleKey", (getter)evthandler_get_key, NULL, "Mapped key using the rawkey without qualifiers (None if Class is not IDCMP_RAWKEY)", (void*)0xFF00},
     {"td_NormTabletX", (getter)evthandler_get_normtablet, NULL, "Normalized tablet X (float [0.0, 1.0])", (APTR)0},
     {"td_NormTabletY", (getter)evthandler_get_normtablet, NULL, "Normalized tablet Y (float [0.0, 1.0])", (APTR)~0},
     {NULL} /* sentinel */

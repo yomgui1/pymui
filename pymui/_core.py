@@ -745,7 +745,7 @@ class Notify(PyMUIObject, PyMUIBase):
     """
 
     __metaclass__ = MUIMetaClass
-    __notify_cbdict = {}
+    
     CLASSID = MUIC_Notify
 
     ApplicationObject = MAttribute(MUIA_ApplicationObject, '..g', c_pMUIObject)
@@ -772,16 +772,18 @@ class Notify(PyMUIObject, PyMUIBase):
         self.postcreate(**kwds)
 
     def _notify_cb(self, a, v, nv):
-        key = (self, a)
-        l = Notify.__notify_cbdict[key]
+        keys = self.__notify_keysorder[a]
         attr = self._getMAByID(a)
         e = AttributeEvent(self, attr.ctype.from_value(v), nv)
-        for o in l:
-            if o.trigvalue == MUIV_EveryTime or long(o.trigvalue) ==  v:
-                if o(e): return
+        for k in keys:
+            action = self.__notify_actions[k]
+            if action.trigvalue == MUIV_EveryTime or long(action.trigvalue) ==  v:
+                if action(e): return
 
     def precreate(self, **kwds):
         self._keep_db = {}
+        self.__notify_keysorder = {}
+        self.__notify_actions = {}
         PyMUIObject.__init__(self)
         PyMUIBase.__init__(self)
 
@@ -816,25 +818,47 @@ class Notify(PyMUIObject, PyMUIBase):
         app.Quit()
 
     def Notify(self, attr, callback, *args, **kwds):
-        # TODO
+        """Notify(attr, callback, *args, **kwds) -> registring key
+        
+        Register a callable to a MUI event.
+        
+        The callable and the 'when' condition in kwds is associated to the event,
+        so calling again this function with same attribute and callable
+        replace the previous one.
+        
+        If not given, 'when' is MUIV_EveryTime.
+        """
+        
+        # Checkings
         assert callable(callback)
         attr = self._getMA(attr)
         assert 's' in attr.isg or 'g' in attr.isg
-        # Incref self (if it's a temporary object no notification will occures after GC)
-        tv = kwds.pop('when', MUIV_EveryTime)
-
-        event = AttributeNotify(tv, callback, args, kwds)
-        key = (self, attr.id)
-        if key in Notify.__notify_cbdict:
-            Notify.__notify_cbdict[key].append(event)
-        else:
-            Notify.__notify_cbdict[key] = [ event ]
+        
+        when = kwds.pop('when', MUIV_EveryTime)
+        
+        # This action instance implement __call__().
+        # Called when notification happens.
+        action = AttributeNotify(when, callback, args, kwds)
+        
+        # Key for registering
+        key = (attr.id, callback)
+        if attr.id not in self.__notify_keysorder:
             self._notify(attr.id)
+            self.__notify_keysorder[attr.id] = []
+        
+        if key not in self.__notify_actions:
+            self.__notify_keysorder[attr.id].append(key)
+        self.__notify_actions[key] = action
+            
+        return key
 
-        return (key, event)
-
-    def RemoveNotify(self, code):
-        Notify.__notify_cbdict[code[0]].remove(code[1])
+    def RemoveNotifyFromKey(self, key):
+        del Notify.__notify_actions[key]
+        Notify.__notify_keysorder[key[0]].remove(key)
+        
+    def RemoveNotify(self, attr, callback):
+        self.RemoveNotifyFromKey((self._getMA(attr).id, callback))
+        
 
 #===============================================================================
 
@@ -1030,25 +1054,25 @@ class Application(Notify): # TODO: unfinished
         _app = self
 
         self.__closeonlast = bool(kwds.get('CloseOnLast', False))
-        self.__mainwin = None
+        self.__winopen = 0
+        
         if Window:
             self.AddChild(Window)
 
+    def __check_win_open(self, evt):
+        self.__winopen += 1 if bool(evt.value) else -1
+        if self.__winopen <= 0:
+            self.Quit()
+        
     def AddChild(self, win):
         assert isinstance(win, Window)
-        if self.__mainwin is None:
-            self.__mainwin = win
-            if self.__closeonlast:
-                self.__mainwin_notify = win.Notify(MUIA_Window_CloseRequest, lambda e: e.Source.KillApp(), when=True)
         super(Application, self).AddChild(win)
+        win.Notify('Open', self.__check_win_open)
 
     def RemChild(self, win):
         assert isinstance(win, Window)
         super(Application, self).RemChild(win)
-        win.Open = False
-        if self.__mainwin and self.__mainwin._object == win._object:
-            self.RemoveNotify(self.__mainwin_notify)
-            self.__mainwin = self.__mainwin_notify = None
+        win.Open = False # may kill the application due to notification
         # win may be not owned anymore, let user decide to dispose it or re-assign it
 
     def Run(self):
@@ -1251,12 +1275,12 @@ class Window(Notify): # TODO: unfinished
         super(Window, self).__init__(**kwds)
 
         if autoclose:
-            self.Notify('CloseRequest', lambda e: e.Source.CloseWindow(), when=True)
+            self.Notify('CloseRequest', self.CloseWindow, when=True)
 
     def OpenWindow(self):
         self.Open = True
 
-    def CloseWindow(self):
+    def CloseWindow(self, evt=None):
         self.Open = False
 
     # PROPERTIES
@@ -1520,7 +1544,6 @@ class Image(Area):
 
 class CheckMark(Image):
     def __init__(self, selected=False, key=None, **kwds):
-        kwds = {}
         if key is not None:
             kwds['ControlChar'] = key
         kwds.update(Frame='ImageButton',
@@ -1595,8 +1618,8 @@ class Text(Area):
     ALIGN_MAP = {'r': MUIX_R, 'l': MUIX_L, 'c': MUIX_C}
 
     @classmethod
-    def Label(cl, label, align='r'):
-        return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'), Weight=0)
+    def Label(cl, label, align='r', **kw):
+        return cl(Contents=label, PreParse=Text.ALIGN_MAP.get(align.lower(), 'r'), Weight=0, **kw)
 
     @classmethod
     def FreeLabel(cl, label, align='r'):
@@ -1956,7 +1979,7 @@ class List(Group):
     ScrollerPos         = MAttribute(MUIA_List_ScrollerPos,         'i..', c_BOOL)
     SelectChange        = MAttribute(MUIA_List_SelectChange,        '..g', c_BOOL)
     ShowDropMarks       = MAttribute(MUIA_List_ShowDropMarks,       'isg', c_BOOL)
-    SourceArray         = MAttribute(MUIA_List_SourceArray,         'i..', c_APTR)
+    SourceArray         = MAttribute(MUIA_List_SourceArray,         'i..', c_pSTRPTR)
     Title               = MAttribute(MUIA_List_Title,               'isg', c_STRPTR, keep=True)
     TitleClick          = MAttribute(MUIA_List_TitleClick,          '..g', c_LONG)
     TopPixel            = MAttribute(MUIA_List_TopPixel,            '..g', c_LONG)
@@ -2413,7 +2436,7 @@ class Screenmodepanel(Panel):
 
 #===============================================================================
 
-class Keyadjust(Group):
+class Keyadjust(Group, String):
     CLASSID = MUIC_Keyadjust
 
     AllowMouseEvents = MAttribute(MUIA_Keyadjust_AllowMouseEvents, 'isg', c_BOOL)
