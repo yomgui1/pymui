@@ -1126,6 +1126,7 @@ class Window(Notify): # TODO: unfinished
     NeedsMouseObject        = MAttribute(MUIA_Window_NeedsMouseObject        , 'i..', c_BOOL)
     NoMenus                 = MAttribute(MUIA_Window_NoMenus                 , 'is.', c_BOOL)
     Open                    = MAttribute(MUIA_Window_Open                    , '.sg', c_BOOL, preSet=__checkForApp)
+    Opacity                 = MAttribute(MUIA_Window_Opacity                 , 'isg', c_LONG)
     PublicScreen            = MAttribute(MUIA_Window_PublicScreen            , 'isg', c_STRPTR, keep=True)
     RefWindow               = MAttribute(MUIA_Window_RefWindow               , 'is.', c_pMUIObject, keep=True)
     RootObject              = MAttribute(MUIA_Window_RootObject              , 'isg', c_pMUIObject, postSet=postset_child, keep=True)
@@ -1815,6 +1816,7 @@ class Group(Area): # TODO: unfinished
     Forward      = MAttribute(MUIA_Group_Forward,       '.s.', c_BOOL)
     Horiz        = MAttribute(MUIA_Group_Horiz        , 'i..', c_BOOL)
     HorizSpacing = MAttribute(MUIA_Group_HorizSpacing , 'isg', c_LONG)
+    HorizCenter  = MAttribute(MUIA_Group_HorizCenter  , 'isg', c_LONG)
     LayoutHook   = MAttribute(MUIA_Group_LayoutHook   , 'i..', c_Hook, keep=True)
     PageMode     = MAttribute(MUIA_Group_PageMode     , 'i..', c_BOOL)
     Rows         = MAttribute(MUIA_Group_Rows         , 'is.', c_LONG)
@@ -1823,6 +1825,7 @@ class Group(Area): # TODO: unfinished
     SameWidth    = MAttribute(MUIA_Group_SameWidth    , 'i..', c_BOOL)
     Spacing      = MAttribute(MUIA_Group_Spacing      , 'is.', c_LONG)
     VertSpacing  = MAttribute(MUIA_Group_VertSpacing  , 'isg', c_LONG)
+    VertCenter   = MAttribute(MUIA_Group_VertCenter   , 'isg', c_LONG)
 
     AddHead      = MMethod(MUIM_Group_AddHead,    [ ('obj', c_pMUIObject) ])
     AddTail      = MMethod(MUIM_Group_AddTail,    [ ('obj', c_pMUIObject) ])
@@ -2013,7 +2016,14 @@ class List(Group):
             kwds.setdefault('ConstructHook', MUIV_List_ConstructHook_String)
             kwds.setdefault('DestructHook', MUIV_List_DestructHook_String)
         super(List, self).__init__(**kwds)
-
+    
+    def __enter__(self):
+        self.Quiet = True
+        return self
+        
+    def __exit__(self, *args):
+        self.Quiet = False
+        
     @Insert.alias
     def Insert(self, meth, objs, pos=MUIV_List_Insert_Bottom):
         n = len(objs)
@@ -2028,6 +2038,10 @@ class List(Group):
     def InsertSingleString(self, s, pos=MUIV_List_Insert_Bottom):
         x = c_STRPTR(s) # keep valid the s object until the return
         return self.InsertSingle(x, pos)
+
+    @Redraw.alias
+    def Redraw(self, meth, pos=MUIV_List_Redraw_All, entry=0):
+        return meth(self, pos, entry)
 
     cols = property(fget=lambda self: self.Format.value.count(',')+1)
 
@@ -2191,6 +2205,8 @@ class Scrollgroup(Group):
     HorizBar     = MAttribute(MUIA_Scrollgroup_HorizBar,     '..g', c_pMUIObject)
     UseWinBorder = MAttribute(MUIA_Scrollgroup_UseWinBorder, 'i..', c_BOOL)
     VertBar      = MAttribute(MUIA_Scrollgroup_VertBar,      '..g', c_pMUIObject)
+    NoVertBar    = MAttribute(MUIA_Scrollgroup_NoVertBar,    'isg', c_BOOL)
+    NoHorizBar   = MAttribute(MUIA_Scrollgroup_NoHorizBar,   'isg', c_BOOL)
 
 #===============================================================================
 
@@ -2210,7 +2226,7 @@ class Scrollbar(Group, Prop):
 
 #===============================================================================
 
-class Listview(Group):
+class Listview(List, Group):
     CLASSID = MUIC_Listview
 
     AgainClick     = MAttribute(MUIA_Listview_AgainClick,     'i.g', c_BOOL)
@@ -2325,7 +2341,7 @@ class Poplist(Popobject):
     Array = MAttribute(MUIA_Poplist_Array, 'i..', c_pSTRPTR)
 
     def __init__(self, Array, **kwds):
-        super(Cycle, self).__init__(Array=Array, **kwds)
+        super(Poplist, self).__init__(Array=Array, **kwds)
 
 #===============================================================================
 
@@ -2440,6 +2456,7 @@ class Keyadjust(Group, String):
     CLASSID = MUIC_Keyadjust
 
     AllowMouseEvents = MAttribute(MUIA_Keyadjust_AllowMouseEvents, 'isg', c_BOOL)
+    ForceKeyCode     = MAttribute(MUIA_Keyadjust_ForceKeyCode, 'isg', c_ULONG)
     Key              = MAttribute(MUIA_Keyadjust_Key, 'isg', c_STRPTR, keep=True)
 
 #===============================================================================

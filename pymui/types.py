@@ -155,7 +155,7 @@ class c_CHAR(PyMUICSimpleType, _ct.c_char):
 
 class c_APTR(PyMUICSimpleType, _ct.c_void_p):
     def __init__(self, x=None):
-        if isinstance(x, PyMUICPointerType):
+        if isinstance(x, (PyMUICPointerType, c_PyObject)):
             x = long(x)
         super(c_APTR, self).__init__(x)
 
