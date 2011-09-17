@@ -1465,6 +1465,7 @@ class Dtpic(Area):
     MinWidth  = MAttribute(MUIA_Dtpic_MinWidth,  'i.g', c_BOOL)
     MinHeight = MAttribute(MUIA_Dtpic_MinHeight, 'i.g', c_BOOL)
     Scale     = MAttribute(MUIA_Dtpic_Scale,     'isg', c_LONG)
+    LightenOnMouse = MAttribute(MUIA_Dtpic_LightenOnMouse, 'i.g', c_BOOL)
 
     def __init__(self, Name=None, **kwds):
         if Name: kwds['Name'] = Name
