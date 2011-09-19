@@ -2456,9 +2456,12 @@ class Screenmodepanel(Panel):
 class Keyadjust(Group, String):
     CLASSID = MUIC_Keyadjust
 
-    AllowMouseEvents = MAttribute(MUIA_Keyadjust_AllowMouseEvents, 'isg', c_BOOL)
-    ForceKeyCode     = MAttribute(MUIA_Keyadjust_ForceKeyCode, 'isg', c_ULONG)
-    Key              = MAttribute(MUIA_Keyadjust_Key, 'isg', c_STRPTR, keep=True)
+    AllowMouseEvents  = MAttribute(MUIA_Keyadjust_AllowMouseEvents, 'isg', c_BOOL)
+    AllowDoubleClick  = MAttribute(MUIA_Keyadjust_AllowDoubleClick, 'isg', c_BOOL)
+    AllowMultipleKeys = MAttribute(MUIA_Keyadjust_AllowMultipleKeys, 'isg', c_BOOL)
+    AllowTripleClick  = MAttribute(MUIA_Keyadjust_AllowTripleClick, 'isg', c_BOOL)
+    ForceKeyCode      = MAttribute(MUIA_Keyadjust_ForceKeyCode, 'isg', c_ULONG)
+    Key               = MAttribute(MUIA_Keyadjust_Key, 'isg', c_STRPTR, keep=True)
 
 #===============================================================================
 

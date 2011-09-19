@@ -2945,7 +2945,8 @@ raster_blit8(PyRasterObject *self, PyObject *args)
                           &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
         return NULL;
 
-    WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
+    //WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
+    WritePixelArray(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
