@@ -35,6 +35,7 @@ MUIC_Rawimage = "Rawimage.mcc"
 MUIA_Rawimage_Data = 0xfed10014 # [IS.] struct MUI_RawimageData * v20.1 (06.01.2007)
 
 RAWIMAGE_FORMAT_RAW_ARGB_ID = 0
+RAWIMAGE_FORMAT_RAW_RGB_ID  = 1
 RAWIMAGE_FORMAT_BZ2_ARGB_ID = MAKE_ID('B','Z','2','\0')
 
 def mkRawimageData(w, h, data, f=RAWIMAGE_FORMAT_RAW_ARGB_ID):
