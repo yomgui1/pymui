@@ -3410,7 +3410,6 @@ _muimaster_request(PyObject *self, PyObject *args)
 
     PyBOOPSIObject_FORBID(win_py);
     result = MUI_RequestA(app, win, flags, title, gadgets, contents, NULL);
-    result = 0;
     PyBOOPSIObject_PERMIT(win_py);
 
     if (PyErr_Occurred())

@@ -2110,8 +2110,8 @@ class Menudisplay(Group):
 #===============================================================================
 
 # TODO
-#class Mccprefs(Group):
-#    CLASSID = MUIC_Mccprefs
+class Mccprefs(Group):
+    CLASSID = MUIC_Mccprefs
 
 #===============================================================================
 
@@ -2482,9 +2482,8 @@ class Colorring(Group):
 
 #===============================================================================
 
-# TODO
-#class Aboutpage(Mccprefs):
-#    CLASSID = MUIC_Aboutpage
+class Aboutpage(Mccprefs):
+    CLASSID = MUIC_Aboutpage
 
 #===============================================================================
 
