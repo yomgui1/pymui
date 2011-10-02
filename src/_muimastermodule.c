@@ -3074,7 +3074,7 @@ raster_move(PyRasterObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "ii:Move", &x, &y)) /* BR */
         return NULL;
 
-    Move(self->rp, y, y);
+    Move(self->rp, x, y);
 
     Py_RETURN_NONE;
 }
@@ -3083,17 +3083,17 @@ raster_move(PyRasterObject *self, PyObject *args)
 static PyObject *
 raster_draw(PyRasterObject *self, PyObject *args)
 {
-    LONG x1, y1;
+    LONG x, y;
 
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "ii:Draw", &x1, &y1)) /* BR */
+    if (!PyArg_ParseTuple(args, "ii:Draw", &x, &y)) /* BR */
         return NULL;
 
-    Draw(self->rp, x1, y1);
+    Draw(self->rp, x, y);
 
     Py_RETURN_NONE;
 }

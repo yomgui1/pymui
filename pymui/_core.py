@@ -1728,7 +1728,7 @@ class Numeric(Area):
     Increase     = MMethod(MUIM_Numeric_Increase,     [ ('amount', c_LONG) ])
     ScaleToValue = MMethod(MUIM_Numeric_ScaleToValue, [ ('scalemin', c_LONG), ('scalemax', c_LONG), ('scale', c_LONG) ])
     SetDefault   = MMethod(MUIM_Numeric_SetDefault)
-    Stringify    = MMethod(MUIM_Numeric_Stringify,    [ ('value', c_LONG) ])
+    Stringify    = MMethod(MUIM_Numeric_Stringify,    [ ('value', c_LONG) ], rettype=c_STRPTR)
     ValueToScale = MMethod(MUIM_Numeric_ValueToScale, [ ('scalemin', c_LONG), ('scalemax', c_LONG) ])
 
 #===============================================================================
