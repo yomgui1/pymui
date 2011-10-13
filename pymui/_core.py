@@ -2336,7 +2336,7 @@ class Popobject(Popstring):
 
 #===============================================================================
 
-class Poplist(Popobject):
+class Poplist(Popobject, List):
     CLASSID = MUIC_Poplist
 
     Array = MAttribute(MUIA_Poplist_Array, 'i..', c_pSTRPTR)

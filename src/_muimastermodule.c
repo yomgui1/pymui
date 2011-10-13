@@ -2197,8 +2197,6 @@ muiobject_get_srange(PyMUIObject *self, void *closure)
     else
         return PyInt_FromLong(scr->Height-1);
 }
-//-
-//+ muiobject_get_drawbounds
 static PyObject *
 muiobject_get_drawbounds(PyMUIObject *self, void *closure)
 {
@@ -2220,8 +2218,6 @@ muiobject_get_drawbounds(PyMUIObject *self, void *closure)
                          MIN(r.MaxX-r.MinX+1, _mwidth(obj)),
                          MIN(r.MaxY-r.MinY+1, _mheight(obj)));
 }
-//-
-//+ muiobject_get_rp
 static PyObject *
 muiobject_get_rp(PyMUIObject *self, void *closure)
 {
@@ -2236,7 +2232,20 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
 
     return (PyObject *)self->raster;
 }
-//-
+static PyObject *
+muiobject_get_font_ysize(PyMUIObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+    
+    if (!_font(obj))
+        Py_RETURN_NONE;
+            
+    return Py_BuildValue("i", _font(obj)->tf_YSize);
+}
 #ifdef WITH_PYCAIRO
 //+ muiobject_get_cairo_context
 static PyObject *
@@ -2358,6 +2367,7 @@ static PyGetSetDef muiobject_getseters[] = {
     {"SRangeY", (getter)muiobject_get_srange,  NULL, "Screen Y range", (APTR)~0},
     {"DrawBounds", (getter)muiobject_get_drawbounds, NULL, "RastPort draw bounds", (APTR)~0},
     {"_rp",     (getter)muiobject_get_rp,      NULL, "RastPort", NULL},
+    {"FontYSize", (getter)muiobject_get_font_ysize, NULL, "Font YSize (works only with instance of Area, or subclasses)", NULL},
 #ifdef WITH_PYCAIRO
     {"cairo_context", (getter)muiobject_get_cairo_context, NULL, "Cairo context", NULL},
 #endif
@@ -3097,7 +3107,25 @@ raster_draw(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
+static PyObject *
+raster_text(PyRasterObject *self, PyObject *args)
+{
+    char *text;
+    int length, x, y;
+    
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "iis#", &x, &y, &text, &length)) /* BR */
+        return NULL;
+
+    Move(self->rp, x, y);
+    Text(self->rp, text, length);
+
+    Py_RETURN_NONE;
+}
 
 static PyGetSetDef raster_getseters[] = {
     {"APen", (getter)raster_get_apen, (setter)raster_set_apen, "RastPort APen value", NULL},
@@ -3111,6 +3139,7 @@ static struct PyMethodDef raster_methods[] = {
     {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},
     {"Move",        (PyCFunction)raster_move,         METH_VARARGS, NULL},
     {"Draw",        (PyCFunction)raster_draw,         METH_VARARGS, NULL},
+    {"Text",        (PyCFunction)raster_text,         METH_VARARGS, NULL},
     {NULL} /* sentinel */
 };
 
