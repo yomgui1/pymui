@@ -1059,15 +1059,18 @@ class Application(Notify): # TODO: unfinished
         if Window:
             self.AddChild(Window)
 
-    def __check_win_open(self, evt):
+    def __update_win_open(self, evt):
         self.__winopen += 1 if bool(evt.value) else -1
+        
+    def __check_win_open(self, evt):
         if self.__winopen <= 0:
             self.Quit()
         
     def AddChild(self, win):
         assert isinstance(win, Window)
         super(Application, self).AddChild(win)
-        win.Notify('Open', self.__check_win_open)
+        win.Notify('Open', self.__update_win_open)
+        win.Notify('CloseRequest', self.__check_win_open)
 
     def RemChild(self, win):
         assert isinstance(win, Window)
@@ -1391,6 +1394,7 @@ class Area(Notify): # TODO: unfinished
 
     AskMinMax      = MMethod(MUIM_AskMinMax,        [ ('MinMaxInfo', c_MinMax.PointerType()) ])
     Cleanup        = MMethod(MUIM_Cleanup)
+    DoDrag         = MMethod(MUIM_DoDrag,           [ ('touchx', c_LONG), ('touchy', c_LONG), ('flags', c_ULONG) ])
     DragQuery      = MMethod(MUIM_DragQuery,        [ ('obj', c_pMUIObject) ])
     DragDrop       = MMethod(MUIM_DragDrop,         [ ('obj', c_pMUIObject), ('x', c_LONG), ('y', c_LONG), ('qualifier', c_ULONG) ])
     Draw           = MMethod(MUIM_Draw,             [ ('flags', c_ULONG) ])
@@ -1401,8 +1405,10 @@ class Area(Notify): # TODO: unfinished
     HandleEvent    = MMethod(MUIM_HandleEvent,      [ ('imsg', c_IntuiMessage.PointerType()),
                                                       ('muikey', c_LONG),
                                                       ('ehn', c_EventHandlerNode.PointerType()) ])
+    Hide           = MMethod(MUIM_Hide)
     Setup          = MMethod(MUIM_Setup,            [ ('RenderInfo', c_APTR) ])
-
+    Show           = MMethod(MUIM_Show,             [ ('clip', c_APTR) ]) # TODO: struct LongRect *clip, but I don't find its definition!
+    
     def __init__(self, **kwds):
         v = kwds.pop('InnerSpacing', None)
         if v is not None:

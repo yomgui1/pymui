@@ -2944,19 +2944,21 @@ raster_blit8(PyRasterObject *self, PyObject *args)
 {
     char *buf;
     UWORD src_x=0, src_y=0, dst_x, dst_y, src_w, src_h;
-    unsigned int buf_size, stride;
+    unsigned int buf_size, stride, use_alpha=0;
 
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s#kHHHH|HH:Blit8", &buf, &buf_size, &stride,
-                          &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y)) /* BR */
+    if (!PyArg_ParseTuple(args, "s#kHHHH|HHI:Blit8", &buf, &buf_size, &stride,
+                          &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y, &use_alpha)) /* BR */
         return NULL;
 
-    //WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
-    WritePixelArray(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
+    if (use_alpha)
+        WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
+    else
+        WritePixelArray(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
