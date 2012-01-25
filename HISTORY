@@ -1,3 +1,11 @@
+0.6:
+ - Fixed a design issue at in core API causing memory leaks.
+    => API change!
+
+0.5:
+ - First stale API for big projects.
+ - Many Classes and MCC supported.
+ 
 0.4:
  - Complete re-write, API a bit changed.
 

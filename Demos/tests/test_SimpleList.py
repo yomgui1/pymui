@@ -14,7 +14,7 @@ def path_changed(pathname, list_obj):
 
 # Called when the user press the PopDrawer button
 def selectdir(o, l):
-    path = GetFilename(o.WindowObject.contents, 'Select a location')[0]
+    path = GetFilename(o.WindowObject.object, 'Select a location')[0]
     if path is not None:
         o.Contents = path
         path_changed(path, l)

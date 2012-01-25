@@ -17,7 +17,7 @@ def callback(obj, args):
 
     assert isinstance(obj, c_pMUIObject)
     assert isinstance(args, c_APTR.PointerType())
-    assert obj.contents is n
+    assert obj.object is n
 
     # Second argument is a pointer on the first hook argument.
     assert long(args[0]) == long(test_args[0])

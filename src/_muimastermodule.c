@@ -131,7 +131,7 @@ extern struct Library *KeymapBase;
 #endif
 
 #ifndef NDEBUG
-#define DPRINT(f, x...) ({ dprintf("\033[32m[%4u:%-23s] \033[0m", __LINE__, __FUNCTION__); dprintf(f ,##x); })
+#define DPRINT(f, x...) ({ dprintf("PYMUI[%4u:%-23s] ", __LINE__, __FUNCTION__); dprintf(f ,##x); })
 #define DRAWPRINT(f, x...) ({ dprintf(f ,##x); })
 #else
 #define DPRINT(f, x...)
@@ -315,7 +315,6 @@ typedef struct PyMethodMsgObject_STRUCT {
 typedef struct PyEventHandlerObject_STRUCT {
     PyObject_HEAD
 
-    PyObject *                    self; /* used to found the Python object in mHandleEvent() */
     struct MUI_EventHandlerNode   handler;
     PyObject *                    window;
     PyObject *                    target;
@@ -350,7 +349,6 @@ static struct MinList gMCCList;
 static struct MinList gToDisposeList;
 static struct Hook OnAttrChangedHook;
 static APTR gMemPool;
-static PyObject *gKillDBEntry;
 
 
 /*
@@ -683,7 +681,7 @@ PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 {
     PyMethodMsgObject *self;
 
-    self = PyObject_New(PyMethodMsgObject, &PyMethodMsgObject_Type); /* NR */
+    self = PyObject_GC_New(PyMethodMsgObject, &PyMethodMsgObject_Type); /* NR */
     if (NULL != self) {
         self->mmsg_PyMsg       = NULL;
         self->mmsg_Class       = cl;
@@ -972,7 +970,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
                                    pyo, OBJ_TNAME(pyo), msg->MethodID, value, msg_obj);
 
                             Py_INCREF(value);
-                            o = PyObject_CallFunction(value, "ON", pyo, msg_obj);
+                            o = PyObject_CallFunction(value, "OO", pyo, msg_obj);
                             DPRINT("result: %p-%s\n", o, OBJ_TNAME_SAFE(o));
                             Py_DECREF(value);
 
@@ -1010,6 +1008,8 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
                                 callsuper = FALSE;
                                 result = msg_obj->mmsg_SuperResult;
                             } /* else callsuper = TRUE */
+                            
+                            Py_DECREF(msg_obj);
                         }
                     }
                 }
@@ -2499,7 +2499,6 @@ static PyTypeObject CHookObject_Type = {
 ** MethodMsg_Type
 */
 
-//+ mmsg__setup
 static PyObject *
 mmsg__setup(PyMethodMsgObject *self, PyObject *callable)
 {
@@ -2511,15 +2510,35 @@ mmsg__setup(PyMethodMsgObject *self, PyObject *callable)
     /* The argument shall be a callable that takes the pointer on the BOOPSI Msg
      * and returns a PyMUICType object set with this message.
      */
-    self->mmsg_PyMsg = PyObject_CallFunction(callable, "k", (ULONG)self->mmsg_Msg);
+    self->mmsg_PyMsg = PyObject_CallFunction(callable, "k", (ULONG)self->mmsg_Msg); /* NR */
     if (NULL == self->mmsg_PyMsg)
         return NULL;
 
     Py_INCREF(self);
     return (PyObject *)self;
 }
-//-
-//+ mmsg_dosuper
+
+static int
+mmsg_traverse(PyMethodMsgObject *self, visitproc visit, void *arg)
+{
+    Py_VISIT(self->mmsg_PyMsg);
+    return 0;
+}
+
+static int
+mmsg_clear(PyMethodMsgObject *self)
+{
+    Py_CLEAR(self->mmsg_PyMsg);
+    return 0;
+}
+
+static void
+mmsg_dealloc(PyMethodMsgObject *self)
+{
+    mmsg_clear(self);
+    self->ob_type->tp_free((PyObject *)self);
+}
+
 static PyObject *
 mmsg_dosuper(PyMethodMsgObject *self)
 {
@@ -2544,8 +2563,7 @@ mmsg_dosuper(PyMethodMsgObject *self)
 
     return PyLong_FromUnsignedLong(self->mmsg_SuperResult);
 }
-//-
-//+ mmsg_getattro
+
 static PyObject *
 mmsg_getattro(PyMethodMsgObject *self, PyObject *attr)
 {
@@ -2573,10 +2591,13 @@ static PyTypeObject PyMethodMsgObject_Type = {
 
     tp_name         : "_muimaster.MethodMsg",
     tp_basicsize    : sizeof(PyMethodMsgObject),
-    tp_flags        : Py_TPFLAGS_DEFAULT,
+    tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "Method Message Objects",
 
     tp_new          : (newfunc)PyType_GenericNew,
+    tp_traverse     : (traverseproc)mmsg_traverse,
+    tp_clear        : (inquiry)mmsg_clear,
+    tp_dealloc      : (destructor)mmsg_dealloc,
     tp_getattro     : (getattrofunc)mmsg_getattro,
     tp_methods      : mmsg_methods,
 };
@@ -2585,21 +2606,6 @@ static PyTypeObject PyMethodMsgObject_Type = {
 ** EventHandlerObject_Type
 */
 
-//+ evthandler_new
-static PyObject *
-evthandler_new(PyTypeObject *type, PyObject *args)
-{
-    PyEventHandlerObject *self;
-
-    self = (PyEventHandlerObject *)type->tp_alloc(type, 0); /* NR */
-    if (NULL != self) {
-        self->self = (PyObject *)self;
-        return (PyObject *)self;
-    }
-
-    return NULL;
-}
-//-
 //+ evthandler_traverse
 static int
 evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
@@ -2789,6 +2795,8 @@ evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
                 Py_DECREF(o_tags);
                 return NULL;
             }
+            
+            Py_DECREF(item);
         }
 
         error = PyDict_MergeFromSeq2(self->TabletTagsList, o_tags, TRUE); /* NR */
@@ -2855,7 +2863,6 @@ evthandler_get_handler(PyEventHandlerObject *self, void *closure)
     return PyLong_FromVoidPtr(&self->handler);
 }
 
-
 static PyGetSetDef evthandler_getseters[] = {
     {"handler", (getter)evthandler_get_handler, NULL, "Address of the MUI_EventHandlerNode", NULL},
     {"Up", (getter)evthandler_get_up, NULL, "True if Code has UP prefix", NULL},
@@ -2905,7 +2912,7 @@ static PyTypeObject PyEventHandlerObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
     tp_doc          : "Event Handler Objects",
 
-    tp_new          : (newfunc)evthandler_new,
+    tp_new          : PyType_GenericNew,
     tp_traverse     : (traverseproc)evthandler_traverse,
     tp_clear        : (inquiry)evthandler_clear,
     tp_dealloc      : (destructor)evthandler_dealloc,

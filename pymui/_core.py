@@ -31,7 +31,9 @@
 ##   if it has loosed its OWNER flag.
 ##
 
-import sys, functools
+import sys
+import functools
+import weakref
 
 try:
     DEBUG = sys.argv[1] == '-v'
@@ -54,7 +56,7 @@ MUI_EventHandlerRC_Eat = (1<<0)
 NM_BARLABEL = -1
 MUI_MAXMAX = 10000
 
-_app = None
+_appref = None # will be a weakref on Application when created
 
 ## MOS-2.5 SDK
 TABLETA_Dummy        = (TAG_USER + 0x3A000)
@@ -74,59 +76,30 @@ def MAKE_ID(*v):
     # Yep, faster than using list comprehension
     return (ord(v[0])<<24)|(ord(v[1])<<16)|(ord(v[2])<<8)|ord(v[3])
 
-
-class c_Object(c_ULONG):
-    def __new__(cl, x=None):
-        if x is None:
-            return c_ULONG.__new__(cl)
-        assert isinstance(x, PyBOOPSIObject)
-        obj = cl.from_address(x._object)
-        obj.__base = x
-        return obj
-
-    def __init__(self, x=None):
-        c_ULONG.__init__(self)
-
-    def __long__(self):
-        raise TypeError('c_Object instance cannot be transformed as long value')
-
-
-class c_pObject(c_Object.PointerType()):
-    _type_ = c_Object
-
+class c_pObject(c_APTR):
     def __init__(self, x=None):
         if x is None:
             super(c_pObject, self).__init__()
         else:
-            super(c_pObject, self).__init__(c_Object(x))
+            self.__base = x
+            super(c_pObject, self).__init__(x._object if isinstance(x, PyMUIBase) else long(x))
 
-    def __get_contents(self):
-        return _muimaster._ptr2pyboopsi(long(self))
-
-    contents = property(fget=__get_contents)
-
-    @classmethod
-    def from_value(cl, v):
-        return cl(_muimaster._ptr2pyboopsi(v))
+    @property
+    def object(self):
+        return _muimaster._ptr2pyboopsi(self.value)
 
 
-class c_pMUIObject(c_Object.PointerType()):
-    _type_ = c_Object
-
+class c_pMUIObject(c_APTR):
     def __init__(self, x=None):
         if x is None:
             super(c_pMUIObject, self).__init__()
         else:
-            super(c_pMUIObject, self).__init__(c_Object(x))
+            self.__base = x
+            super(c_pMUIObject, self).__init__(x._object if isinstance(x, PyMUIBase) else long(x))
 
-    def __get_contents(self):
-        return _muimaster._ptr2pymui(long(self))
-
-    contents = property(fget=__get_contents)
-
-    @classmethod
-    def from_value(cl, v):
-        return cl(_muimaster._ptr2pymui(v))
+    @property
+    def object(self):
+        return _muimaster._ptr2pymui(self.value)
 
 
 class c_Hook(c_PyObject):
@@ -205,7 +178,7 @@ def postset_child(self, attr, o):
 
 
 def GetApp():
-    return _app
+    return _appref()
 
 
 def GetFilename(win, title, drawer='RAM:', pattern='#?', save=False, multiple=False):
@@ -813,7 +786,7 @@ class Notify(PyMUIObject, PyMUIBase):
         self._getMA(attr).setter(self, v, nn=True)
 
     def KillApp(self):
-        app = self.ApplicationObject.contents
+        app = self.ApplicationObject.object
         assert isinstance(app, Application)
         app.Quit()
 
@@ -1050,8 +1023,9 @@ class Application(Notify): # TODO: unfinished
     def __init__(self, Window=None, **kwds):
         super(Application, self).__init__(**kwds)
 
-        global _app
-        _app = self
+        global _appref
+        assert not _appref
+        _appref = weakref.ref(self)
 
         self.__closeonlast = bool(kwds.get('CloseOnLast', False))
         self.__winopen = 0
@@ -1216,7 +1190,6 @@ class Window(Notify): # TODO: unfinished
         A RootObject is mandatory to create a Window on MUI.
         PyMUI uses a simple Rectangle object by default.
         """
-        self.__app = None
 
         # Auto Window ID handling
         if ID:
@@ -1494,11 +1467,15 @@ class Rectangle(Area):
 
     @classmethod
     def mkHSpace(cl, x, **kwds):
-        return cl(VertWeight=x, **kwds)
+        kwds['VertWeight'] = 0
+        kwds['MaxWidth'] = x
+        return cl(**kwds)
 
     @classmethod
     def mkVSpace(cl, x, **kwds):
-        return cl(HorizWeight=x, **kwds)
+        kwds['HorizWeight'] = 0
+        kwds['MaxHeight'] = x
+        return cl(**kwds)
 
     @classmethod
     def mkHCenter(cl, o, **kwds):
