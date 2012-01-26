@@ -1052,7 +1052,7 @@ DISPATCHER(mcc)
 {
     ULONG result;
 
-    //DPRINT("meth: %08x %s\n", msg->MethodID, OCLASS(obj)->cl_ID);
+    DPRINT("meth: %08x %s\n", msg->MethodID, OCLASS(obj)->cl_ID);
 
     switch (msg->MethodID) {
         /* Protect basic BOOPSI methods */
@@ -1076,7 +1076,7 @@ DISPATCHER(mcc)
                 result = DoSuperMethodA(cl, obj, msg);
     }
 
-    //DPRINT("meth: %08x result: %08x\n", msg->MethodID, result);
+    DPRINT("meth: %08x result: %08x\n", msg->MethodID, result);
     return result;
 }
 DISPATCHER_END
