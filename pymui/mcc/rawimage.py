@@ -27,7 +27,9 @@ from pymui import *
 from array import array as _array
 
 __all__ = [ 'MUIC_Rawimage', 'MUIA_Rawimage_Data',
-            'RAWIMAGE_FORMAT_RAW_ARGB_ID', 'RAWIMAGE_FORMAT_BZ2_ARGB_ID',
+            'RAWIMAGE_FORMAT_RAW_ARGB_ID',
+            'RAWIMAGE_FORMAT_RAW_RGB_ID',
+            'RAWIMAGE_FORMAT_BZ2_ARGB_ID',
             'mkRawimageData', 'Rawimage' ]
 
 MUIC_Rawimage = "Rawimage.mcc"
