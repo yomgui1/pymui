@@ -443,9 +443,12 @@ class NList(pymui.Area):
     Active        = MAttribute(MUIA_NList_Active,        'is.', pymui.c_LONG)
     ConstructHook = MAttribute(MUIA_NList_ConstructHook, 'is.', pymui.c_Hook)
     DestructHook  = MAttribute(MUIA_NList_DestructHook,  'is.', pymui.c_Hook)
+    DisplayHook   = MAttribute(MUIA_NList_DisplayHook,   'is.', pymui.c_Hook)
     DoubleClick   = MAttribute(MUIA_NList_DoubleClick,   '..g', pymui.c_LONG)
     Entries       = MAttribute(MUIA_NList_Entries,       '..g', pymui.c_LONG)
+    Format        = MAttribute(MUIA_NList_Format,        'isg', pymui.c_STRPTR)
     MinLineHeight = MAttribute(MUIA_NList_MinLineHeight, 'is.', pymui.c_LONG)
+    Title         = MAttribute(MUIA_NList_Title,         'isg', pymui.c_STRPTR)
     Quiet         = MAttribute(MUIA_NList_Quiet,         '.s.', pymui.c_BOOL)
 
     Clear        = MMethod(MUIM_NList_Clear, retype=None)
