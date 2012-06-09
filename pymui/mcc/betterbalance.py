@@ -1,7 +1,5 @@
-# Minimal way :-)
-
 ###############################################################################
-# Copyright (c) 2009 Guillaume Roguez
+# Copyright (c) 2009-2011 Guillaume Roguez
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -25,12 +23,9 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
-from pymui import *
+from pymui import Balance
 
-w = Window(Title="HelloWorld window", RootObject=SimpleButton("Ok"))
-w.Notify('CloseRequest', MUIV_EveryTime, w.KillApp)
+MUIC_BetterBalance = "BetterBalance.mcc"
 
-app = Application(Window=w)
-
-w.Open()
-app.Run()
+class BetterBalance(Balance):
+    CLASSID = MUIC_BetterBalance

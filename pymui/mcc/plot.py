@@ -25,6 +25,8 @@
 
 from pymui import *
 
+c_pDOUBLE = c_DOUBLE.PointerType()
+
 MUIC_Plot = "Plot.mcc"
 
 MUIA_Plot_Color            = 0xFED2000C  # [...s.] (ULONG)   v1.3 (24.06.2008)
@@ -105,20 +107,20 @@ MUIV_Graph_LineType_Solid           =   1     # not implemented yet
 class Plot(Area):
     CLASSID = MUIC_Plot
 
-    GridOffsetX  = MAttribute(MUIA_Plot_GridOffsetX, 'isg', c_pDOUBLE)
-    GridOffsetY  = MAttribute(MUIA_Plot_GridOffsetY, 'isg', c_pDOUBLE)
-    MaxX         = MAttribute(MUIA_Plot_MaxX, 'isg', c_pDOUBLE)
-    MaxXAuto     = MAttribute(MUIA_Plot_MaxXAuto, 'isg', c_BOOL)
-    MaxY         = MAttribute(MUIA_Plot_MaxY, 'isg', c_pDOUBLE)
-    MaxYAuto     = MAttribute(MUIA_Plot_MaxYAuto, 'isg', c_BOOL)
-    MinX         = MAttribute(MUIA_Plot_MinX, 'isg', c_pDOUBLE)
-    MinXAuto     = MAttribute(MUIA_Plot_MinXAuto, 'isg', c_BOOL)
-    MinY         = MAttribute(MUIA_Plot_MinY, 'isg', c_pDOUBLE)
-    MinYAuto     = MAttribute(MUIA_Plot_MinYAuto, 'isg', c_BOOL)
+    GridOffsetX  = MAttribute(MUIA_Plot_GridOffsetX,  'isg', c_pDOUBLE)
+    GridOffsetY  = MAttribute(MUIA_Plot_GridOffsetY,  'isg', c_pDOUBLE)
+    MaxX         = MAttribute(MUIA_Plot_MaxX,         'isg', c_pDOUBLE)
+    MaxXAuto     = MAttribute(MUIA_Plot_MaxXAuto,     'isg', c_BOOL)
+    MaxY         = MAttribute(MUIA_Plot_MaxY,         'isg', c_pDOUBLE)
+    MaxYAuto     = MAttribute(MUIA_Plot_MaxYAuto,     'isg', c_BOOL)
+    MinX         = MAttribute(MUIA_Plot_MinX,         'isg', c_pDOUBLE)
+    MinXAuto     = MAttribute(MUIA_Plot_MinXAuto,     'isg', c_BOOL)
+    MinY         = MAttribute(MUIA_Plot_MinY,         'isg', c_pDOUBLE)
+    MinYAuto     = MAttribute(MUIA_Plot_MinYAuto,     'isg', c_BOOL)
     PrimaryGridX = MAttribute(MUIA_Plot_PrimaryGridX, 'isg', c_pDOUBLE)
     PrimaryGridY = MAttribute(MUIA_Plot_PrimaryGridY, 'isg', c_pDOUBLE)
-    Quiet        = MAttribute(MUIA_Plot_Quiet, '.s.', c_BOOL)
-    Units        = MAttribute(MUIA_Plot_Units, 'isg', c_ULONG)
+    Quiet        = MAttribute(MUIA_Plot_Quiet,        '.s.', c_BOOL)
+    Units        = MAttribute(MUIA_Plot_Units,        'isg', c_ULONG)
 
     BindXValues   = MMethod(MUIM_Plot_BindXValues, [ ('YDataset', c_LONG), ('XDataset', c_LONG) ])
     Clear         = MMethod(MUIM_Plot_Clear)

@@ -70,12 +70,12 @@ class Lamp(Area):
     CLASSID = MUIC_Lamp
 
     def __preset_color(self, attr, v):
-        if not isinstance(v, c_ULONG):
-            v = c_ULONG.from_address(v)
+        if isinstance(v, (int, long)):
+            return c_ULONG.FromLong(v)
         return v
 
     Type = MAttribute(MUIA_Lamp_Type           , 'isg', c_ULONG)
-    Color = MAttribute(MUIA_Lamp_Color         , 'isg', c_ULONG._PointerType(), preSet=__preset_color)
+    Color = MAttribute(MUIA_Lamp_Color         , 'isg', c_ULONG.PointerType(), preSet=__preset_color)
     ColorType = MAttribute(MUIA_Lamp_ColorType , '..g', c_ULONG)
     Red = MAttribute(MUIA_Lamp_Red             , 'isg', c_ULONG)
     Green = MAttribute(MUIA_Lamp_Green         , 'isg', c_ULONG)

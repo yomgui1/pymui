@@ -8,6 +8,6 @@ print path_str, rc(path_str)
 
 popasl = Popasl(Type='FileRequest', Button=load_btn, String=path_str)
 print popasl, rc(popasl)
-print [(hex(k), v) for k,v in popasl._keep_dict.iteritems()]
+#print [(hex(k), v) for k,v in popasl._keep_dict.iteritems()]
 
 print rc(popasl), rc(load_btn), rc(path_str)

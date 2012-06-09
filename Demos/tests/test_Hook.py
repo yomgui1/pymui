@@ -3,11 +3,11 @@ from pymui import *
 class MyException(Exception):
     pass
 
-args = (c_STRPTR('tutu'), c_STRPTR('toto'), c_STRPTR('titi'))
+test_args = [ c_STRPTR(x) for x in ('tutu', 'toto', 'titi') ]
 
 n = Notify()
 
-def callback(obj, args_ptr):
+def callback(obj, args):
     # Notify.CallHook method calls the callback with 2 long as arguments.
     # First value is the pointer on the MUI Object that called the hook.
     # Second value is the pointer on the first argument given to CallHook,
@@ -15,17 +15,17 @@ def callback(obj, args_ptr):
 
     print "Hello: callback",
 
-    assert isinstance(obj, c_MUIObject)
-    assert isinstance(args_ptr, c_APTR._PointerType())
-    assert obj.value is n
+    assert isinstance(obj, c_pMUIObject)
+    assert isinstance(args, c_APTR.PointerType())
+    assert obj.object is n
 
     # Second argument is a pointer on the first hook argument.
-    assert long(args_ptr[0]) == long(args[0])
+    assert long(args[0]) == long(test_args[0])
 
     # Use this pointer as a string array now
-    x = c_pSTRPTR.FromLong(long(args_ptr))
-    assert long(x[0]) == long(args[0])
-    assert any(a.value == b.value for a, b in zip(args, x))
+    x = c_pSTRPTR.from_value(long(args))
+    assert long(x[0]) == long(test_args[0])
+    assert any(a.value == b.value for a, b in zip(test_args, x))
 
 def bad_callback(*args):
     print "Hello: bad_callback",
@@ -35,14 +35,16 @@ def typed_callback(obj):
     print "Hello: typed_callback",
 
     assert isinstance(obj, c_pSTRPTR)
-    assert len(tuple(obj)) == 3
+    assert len(obj[:3]) == 3
+    assert long(obj[2]) != 0
+    assert long(obj[3]) == 0
 
 def complex_callback(args_ptr):
     print "Hello: complex_callback",
 
-    s = c_STRPTR.FromLong(args_ptr[0].value)
-    i = c_LONG.FromLong(args_ptr[1].value)
-    o = c_PyObject.FromLong(args_ptr[2].value)
+    s = c_STRPTR.from_value(args_ptr[0].value)
+    i = c_LONG.from_value(args_ptr[1].value)
+    o = c_PyObject.from_value(args_ptr[2].value)
     assert s
 
 typed_hook = c_NotifyHook(typed_callback, argstypes=(None, c_pSTRPTR))
@@ -57,7 +59,7 @@ else:
     raise AssertionError("MyException exception not raised by the bad hook callback")
 
 # Good example
-n.CallHook(callback, *args)
+n.CallHook(callback, *test_args)
 print '[ok]'
 
 # Typed hook

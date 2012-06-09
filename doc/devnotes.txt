@@ -57,7 +57,7 @@ Comment faire cela? Ils y a plusieurs possibilitées:
 
     c) Patcher une fonction:
     - J'ai tenté de patcher DisposeObject() de l'intuition.library. Effectivement cette fonction est bien appelé fréquement pour détruire un object.
-    Malheureusement cela n'est pas systèmatique, on peut-très bien appeler 'à la main' la méthode OM_DIPOSE et le meilleur (ou pire..) des exemples
+    Malheureusement cela n'est pas systèmatique, on peut-très bien appeler 'à la main' la méthode OM_DISPOSE et le meilleur (ou pire..) des exemples
     pour cela est la fonction MUI_DiposeObject() de la muimaster.library. Patcher cette dernière alors (aussi...)? Cela n'arrange en rien
     l'appel 'à la main'. Donc on oublis.
 
@@ -244,3 +244,175 @@ de destruction (DisposeObject(), ...) si l'objet Python est propriétaire.
 
 5) pb de la complexité d'implémentations des méthodes comme MUIM_List_Display avec des arguments aux types très variables.
 => à revoir.
+
+**********************************************************************************************************************************************************
+
+Comme d'hab.. j'ai tout ré-écris pour la v0.4!
+
+J'ai voulus trop 'gérer' les problèmes de destructions des objects, résultant un code trop complexe.
+Bien que c'est une ré-écriture (surtout du code C et des types), l'API vu de l'utilisateur reprend beaucoup de la v0.3.
+
+Quoi de neuf?
+
+1) Les conteneurs Python (PyBOOPSIObject et PyMUIObject) posséde un flag 'OWNER' si l'objet BOOPSI
+affecté a été créé par la méthode _create().
+
+On considère donc que ce flag permet de savoir si un objet n'est lié ** d'aucunes façons ** par
+un autre objet BOOPSI (dans ce cas cet objet sera responsable de détruire l'objet BOOPSI référé).
+
+Ce flag est perdu dans les cas suivant:
+- L'appel à la méthode '_loosed' du conteneur.
+- L'utilisation de la méthode '_addchild' d'un autre conteneur, pour créer une lisaison parent-enfant.
+
+Reste aux classes de pymui et aux utilisateurs d'appeler correctement ces fonctions pour indiquer
+à pymui si un objet doit ou non être détruit par lui.
+
+2) Les références des objet BOOPSI (ou MUI), créés par le module, sont gardés dans une liste comme avant.
+Lors du cleanup du module les objets de cette liste seront simplement détruits, à l'exception
+des objets MUI: une vérification est faite pour voir si il ne sont pas liés à un objet parent ou à une application.
+Les objets applications sont détruit en dernier (par définition, les applications n'ont pas de parent).
+
+3) En plus du flag OWNER mis, l'objet conteneur est gardé dans un dictionnaire liant un 'weakref'
+de cet objet (valeur) à l'adresse de l'objet BOOPSI (clé).
+
+L'entrée est enlévée si il y a perte du flag OWNER.
+
+Ce dictionnaire sera utile pour les Hooks (gestions méthode MUIM_CallHook et notifications).
+
+3) La liaison parent-enfant n'est plus sauvé en interne, vu que les noeuds objets ne reste que si
+l'objet n'est pas lié.
+
+4) Le flags OWNER n'est jamais redonné une fois perdu!
+Cela implique qu'à la suite de l'appel à la méthode '_remchild', l'objet BOOPSI peut se retrouvé
+perdu et non détruit à jamais si on n'appel pas '_addchild' ou '_dispose' sur le conteneur rapidement.
+Cela arrivera aussi si une exception intervient avant ces appels!
+=> Une solution pourra être trouvé par la suite... mais cela va forcement rendre plus complexe le code.
+
+5) Donc un objet BOOPSI ne sera disposé par le module que:
+
+- par l'appel explicite à la méthode '_dispose' (non conditionnel, attention donc !)
+- pendant la destruction du conteneur, si et seulement si le flag OWNER existe.
+- pendant le cleanup du module si l'objet est toujours dans la liste des objets non liés.
+et si l'objet est réellement non lié, pour les objets MUI uniquement.
+
+6) Les références des conteneurs ne sont toujours pas changées lors des utilisations dans
+les _set, _create et _do.
+
+7) Le système de 'keep' a changer:
+- soit l'utilisateur s'en occupte.
+- les classes définissant des attributs ayant besoins de garder l'objet source lors d'une affectation
+doivent l'indiquer dans la déclaration de l'attribut par l'appel à MAttribute().
+
+Mais les types C (PyMUIObject) n'interviennent plus dans le processus.
+
+8) Par design il ne doit être possible de créer un conteneur sans le flag OWNER, si
+un conteneur ayant ce flag pour le même objet BOOPSI existe.
+
+=======
+
+Tout ceci à des impactes positives, par exemple l'ajout d'un 'RootObject' à une fenêtre
+n'implique plus de garder une référence au conteneur comme avant. '_loose()' est automatiquement
+appelé, le conteneur pert donc l'objet, il peut donc être détruit tranquillement ensuite.
+=> plus de mémoire, moins de perte inutile.
+=> c'est en plus le comportement 'logique' auquel on s'attend.
+
+=======
+
+MCC redesign:
+
+PyMUI 0.3 pré-calcule une liste des méthodes python à appelées pour chaque méthode MUI
+surchargée par la classe Python.
+Cette liste est créée et liée pour chaque instance de la classe, ce qui est inutile!
+Vu que ces méthode sont reliées à la classe et non pas à l'instance...
+
+Un meilleur design serait de calculer cette liste qu'une seule fois.
+Cela peut toujours ce faire pendant _create() car il n'y en a pas le besoin avant.
+
+Ensuite, vu qu'un objet BOOPSI peut être relié à plusieur objets Python, il faut un moyen
+de pouvoir récupérer cette liste, quelque soit l'objet Python.
+
+Vu que la liste est liée à la classe, le champ IClass->cl_UserData sera utilisée pour cela.
+La classe étant donnée à l'appel du dispatcher. 
+
+Mais ce n'est pas fini: l'appel à une méthode d'un objet BOOPSI s'applique sur celui-ci,
+donc l'appel à une méthode Python s'applique sur un objet PyBOOPSIObject ou PyMUIObject.
+Par design, une méthode MCC peut-étre appelée par différentes tâches... donc
+le code doit-être ré-entrant: cela ne facilite en rien l'obtention d'un objet Python particulier.
+Si un code multitâches utilise PyMUI, il peut très bien appeler une méthode MCC depuis un objet
+Python donné, et dans le même temps le faire depuis un autre objet Python aussi, par 2 tâches
+différentes donc. Evidement les 2 objets Python réfèrent le même objet BOOPSI!
+Quand le code du dispatcher étant appelé avec les mêmes paramêtres, impossible de savoir
+ainsi quel objet Python il faut utiliser!
+
+CORRECTION du dernier paragraphe:
+-> le dispatcher n'est pas ré-entrant par défaut! C'est pour cela qu'il existe la méthode
+MUIM_Application_PushMethod!
+
+Par contre cela ne change pas le principe où on s'attend à avoir le même objet Python dans
+la méthode surchargée que celui qui a appelé cette méthode.
+
+Mais cet objet n'est connu que si le module lui-même invoque le DoMethod, car il peut passer
+alors en paramêtre ce dernier. Sauf que MUI lui-même appel aussi les méthodes, sans cet objet
+donc.
+
+Il n'y a donc pas de moyen d'avoir un objet Python précis (sauf si un 'OWNER' existe, par la DB),
+pendant l'appel à une méthode d'une MCC: les méthodes Python seraient donc des méthodes de classes!
+=> aucunes garanties pour l'utilisateur de retrouver un objet Python particulier à partir
+de l'objet BOOPSI donnée à l'appel de la méthode.
+
+Ce n'est pas acceptable... de toute façon une méthode BOOPSI n'est pas déclenchée sans raisons.
+Donc reprenons:
+
+- si un objet Python ayant une classe _MCC_, déclenche l'appel à une méthode de l'objet BOOPSI qu'il référe,
+c'est cet objet Python qui doit être utilisé dans PyObject_CallMethod().
+-> on pourrait retenir dans une variable globale cet objet: sauf que cette solution n'est pas ré-entrante,
+la variable serait toujours la même quelque soit le thread.
+-> de plus pendant cet appel, une autres méthode BOOPSI sur un autre objet BOOPSI peut aussi être invoquée.
+
+C'est le gros problème de la liaison multiple Python -> BOOPSI qui est de type N-1.
+
+J'ai la solution!
+=> garder le principe de liaison faible, mais du type 1-1 et plus N-1.
+=> résultat à tout instant donné, il ne peut y avoir qu'un seul objet Python lié à un objet BOOPSI.
+Mais attention: grandes précautions de l'utilisateurs, car cet objet peut changer dans le temps!
+Cela donnera parfois des résultats étranges, mais pas moyen de faire autrement.
+
+Donc la DB objet sera utilisée pour cela, auf que maintenant elle contient tous les conteneurs,
+pas seulement ceux qui sont 'OWNER'.
+
+Par contre ATTENTION: comme il impossible de savoir réellement quand un objet BOOPSI est détruit,
+il est donc (presque) impossible d'enlever une entrée de cette DB.
+Cette impossibilitée risque de faire croître la mêmoire.
+
+Le 'presque' provient de deux cas uniques:
+a) du fait qu'un objet utilisant une MCC pourra alors être enlévé puisqu'on contrôle les méthodes (OM_DISPOSE).
+b) si l'objet Python est OWNER, alors on contrôle l'appel aux API pour la destruction.
+
+Mais je pense à une solution: vu qu'on utilise un weakref comme valeur,
+si plus aucun objet Python ne référence notre objet BOOPSI alors on détruit l'entrée.
+A l'utilisateur de se débrouiller pour garder en vie son objet.
+
+=======
+
+Bon globalement le dernier design (cf au dessus) marche bien.
+Mais j'ai encore des soucis (code pas beau, complexité d'écriture, ...) avec l'utilisation de MCC comme NList & Co.
+Ou bien faire passer des buffers comme pour Rawimage.
+
+Vu que les paramêtres aux méthodes/attributs sont toujours des LONG ou ULONG, c'est pas marrant de gérer au cas par cas
+ces derniers: un attribut peut être un pointeur ou n valeurs partiulière... qui ne faut dés alors surtout pas utiliser
+comme pointeur sino crash!
+
+J'aimerai automatiser tout cela pour que l'écriture des classes soit plus aisées.. mais pas simple!
+
+Genre: actuellement faire un 'get' d'un attribut retourne un objet de type PyMUICType.
+Cela laisse le choix à l'utilisateur de pouvoir l'utiliser soit comme un entier (en le convertissant en long avec long(x)),
+soit comme un objet plus complexe (avec la méthode .value ou autre, tout dépend de la classe).
+
+Le problème avec cela c'est que l'écriture devient moins intuitive: on s'attend plus d'avoir un objet de type PyMUIObject
+quand on exécute "obj.ApplicationObject", plus que de devoir faire "obj.ApplicationObject.value".
+Surtout que le terme 'value' (qui vient ici de ctypes) prète à confusion: on pourrait croire que c'est la valeur entière!
+
+Si je regarde 'chez les autres' ils implémentent tous leur méthodes/attributs en C ou C++. Pas moi.
+Il va falloir que je trouve un autre moyen plus subtile pour indiquer comment interpéter une valeur entière C de MUI
+vers un objet Python.
+

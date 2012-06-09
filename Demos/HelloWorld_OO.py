@@ -1,7 +1,5 @@
-# Oriented Object way
-
 ###############################################################################
-# Copyright (c) 2009 Guillaume Roguez
+# Copyright (c) 2009-2010 Guillaume Roguez
 #
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
@@ -25,40 +23,40 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 ###############################################################################
 
+## Oriented Object usage of PyMUI 
+#
+# This example just open a window with only a text button gadget inside.
+#
+# Quit the program by closing the window or send CTRLC signal in the console.
+#
+
+# Importing all pymui API
 from pymui import *
 
+# Our window class
 class MainWindow(Window):
     def __init__(self):
-        super(MainWindow, self).__init__('HelloWorld - OrientObject version - PyMUI demo test',
+        super(MainWindow, self).__init__('HelloWorld - OO version - PyMUI demo test',
+                                         CloseOnReq = True, # Close the window if window close button is pressed
                                          LeftEdge=MUIV_Window_LeftEdge_Moused,
                                          TopEdge=MUIV_Window_TopEdge_Moused,
                                          Width=320, Height=64)
- 
-        buttons = [ SimpleButton("Close"),
-                    SimpleButton("Me"),
-                    SimpleButton("Now!") ]
-
-        butGroup = Group.HGroup()
-        butGroup.AddChild(*buttons)
-
-        text = Text(Contents=MUIX_C + "Hello! I'm a very good program!\nClose me now...",
-                    Draggable=True,
-                    Frame=MUIV_Frame_String)
-
-        mainGroup = Group.VGroup()
-        mainGroup.AddChild( text, butGroup )
-        self.RootObject = mainGroup
+        self.RootObject = SimpleButton('Hello, World!')
         
-
+# Our Application class
 class HelloWorld(Application):
     def __init__(self):
-        super(HelloWorld, self).__init__()
         win = MainWindow()
-        win.Notify('CloseRequest', True, self.Quit)
-        self.AddWindow(win)
-        win.Open()
+        super(HelloWorld, self).__init__(win,
+                                         Title="HelloWorld_OO",
+                                         Author = "Guillaume ROGUEZ",
+                                         Description="OO usage of PyMUI",
+                                         Copyright="(c) 2009-2010, Guillaume ROGUEZ",
+                                         Base="PyMUI_HelloWorld")
+
+        # Open the window
+        win.OpenWindow() # act like 'win.Open = True'
 
 # Go !
-
 app = HelloWorld()
 app.Run()
