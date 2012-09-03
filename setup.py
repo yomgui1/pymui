@@ -12,7 +12,7 @@ if with_cairo:
     opt += ['-DWITH_PYCAIRO']
     include_dirs.append('/usr/local/include/pycairo')
     include_dirs.append('/usr/local/include/cairo')
-    libraries += ['cairo', 'pixman-1', 'freetype']
+    libraries += ['cairo', 'pixman-1', 'ft2']
 
 setup(name = 'PyMUI',
       version = '0.6.1',
