@@ -3401,6 +3401,11 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "Os|zzbb:getfilename", &pyo, &title, &init_drawer, &init_pat, &save, &multiple))
         return NULL;
 
+    if (!PyMUIObject_Check(pyo))
+        return PyErr_Format(PyExc_TypeError,
+            "first parameter should be a MUI Window object, not %s\n",
+            OBJ_TNAME(pyo));
+
     mo = PyBOOPSIObject_GetObject(pyo);
     if (NULL == mo)
         return NULL;
