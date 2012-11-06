@@ -1121,6 +1121,9 @@ class Window(Notify): # TODO: unfinished
     Width                   = MAttribute(MUIA_Window_Width                   , 'i.g', c_LONG)
     Window                  = MAttribute(MUIA_Window_Window                  , '..g', c_APTR)
 
+    Cleanup                 = MMethod(MUIM_Window_Cleanup)
+    Setup                   = MMethod(MUIM_Window_Setup)
+    Snapshot                = MMethod(MUIM_Window_Snapshot, [ ('flags', c_LONG) ])
     ToBack                  = MMethod(MUIM_Window_ToBack)
     ToFront                 = MMethod(MUIM_Window_ToFront)
 
@@ -1260,6 +1263,9 @@ class Window(Notify): # TODO: unfinished
     def CloseWindow(self, evt=None):
         self.Open = False
 
+    def SetWindowBox(self, *a):
+        _muimaster._setwindowbox(self, *a)
+        
     # PROPERTIES
 
     pointer = property(fset=_muimaster._setwinptr, doc="Window mouse pointer type")

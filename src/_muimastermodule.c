@@ -3532,6 +3532,34 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
     SetWindowPointer(win, WA_PointerType, type, TAG_DONE);
     Py_RETURN_NONE;
 }
+static PyObject *
+_muimaster_setwindowbox(PyObject *self, PyObject *args)
+{
+    PyBOOPSIObject *pyo;
+    Object *obj;
+    struct Window *win;
+    LONG left, top, width, height;
+
+    /* The given object is not necessary a window object.
+     * It could be any MUI object with a window object as parent.
+     */
+    if (!PyArg_ParseTuple(args, "O!IIII", &PyMUIObject_Type, &pyo, &left, &top, &width, &height))
+        return NULL;
+
+    obj = PyBOOPSIObject_GetObject(pyo);
+    if (NULL == obj)
+        return NULL;
+
+    win = NULL; /* protection against bugged OM_GET implementations */
+    if (!get(obj, MUIA_Window_Window, &win) || (NULL == win))
+    {
+        PyErr_SetString(PyExc_TypeError, "Unable to obtain the system Window pointer");
+        return NULL;
+    }
+
+    ChangeWindowBox(win, left, top, width, height);
+    Py_RETURN_NONE;
+}
 //-
 
 
@@ -3546,6 +3574,7 @@ static PyMethodDef _muimaster_methods[] = {
     {"_AddClipping", _muimaster_addclipping, METH_VARARGS, NULL},
     {"_RemoveClipping", _muimaster_removeclipping, METH_VARARGS, NULL},
     {"_setwinptr", _muimaster_setwinpointer, METH_VARARGS, NULL},
+    {"_setwindowbox", _muimaster_setwindowbox, METH_VARARGS, NULL},
     {NULL, NULL} /* Sentinel */
 };
 
