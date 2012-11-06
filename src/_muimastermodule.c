@@ -75,7 +75,6 @@ OTHER DEALINGS IN THE SOFTWARE.
 #include <Python.h>
 #include <structmember.h>
 
-
 /*
 ** System Includes
 */
@@ -116,7 +115,6 @@ extern struct Library *KeymapBase;
 #ifndef PYTHON_BASE_NAME
 #define PYTHON_BASE_NAME PythonBase
 #endif /* !PYTHON_BASE_NAME */
-
 
 /*
 ** Private Macros and Definitions
@@ -241,7 +239,6 @@ enum {
     PYMUI_DATA_MHEIGHT
 };
 
-
 /*
 ** Private Types and Structures
 */
@@ -326,7 +323,6 @@ typedef struct PyEventHandlerObject_STRUCT {
     BYTE                          hastablet;
 } PyEventHandlerObject;
 
-
 /*
 ** Private Variables
 */
@@ -350,18 +346,14 @@ static struct MinList gToDisposeList;
 static struct Hook OnAttrChangedHook;
 static APTR gMemPool;
 
-
 /*
 ** Module DocString
 */
 
-//+ _muimaster__doc__
 PyDoc_STRVAR(_muimaster__doc__,
 "This module provides access to muimaster.library functionnalities.\n\
 Refer to the library manual and corresponding MorphOS manual entries\n\
 for more information on calls.");
-//-
-
 
 /*
 ** Private Functions
@@ -378,7 +370,6 @@ for more information on calls.");
  * In this way the user needs to keep valid the object if it want to save its attributes.
  */
 
-//+ objdb_add
 static int objdb_add(Object *bObj, PyObject *pObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj); /* NR */
@@ -400,8 +391,7 @@ static int objdb_add(Object *bObj, PyObject *pObj)
 
     return res;
 }
-//-
-//+ objdb_remove
+
 static void objdb_remove(Object *bObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj); /* NR */
@@ -411,8 +401,7 @@ static void objdb_remove(Object *bObj)
     Py_XDECREF(key);
     //PyErr_Clear();
 }
-//-
-//+ objdb_get
+
 static PyObject *objdb_get(Object *bObj)
 {
     PyObject *key = PyLong_FromVoidPtr(bObj);
@@ -433,11 +422,9 @@ static PyObject *objdb_get(Object *bObj)
 
     return pyo;
 }
-//-
 
 /*====================================================================*/
 
-//+ dispose_node
 static void dispose_node(PyBOOPSIObject *pObj)
 {
     ObjectNode *node = pObj->node;
@@ -445,8 +432,7 @@ static void dispose_node(PyBOOPSIObject *pObj)
     pObj->node = NULL;
     FreeMem(REMOVE(node), sizeof(*node));
 }
-//-
-//+ loose
+
 static void loose(PyBOOPSIObject *pObj)
 {
     if (PyBOOPSIObject_ISOWNER(pObj)) {
@@ -458,8 +444,7 @@ static void loose(PyBOOPSIObject *pObj)
         DPRINT("PyObj %p-'%s' flags: $%08x\n", pObj, OBJ_TNAME(pObj), pObj->flags);
     }
 }
-//-
-//+ PyBOOPSIObject_GetObject
+
 static Object *
 PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
 {
@@ -471,9 +456,8 @@ PyBOOPSIObject_GetObject(PyBOOPSIObject *pyo)
     PyErr_SetString(PyExc_TypeError, "no BOOPSI object associated");
     return NULL;
 }
-//-
-//+ PyBOOPSIObject_DisposeObject
-// WARNING: this function doesn't check USED flag.
+
+/* WARNING: this function doesn't check USED flag */
 static int
 PyBOOPSIObject_DisposeObject(PyBOOPSIObject *pObj)
 {
@@ -552,8 +536,7 @@ bye:
 
     return res;
 }
-//-
-//+ py2long
+
 static int
 py2long(PyObject *obj, LONG *value)
 {
@@ -575,8 +558,7 @@ py2long(PyObject *obj, LONG *value)
 
     return 1;
 }
-//-
-//+ callpython
+
 static ULONG
 callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 {
@@ -619,8 +601,7 @@ callpython(struct Hook *hook, ULONG a2_value, ULONG a1_value)
 
     return result;
 }
-//-
-//+ OnAttrChanged
+
 static void
 OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args)
 {
@@ -674,8 +655,7 @@ OnAttrChanged(struct Hook *hook, Object *mo, ULONG *args)
 
     PyGILState_Release(gstate);
 }
-//-
-//+ PyMethodMsg_New
+
 static PyMethodMsgObject *
 PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 {
@@ -692,9 +672,7 @@ PyMethodMsg_New(struct IClass *cl, Object *obj, Msg msg)
 
     return self;
 }
-//-
 
-//+ IntuiMsgFunc
 static void
 IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *imsg)
 {
@@ -704,8 +682,7 @@ IntuiMsgFunc(struct Hook *hook, struct FileRequester *req, struct IntuiMessage *
     if (IDCMP_REFRESHWINDOW == imsg->Class)
         DoMethod(req->fr_UserData, MUIM_Application_CheckRefresh);
 }
-//-
-//+ getfilename
+
 /* Stolen from MUI psi.c demo */
 LONG
 getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STRPTR init_pat,
@@ -842,10 +819,8 @@ getfilename(STRPTR **results, Object *win, STRPTR title, STRPTR init_drawer, STR
 
     return res;
 }
-//-
 
 #ifdef WITH_PYCAIRO
-//+ blit_cairo_surface
 void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
 {
     ULONG doublebuffer = FALSE;
@@ -914,14 +889,12 @@ void blit_cairo_surface(PyMUIObject *pyo, Object *mo)
                     r.MaxX-r.MinX+1, r.MaxY-r.MinY+1, RECTFMT_ARGB);
 #endif
 }
-//-
 #endif
 
 /*******************************************************************************************
 ** MCC MUI Object
 */
 
-//+ mCheckPython
 static ULONG
 mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 {
@@ -1046,8 +1019,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
 
     return result;
 }
-//-
-//+ MCC Dispatcher
+
 DISPATCHER(mcc)
 {
     ULONG result;
@@ -1080,13 +1052,11 @@ DISPATCHER(mcc)
     return result;
 }
 DISPATCHER_END
-//-
 
 /*******************************************************************************************
 ** PyBOOPSIObject_Type
 */
 
-//+ boopsi_new
 static PyObject *
 boopsi_new(PyTypeObject *type, PyObject *args)
 {
@@ -1108,24 +1078,21 @@ boopsi_new(PyTypeObject *type, PyObject *args)
 
     return (PyObject *)self;
 }
-//-
-//+ boopsi_traverse
+
 static int
 boopsi_traverse(PyBOOPSIObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->overloaded_dict);
     return 0;
 }
-//-
-//+ boopsi_clear
+
 static int
 boopsi_clear(PyBOOPSIObject *self)
 {
     Py_CLEAR(self->overloaded_dict);
     return 0;
 }
-//-
-//+ boopsi_dealloc
+
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
@@ -1141,8 +1108,7 @@ boopsi_dealloc(PyBOOPSIObject *self)
 
     ((PyObject *)self)->ob_type->tp_free((PyObject *)self);
 }
-//-
-//+ boopsi_richcompare
+
 static PyObject *
 boopsi_richcompare(PyObject *v, PyObject *w, int op)
 {
@@ -1163,8 +1129,7 @@ boopsi_richcompare(PyObject *v, PyObject *w, int op)
     Py_INCREF(ret);
     return ret;
 }
-//-
-//+ boopsi_repr
+
 static PyObject *
 boopsi_repr(PyBOOPSIObject *self)
 {
@@ -1176,22 +1141,19 @@ boopsi_repr(PyBOOPSIObject *self)
     else
         return PyString_FromFormat("<%s at %p, NULL object>", OBJ_TNAME(self), self);
 }
-//-
-//+ boopsi_nonzero
+
 static int
 boopsi_nonzero(PyBOOPSIObject *self)
 {
     return NULL != PyBOOPSIObject_GET_OBJECT(self);
 }
-//-
-//+ boopsi_get_object
+
 static PyObject *
 boopsi_get_object(PyBOOPSIObject *self)
 {
     return PyLong_FromVoidPtr(PyBOOPSIObject_GET_OBJECT(self));
 }
-//-
-//+ boopsi__dispose
+
 PyDoc_STRVAR(boopsi__dispose_doc,
 "_dispose() -> int\n\
 \n\
@@ -1218,8 +1180,7 @@ boopsi__dispose(PyBOOPSIObject *self)
 
     Py_RETURN_NONE;
 }
-//-
-//+ boopsi__loosed
+
 PyDoc_STRVAR(boopsi__loosed_doc,
 "_loosed(object) -> int\n\
 \n\
@@ -1237,8 +1198,7 @@ boopsi__loosed(PyBOOPSIObject *self)
 
     Py_RETURN_NONE;
 }
-//-
-//+ boopsi__addchild
+
 PyDoc_STRVAR(boopsi__addchild_doc,
 "_addchild(object) -> int\n\
 \n\
@@ -1310,8 +1270,7 @@ bye:
 
     return ret;
 }
-//-
-//+ boopsi__remchild
+
 PyDoc_STRVAR(boopsi__remchild_doc,
 "_remchild(object) -> int\n\
 \n\
@@ -1384,8 +1343,7 @@ bye:
 
     return ret;
 }
-//-
-//+ boopsi__create
+
 PyDoc_STRVAR(boopsi__create_doc,
 "_create(object) -> int\n\
 \n\
@@ -1585,8 +1543,7 @@ bye_err:
 
     return err;
 }
-//-
-//+ boopsi__get
+
 PyDoc_STRVAR(boopsi__get_doc,
 "_get(id) -> unsigned integer \n\
 \n\
@@ -1616,8 +1573,7 @@ boopsi__get(PyBOOPSIObject *self, PyObject *attr_o)
 
     return PyLong_FromUnsignedLong(value);
 }
-//-
-//+ boopsi__set
+
 PyDoc_STRVAR(boopsi__set_doc,
 "_set(attr, value) -> None\n\
 \n\
@@ -1655,8 +1611,7 @@ boopsi__set(PyBOOPSIObject *self, PyObject *args) {
 
     Py_RETURN_NONE;
 }
-//-
-//+ boopsi__do
+
 PyDoc_STRVAR(boopsi__do_doc,
 "_do(msg, *extra_args) -> long\n\
 \n\
@@ -1761,8 +1716,7 @@ boopsi__do(PyBOOPSIObject *self, PyObject *args) {
 
     return PyLong_FromUnsignedLong(result);
 }
-//-
-//+ boopsi__do1
+
 PyDoc_STRVAR(boopsi__do1_doc,
 "_do1(method, arg) -> int\n\
 \n\
@@ -1792,7 +1746,6 @@ boopsi__do1(PyBOOPSIObject *self, PyObject *args) {
 
     return PyLong_FromUnsignedLong(v1);
 }
-//-
 
 static PyGetSetDef boopsi_getseters[] = {
     {"_object", (getter)boopsi_get_object, NULL, "BOOPSI object address", NULL},
@@ -1838,12 +1791,10 @@ static PyTypeObject PyBOOPSIObject_Type = {
     tp_richcompare  : (richcmpfunc)boopsi_richcompare,
 };
 
-
 /*******************************************************************************************
 ** MUIObject_Type
 */
 
-//+ muiobject_new
 static PyObject *
 muiobject_new(PyTypeObject *type, PyObject *args)
 {
@@ -1862,8 +1813,7 @@ muiobject_new(PyTypeObject *type, PyObject *args)
 
     return NULL;
 }
-//-
-//+ muiobject_traverse
+
 static int
 muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 {
@@ -1875,8 +1825,7 @@ muiobject_traverse(PyMUIObject *self, visitproc visit, void *arg)
 
     return 0;
 }
-//-
-//+ muiobject_clear
+
 static int
 muiobject_clear(PyMUIObject *self)
 {
@@ -1894,16 +1843,14 @@ muiobject_clear(PyMUIObject *self)
 
     return 0;
 }
-//-
-//+ muiobject_dealloc
+
 static void
 muiobject_dealloc(PyMUIObject *self)
 {
     muiobject_clear(self);
     boopsi_dealloc((PyBOOPSIObject *)self);
 }
-//-
-//+ muiobject__nnset
+
 PyDoc_STRVAR(muiobject__nnset_doc,
 "_nnset(attr, value) -> None\n\
 \n\
@@ -1936,8 +1883,7 @@ muiobject__nnset(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__redraw
+
 PyDoc_STRVAR(muiobject__redraw_doc,
 "_redraw(flags) -> None\n\
 \n\
@@ -1965,8 +1911,7 @@ muiobject__redraw(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject__notify
+
 PyDoc_STRVAR(muiobject__notify_doc,
 "_notify(trigattr, trigvalue) -> None\n\
 \n\
@@ -2022,10 +1967,8 @@ muiobject__notify(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
 
 #ifdef WITH_PYCAIRO
-//+ muiobject_blit_cairo_context
 PyDoc_STRVAR(muiobject_blit_cairo_context_doc,
 "BlitCairoContext() -> None\n\
 \n\
@@ -2047,8 +1990,7 @@ muiobject_blit_cairo_context(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject_clip_cairo_paint_area
+
 PyDoc_STRVAR(muiobject_clip_cairo_paint_area_doc,
 "ClipCairoPaintArea() -> None\n\
 \n\
@@ -2078,8 +2020,7 @@ muiobject_clip_cairo_paint_area(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ muiobject_add_cairo_paint_area
+
 PyDoc_STRVAR(muiobject_add_cairo_paint_area_doc,
 "AddCairoPaintArea() -> None\n\
 \n\
@@ -2110,10 +2051,8 @@ muiobject_add_cairo_paint_area(PyMUIObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
 #endif
 
-//+ muiobject_get_data
 static PyObject *
 muiobject_get_data(PyMUIObject *self, void *closure)
 {
@@ -2138,8 +2077,7 @@ muiobject_get_data(PyMUIObject *self, void *closure)
 
     return PyInt_FromLong(data);
 }
-//-
-//+ muiobject_get_mbox
+
 static PyObject *
 muiobject_get_mbox(PyMUIObject *self, void *closure)
 {
@@ -2151,8 +2089,7 @@ muiobject_get_mbox(PyMUIObject *self, void *closure)
 
     return Py_BuildValue("HHHH", _mleft(obj), _mtop(obj), _mright(obj), _mbottom(obj));
 }
-//-
-//+ muiobject_get_sdim
+
 static PyObject *
 muiobject_get_sdim(PyMUIObject *self, void *closure)
 {
@@ -2174,8 +2111,7 @@ muiobject_get_sdim(PyMUIObject *self, void *closure)
     else
         return PyInt_FromLong(scr->Height);
 }
-//-
-//+ muiobject_get_srange
+
 static PyObject *
 muiobject_get_srange(PyMUIObject *self, void *closure)
 {
@@ -2197,6 +2133,7 @@ muiobject_get_srange(PyMUIObject *self, void *closure)
     else
         return PyInt_FromLong(scr->Height-1);
 }
+
 static PyObject *
 muiobject_get_drawbounds(PyMUIObject *self, void *closure)
 {
@@ -2218,6 +2155,7 @@ muiobject_get_drawbounds(PyMUIObject *self, void *closure)
                          MIN(r.MaxX-r.MinX+1, _mwidth(obj)),
                          MIN(r.MaxY-r.MinY+1, _mheight(obj)));
 }
+
 static PyObject *
 muiobject_get_rp(PyMUIObject *self, void *closure)
 {
@@ -2232,6 +2170,7 @@ muiobject_get_rp(PyMUIObject *self, void *closure)
 
     return (PyObject *)self->raster;
 }
+
 static PyObject *
 muiobject_get_font_ysize(PyMUIObject *self, void *closure)
 {
@@ -2246,8 +2185,8 @@ muiobject_get_font_ysize(PyMUIObject *self, void *closure)
             
     return Py_BuildValue("i", _font(obj)->tf_YSize);
 }
+
 #ifdef WITH_PYCAIRO
-//+ muiobject_get_cairo_context
 static PyObject *
 muiobject_get_cairo_context(PyMUIObject *self, void *closure)
 {
@@ -2330,8 +2269,7 @@ muiobject_get_cairo_context(PyMUIObject *self, void *closure)
 
     return self->pycairo_obj;
 }
-//-
-//+ muiobject_fill_cairo_context
+
 static PyObject *
 muiobject_fill_cairo_context(PyMUIObject *self)
 {
@@ -2350,7 +2288,6 @@ muiobject_fill_cairo_context(PyMUIObject *self)
 
     Py_RETURN_NONE;
 }
-//-
 #endif
 
 static PyGetSetDef muiobject_getseters[] = {
@@ -2410,7 +2347,6 @@ static PyTypeObject PyMUIObject_Type = {
 ** CHookObject_Type
 */
 
-//+ chook_new
 static PyObject *
 chook_new(PyTypeObject *type, PyObject *args)
 {
@@ -2447,24 +2383,21 @@ chook_new(PyTypeObject *type, PyObject *args)
 
     return NULL;
 }
-//-
-//+ chook_traverse
+
 static int
 chook_traverse(CHookObject *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->callable);
     return 0;
 }
-//-
-//+ chook_clear
+
 static int
 chook_clear(CHookObject *self)
 {
     Py_CLEAR(self->callable);
     return 0;
 }
-//-
-//+ chook_dealloc
+
 static void
 chook_dealloc(CHookObject *self)
 {
@@ -2472,7 +2405,6 @@ chook_dealloc(CHookObject *self)
     chook_clear(self);
     self->ob_type->tp_free((PyObject *)self);
 }
-//-
 
 static PyMemberDef chook_members[] = {
     {"address", T_ULONG, offsetof(CHookObject, hook), RO, NULL},
@@ -2578,7 +2510,7 @@ mmsg_getattro(PyMethodMsgObject *self, PyObject *attr)
 
     return o;
 }
-//-
+
 
 static struct PyMethodDef mmsg_methods[] = {
     {"_setup", (PyCFunction)mmsg__setup, METH_O, "PRIVATE. Don't call it."},
@@ -2606,7 +2538,6 @@ static PyTypeObject PyMethodMsgObject_Type = {
 ** EventHandlerObject_Type
 */
 
-//+ evthandler_traverse
 static int
 evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
 {
@@ -2615,8 +2546,8 @@ evthandler_traverse(PyEventHandlerObject *self, visitproc visit, void *arg)
     Py_VISIT(self->target);
     return 0;
 }
-//-
-//+ evthandler_clear
+
+
 static int
 evthandler_clear(PyEventHandlerObject *self)
 {
@@ -2637,16 +2568,14 @@ evthandler_clear(PyEventHandlerObject *self)
     Py_CLEAR(self->target);
     return 0;
 }
-//-
-//+ evthandler_dealloc
+
 static void
 evthandler_dealloc(PyEventHandlerObject *self)
 {
     evthandler_clear(self);
     self->ob_type->tp_free((PyObject *)self);
 }
-//-
-//+ evthandler_install
+
 static PyObject *
 evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
 {
@@ -2708,8 +2637,7 @@ evthandler_install(PyEventHandlerObject *self, PyObject *args, PyObject *kwds)
 
     Py_RETURN_NONE;
 }
-//-
-//+ evthandler_uninstall
+
 static PyObject *
 evthandler_uninstall(PyEventHandlerObject *self)
 {
@@ -2737,8 +2665,7 @@ evthandler_uninstall(PyEventHandlerObject *self)
 
     Py_RETURN_NONE;
 }
-//-
-//+ evthandler_readmsg
+
 static PyObject *
 evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
 {
@@ -2810,8 +2737,7 @@ evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
 
     Py_RETURN_NONE;
 }
-//-
-//+ evthandler_get_normtablet
+
 static PyObject *
 evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
 {
@@ -2820,7 +2746,7 @@ evthandler_get_normtablet(PyEventHandlerObject *self, void *closure)
     else
         return PyFloat_FromDouble((double)self->tabletdata.td_TabletY / self->tabletdata.td_RangeY);
 }
-//-
+
 static PyObject *
 evthandler_get_up(PyEventHandlerObject *self, void *closure)
 {
@@ -2926,15 +2852,13 @@ static PyTypeObject PyEventHandlerObject_Type = {
 ** RasterObject_Type
 */
 
-//+ raster_dealloc
 static void
 raster_dealloc(PyRasterObject *self)
 {
     self->rp = NULL;
     self->ob_type->tp_free((PyObject *)self);
 }
-//-
-//+ raster_blit8
+
 PyDoc_STRVAR(raster_blit8_doc,
 "Blit8(buffer, dst_x, dst_y, src_w, src_h, src_x=0, src_y=0)\n\
 \n\
@@ -2969,8 +2893,7 @@ raster_blit8(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ raster_scaled_blit8
+
 PyDoc_STRVAR(raster_scaled_blit8_doc,
 "ScaledBlit8(buffer, src_w, src_h, dst_x, dst_y, dst_w, dst_h)\n\
 \n\
@@ -3005,8 +2928,7 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ raster_scroll
+
 static PyObject *
 raster_scroll(PyRasterObject *self, PyObject *args)
 {
@@ -3024,15 +2946,13 @@ raster_scroll(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ raster_get_apen
+
 static PyObject *
 raster_get_apen(PyRasterObject *self, APTR closure)
 {
     return PyInt_FromLong(GetAPen(self->rp));
 }
-//-
-//+ raster_set_apen
+
 static int
 raster_set_apen(PyRasterObject *self, PyObject *value, APTR closure)
 {
@@ -3049,8 +2969,6 @@ raster_set_apen(PyRasterObject *self, PyObject *value, APTR closure)
     return 0;
 }
 
-//-
-//+ raster_rect
 static PyObject *
 raster_rect(PyRasterObject *self, PyObject *args)
 {
@@ -3078,8 +2996,7 @@ raster_rect(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ raster_move
+
 static PyObject *
 raster_move(PyRasterObject *self, PyObject *args)
 {
@@ -3097,8 +3014,7 @@ raster_move(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ raster_draw
+
 static PyObject *
 raster_draw(PyRasterObject *self, PyObject *args)
 {
@@ -3116,6 +3032,7 @@ raster_draw(PyRasterObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
+
 static PyObject *
 raster_text(PyRasterObject *self, PyObject *args)
 {
@@ -3171,7 +3088,6 @@ static PyTypeObject PyRasterObject_Type = {
 ** List of functions exported by this module reside here
 */
 
-//+ _muimaster_mainloop
 PyDoc_STRVAR(_muimaster_mainloop_doc,
 "mainloop(app) -> None.\n\
 \n\
@@ -3268,8 +3184,7 @@ _muimaster_mainloop(PyObject *self, PyObject *args)
     DPRINT("bye mainloop...\n");
     Py_RETURN_NONE;
 }
-//-
-//+ _muimaster_pyobjfromptr
+
 static PyObject *
 _muimaster_pyobjfromptr(PyObject *self, PyObject *args)
 {
@@ -3291,8 +3206,7 @@ _muimaster_pyobjfromptr(PyObject *self, PyObject *args)
     Py_INCREF(pyo);
     return pyo;
 }
-//-
-//+ _muimaster_ptr2pyboopsi
+
 static PyObject *
 _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
 {
@@ -3333,8 +3247,7 @@ _muimaster_ptr2pyboopsi(PyObject *self, PyObject *args)
 
     return pObj;
 }
-//-
-//+ _muimaster_ptr2pymui
+
 static PyObject *
 _muimaster_ptr2pymui(PyObject *self, PyObject *args)
 {
@@ -3384,8 +3297,7 @@ _muimaster_ptr2pymui(PyObject *self, PyObject *args)
 
     return pObj;
 }
-//-
-//+ _muimaster_getfilename
+
 static PyObject *
 _muimaster_getfilename(PyObject *self, PyObject *args)
 {
@@ -3433,8 +3345,7 @@ _muimaster_getfilename(PyObject *self, PyObject *args)
 
     return res;
 }
-//-
-//+ _muimaster_request
+
 static PyObject *
 _muimaster_request(PyObject *self, PyObject *args)
 {
@@ -3460,8 +3371,7 @@ _muimaster_request(PyObject *self, PyObject *args)
 
     return PyInt_FromLong(result);
 }
-//-
-//+ _muimaster_addclipping
+
 static PyObject *
 _muimaster_addclipping(PyObject *self, PyObject *args)
 {
@@ -3481,8 +3391,7 @@ _muimaster_addclipping(PyObject *self, PyObject *args)
     handle = MUI_AddClipping(muiRenderInfo(obj), x,y, w, h);
     return PyLong_FromVoidPtr(handle);
 }
-//-
-//+ _muimaster_removeclipping
+
 static PyObject *
 _muimaster_removeclipping(PyObject *self, PyObject *args)
 {
@@ -3501,8 +3410,7 @@ _muimaster_removeclipping(PyObject *self, PyObject *args)
 
     Py_RETURN_NONE;
 }
-//-
-//+ _muimaster_setwinpointer
+
 static PyObject *
 _muimaster_setwinpointer(PyObject *self, PyObject *args)
 {
@@ -3532,6 +3440,7 @@ _muimaster_setwinpointer(PyObject *self, PyObject *args)
     SetWindowPointer(win, WA_PointerType, type, TAG_DONE);
     Py_RETURN_NONE;
 }
+
 static PyObject *
 _muimaster_setwindowbox(PyObject *self, PyObject *args)
 {
@@ -3560,8 +3469,6 @@ _muimaster_setwindowbox(PyObject *self, PyObject *args)
     ChangeWindowBox(win, left, top, width, height);
     Py_RETURN_NONE;
 }
-//-
-
 
 /* module methods */
 static PyMethodDef _muimaster_methods[] = {
@@ -3578,12 +3485,10 @@ static PyMethodDef _muimaster_methods[] = {
     {NULL, NULL} /* Sentinel */
 };
 
-
 /*
 ** Public Functions
 */
 
-//+ PyMorphOS_TermModule
 void
 PyMorphOS_TermModule(void)
 {
@@ -3698,8 +3603,7 @@ PyMorphOS_TermModule(void)
 
     DPRINT("Bye\n");
 }
-//- PyMorphOS_CloseModule
-//+ all_ins
+
 static int
 all_ins(PyObject *m) {
     INSI(m, "VLatest", (long)MUIMASTER_VLATEST);
@@ -3708,11 +3612,10 @@ all_ins(PyObject *m) {
 
     return 0;
 }
-//- all_ins
 
-//+ INITFUNC()
 PyMODINIT_FUNC
-INITFUNC(void) {
+INITFUNC(void)
+{
     PyObject *m, *d;
 
     NEWLIST((struct List *)&gObjectList);
@@ -3804,6 +3707,5 @@ INITFUNC(void) {
     else
         DPRINT("Failed to create a global memory pool\n");
 }
-//-
 
 /* EOF */
