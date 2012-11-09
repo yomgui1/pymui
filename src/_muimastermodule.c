@@ -230,6 +230,8 @@ static ULONG Name##_Dispatcher(void) { struct IClass *cl=(struct IClass*)REG_A0;
 
 #define NODE_FLAG_MUI (1<<0)
 
+#define PYRASTERF_ALLOCATED (1<<0)
+
 enum {
     PYMUI_DATA_MLEFT  = 0,
     PYMUI_DATA_MRIGHT,
@@ -252,7 +254,8 @@ typedef struct ObjectNode_STRUCT {
 typedef struct PyRasterObject_STRUCT {
     PyObject_HEAD
 
-    struct RastPort *rp;
+    struct RastPort     *rp;
+    ULONG               flags; /* PYRASTERF_XXX */
 } PyRasterObject;
 
 typedef struct PyBOOPSIObject_STRUCT {
@@ -1096,7 +1099,7 @@ boopsi_clear(PyBOOPSIObject *self)
 static void
 boopsi_dealloc(PyBOOPSIObject *self)
 {
-    DPRINT("self=%p-'%s', bObj=%p\n", self, OBJ_TNAME_SAFE(self), PyBOOPSIObject_GET_OBJECT(self));
+    //dprintf("%s: self=%p-'%s', bObj=%p\n", __func__, self, OBJ_TNAME_SAFE(self), PyBOOPSIObject_GET_OBJECT(self));
 
     if (NULL != PyBOOPSIObject_GET_OBJECT(self))
         PyBOOPSIObject_DisposeObject(self);
@@ -1805,8 +1808,10 @@ muiobject_new(PyTypeObject *type, PyObject *args)
         self->pycairo_obj = NULL;
         self->cairo_data = NULL;
         self->raster = (PyRasterObject *)PyObject_New(PyRasterObject, &PyRasterObject_Type); /* NR */
-        if (NULL != self->raster)
+        if (NULL != self->raster) {
+            self->raster->flags = 0;
             return (PyObject *)self;
+        }
 
         Py_DECREF((PyObject *)self);
     }
@@ -2091,6 +2096,18 @@ muiobject_get_mbox(PyMUIObject *self, void *closure)
 }
 
 static PyObject *
+muiobject_get_mclip(PyMUIObject *self, void *closure)
+{
+    Object *obj;
+
+    obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
+    if (NULL == obj)
+        return NULL;
+
+    return Py_BuildValue("HHHH", _mleft(obj), _mtop(obj), _mwidth(obj), _mheight(obj));
+}
+
+static PyObject *
 muiobject_get_sdim(PyMUIObject *self, void *closure)
 {
     Object *obj;
@@ -2297,7 +2314,8 @@ static PyGetSetDef muiobject_getseters[] = {
     {"MBottom", (getter)muiobject_get_data, NULL, "_mbottom(obj)", (APTR) PYMUI_DATA_MBOTTOM},
     {"MWidth",  (getter)muiobject_get_data, NULL, "_mwidth(obj)",  (APTR) PYMUI_DATA_MWIDTH},
     {"MHeight", (getter)muiobject_get_data, NULL, "_mheight(obj)", (APTR) PYMUI_DATA_MHEIGHT},
-    {"MBox",    (getter)muiobject_get_mbox,    NULL, "4-Tuple of the bounded box object values", NULL},
+    {"MBox",    (getter)muiobject_get_mbox,    NULL, "4-Tuple of the bounded box object values (Left, Top, Right, Bottom)", NULL},
+    {"MClip",   (getter)muiobject_get_mclip,   NULL, "4-Tuple of the clipping object values (Left, Top, Width, Height)", NULL},
     {"SWidth",  (getter)muiobject_get_sdim,    NULL, "Screen Width",   (APTR) 0},
     {"SHeight", (getter)muiobject_get_sdim,    NULL, "Screen Height",  (APTR)~0},
     {"SRangeX", (getter)muiobject_get_srange,  NULL, "Screen X range", (APTR) 0},
@@ -2852,10 +2870,34 @@ static PyTypeObject PyEventHandlerObject_Type = {
 ** RasterObject_Type
 */
 
+static PyObject *
+raster_new(PyTypeObject *type, PyObject *args)
+{
+    PyRasterObject *self;
+    
+    self = (PyRasterObject *)type->tp_alloc(type, 0); /* NR */
+    if (self) {
+        self->rp = PyMem_Malloc(sizeof(*self->rp));
+        if (self->rp) {
+            InitRastPort(self->rp);
+            self->flags |= PYRASTERF_ALLOCATED;
+        } else {
+            Py_CLEAR(self);
+        }
+    }
+
+    return (PyObject *)self;
+}
+
 static void
 raster_dealloc(PyRasterObject *self)
 {
-    self->rp = NULL;
+    if (self->flags & PYRASTERF_ALLOCATED) {
+        if (self->rp->BitMap) {
+            FreeBitMap(self->rp->BitMap);
+        }
+        PyMem_Free(self->rp);
+    }
     self->ob_type->tp_free((PyObject *)self);
 }
 
@@ -2882,7 +2924,7 @@ raster_blit8(PyRasterObject *self, PyObject *args)
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s#kHHHH|HHI:Blit8", &buf, &buf_size, &stride,
+    if (!PyArg_ParseTuple(args, "s#kHHHH|HHI", &buf, &buf_size, &stride,
                           &dst_x, &dst_y, &src_w, &src_h, &src_x, &src_y, &use_alpha)) /* BR */
         return NULL;
 
@@ -2890,6 +2932,27 @@ raster_blit8(PyRasterObject *self, PyObject *args)
         WritePixelArrayAlpha(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, 0xffffffff);
     else
         WritePixelArray(buf, src_x, src_y, stride, self->rp, dst_x, dst_y, src_w, src_h, RECTFMT_ARGB);
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+raster_read8(PyRasterObject *self, PyObject *args)
+{
+    char *buf;
+    UWORD src_x, src_y, dst_x, dst_y, src_w=0, src_h=0;
+    unsigned int buf_size, stride;
+
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "s#kHHHH|HHI", &buf, &buf_size, &stride,
+                          &src_x, &src_y, &src_w, &src_h, &dst_x, &dst_y)) /* BR */
+        return NULL;
+
+    ReadPixelArray(buf, dst_x, dst_y, stride, self->rp, src_x, src_y, src_w, src_h, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
@@ -2912,7 +2975,7 @@ static PyObject *
 raster_scaled_blit8(PyRasterObject *self, PyObject *args)
 {
     char *buf;
-    UWORD src_w, src_h, dst_x, dst_y, dst_w, dst_h;
+    UWORD src_x, src_y, src_w, src_h, dst_x, dst_y, dst_w, dst_h;
     unsigned int buf_size, stride;
 
     if (NULL == self->rp) {
@@ -2920,11 +2983,11 @@ raster_scaled_blit8(PyRasterObject *self, PyObject *args)
         return NULL;
     }
 
-    if (!PyArg_ParseTuple(args, "s#kHHHHHH:ScaledBlit8", &buf, &buf_size, &stride,
-                          &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
+    if (!PyArg_ParseTuple(args, "s#kHHHHHHHH", &buf, &buf_size, &stride,
+                          &src_x, &src_y, &src_w, &src_h, &dst_x, &dst_y, &dst_w, &dst_h)) /* BR */
         return NULL;
 
-    ScalePixelArray(buf, src_w, src_h, stride, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_RGB);
+    ScalePixelArray(buf+src_y*stride+src_x*4, src_w, src_h, stride, self->rp, dst_x, dst_y, dst_w, dst_h, RECTFMT_ARGB);
 
     Py_RETURN_NONE;
 }
@@ -3053,6 +3116,101 @@ raster_text(PyRasterObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+static PyObject *
+raster_allocbm(PyRasterObject *self, PyObject *args)
+{
+    PyMUIObject *pym=NULL;
+    struct BitMap *friendbm=NULL;
+    ULONG w, h, d;
+    int target3d = 0;
+    
+    if (!(self->flags & PYRASTERF_ALLOCATED)) {
+        PyErr_SetString(PyExc_TypeError, "Works only with allocated Raster.");
+        return NULL;
+    }
+    
+    if (!PyArg_ParseTuple(args, "III|O!i", &w, &h, &d, &PyMUIObject_Type, &pym, &target3d)) /* BR */
+        return NULL;
+    
+    if (self->rp->BitMap)
+        FreeBitMap(self->rp->BitMap);
+
+    if (pym) {
+        Object *obj;
+        
+        obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pym);
+        if ((NULL != obj) && _screen(obj)) {
+            friendbm = (struct BitMap *)_screen(obj)->RastPort.BitMap;
+            d = GetBitMapAttr(_screen(obj)->RastPort.BitMap, BMA_DEPTH);
+        }
+    }
+
+    if (target3d)
+        target3d = BMF_3DTARGET;
+
+    self->rp->BitMap = AllocBitMap(w, h, d, BMF_DISPLAYABLE|BMF_CLEAR|BMF_MINPLANES|target3d, friendbm);
+    if (!self->rp->BitMap) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to allocate BitMap.");
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+raster_bltbitmaprastport(PyRasterObject *self, PyObject *args)
+{
+    PyRasterObject *pyrp;
+    WORD src_x=0, src_y=0, dst_x, dst_y, w, h;
+    int alpha;
+    
+    static struct TagItem tags[] = {
+            {.ti_Tag = BLTBMA_USESOURCEALPHA, .ti_Data = TRUE},
+            {.ti_Tag = BLTBMA_GLOBALALPHA, .ti_Data = 0xFFFFFFFF},
+            {.ti_Tag = TAG_END},
+    };
+
+    if (!(self->flags & PYRASTERF_ALLOCATED)) {
+        PyErr_SetString(PyExc_TypeError, "Works only with allocated Raster.");
+        return NULL;
+    }
+    
+    if (!self->rp->BitMap) {
+        PyErr_SetString(PyExc_TypeError, "No allocated BitMap.");
+        return NULL;
+    }
+
+    if (!PyArg_ParseTuple(args, "O!ihhhh|hh", &PyRasterObject_Type, &pyrp, &alpha, &dst_x, &dst_y, &w, &h, &src_x, &src_y)) /* BR */
+        return NULL;
+
+    if (!pyrp->rp) {
+        PyErr_SetString(PyExc_TypeError, "Not initialized destination Raster.");
+        return NULL;
+    }
+    
+    if (alpha)
+        BltBitMapRastPortAlpha(self->rp->BitMap, src_x, src_y, pyrp->rp, dst_x, dst_y, w, h, tags);
+    else
+        BltBitMapRastPort(self->rp->BitMap, src_x, src_y, pyrp->rp, dst_x, dst_y, w, h, ABC);
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *
+raster_as_long(PyRasterObject *self)
+{
+    if (NULL == self->rp) {
+        PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
+        return NULL;
+    }
+    
+    return PyLong_FromVoidPtr(self->rp); 
+}
+
+static PyNumberMethods raster_as_number = {
+    nb_long : (unaryfunc)raster_as_long,
+};
+
 static PyGetSetDef raster_getseters[] = {
     {"APen", (getter)raster_get_apen, (setter)raster_set_apen, "RastPort APen value", NULL},
     {NULL} /* sentinel */
@@ -3060,12 +3218,15 @@ static PyGetSetDef raster_getseters[] = {
 
 static struct PyMethodDef raster_methods[] = {
     {"Blit8",       (PyCFunction)raster_blit8,        METH_VARARGS, raster_blit8_doc},
+    {"Read8",       (PyCFunction)raster_read8,        METH_VARARGS, NULL},
     {"ScaledBlit8", (PyCFunction)raster_scaled_blit8, METH_VARARGS, raster_scaled_blit8_doc},
     {"Scroll",      (PyCFunction)raster_scroll,       METH_VARARGS, NULL},
     {"Rect",        (PyCFunction)raster_rect,         METH_VARARGS, NULL},
     {"Move",        (PyCFunction)raster_move,         METH_VARARGS, NULL},
     {"Draw",        (PyCFunction)raster_draw,         METH_VARARGS, NULL},
     {"Text",        (PyCFunction)raster_text,         METH_VARARGS, NULL},
+    {"AllocBitMap", (PyCFunction)raster_allocbm,      METH_VARARGS, NULL},
+    {"BltBitMapRastPort", (PyCFunction)raster_bltbitmaprastport, METH_VARARGS, NULL},
     {NULL} /* sentinel */
 };
 
@@ -3077,9 +3238,11 @@ static PyTypeObject PyRasterObject_Type = {
     tp_flags        : Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
     tp_doc          : "Raster Objects",
 
+    tp_new          : (newfunc)raster_new,
     tp_dealloc      : (destructor)raster_dealloc,
     tp_methods      : raster_methods,
     tp_getset       : raster_getseters,
+    tp_as_number    : &raster_as_number,
 };
 
 /*******************************************************************************************
@@ -3388,7 +3551,7 @@ _muimaster_addclipping(PyObject *self, PyObject *args)
     if (NULL == obj)
         return NULL;
 
-    handle = MUI_AddClipping(muiRenderInfo(obj), x,y, w, h);
+    handle = MUI_AddClipping(muiRenderInfo(obj), x, y, w, h);
     return PyLong_FromVoidPtr(handle);
 }
 
@@ -3662,6 +3825,7 @@ INITFUNC(void)
                                     ADD_TYPE(m, "PyMUIObject", &PyMUIObject_Type);
                                     ADD_TYPE(m, "_CHook", &CHookObject_Type);
                                     ADD_TYPE(m, "EventHandler", &PyEventHandlerObject_Type);
+                                    ADD_TYPE(m, "Raster", &PyRasterObject_Type);
 
                                     PyModule_AddObject(m, "_obj_dict", d);
                                     gBOOPSI_Objects_Dict = d;
