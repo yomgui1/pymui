@@ -33,11 +33,13 @@ class MyMCC(Rectangle):
         cr.stroke()
 
         cr.set_antialias(cairo.ANTIALIAS_DEFAULT)
-        cr.set_source_rgb(0,1,0)
-        cr.move_to(32, 32)
-        cr.text_path("Hello World")
-        cr.fill()
-        cr.stroke()
+        cr.set_font_size(24)
+        for i in range(9):
+            cr.set_source_rgb(i/8.,1.-i/8.,0)
+            cr.move_to(32+i*16, 32+i*24)
+            cr.text_path("Hello World")
+            cr.fill()
+            cr.stroke()
 
 
 o = MyMCC(InnerSpacing=0, FillArea=False)
