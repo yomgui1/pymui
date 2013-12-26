@@ -15,7 +15,7 @@ if with_cairo:
     libraries += ['cairo', 'pixman-1', 'ft2']
 
 setup(name = 'PyMUI',
-      version = '0.6.1',
+      version = '0.7.0',
       author='Guillaume Roguez',
       description = 'Python wrapper for the MUI library',
       url='http://www.yomgui.fr/yiki/doku.php/dev:pymui:start',
