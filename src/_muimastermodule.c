@@ -1,26 +1,21 @@
 /******************************************************************************
-Copyright (c) 2009,2010 Guillaume Roguez
+    Copyright(c) 2009-2014 Guillaume Roguez
 
-Permission is hereby granted, free of charge, to any person
-obtaining a copy of this software and associated documentation
-files (the "Software"), to deal in the Software without
-restriction, including without limitation the rights to use,
-copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following
-conditions:
+    This file is part of PyMUI.
 
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
+    PyMUI is free software: you can redistribute it and/or modify it under
+    the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
-OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
-HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
+    PyMUI is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with PyMUI. If not, see <http://www.gnu.org/licenses/>.
+
 ******************************************************************************/
 
 // Dev Notes (outdated):
@@ -984,7 +979,7 @@ mCheckPython(struct IClass *cl, Object *obj, Msg msg)
                                 callsuper = FALSE;
                                 result = msg_obj->mmsg_SuperResult;
                             } /* else callsuper = TRUE */
-                            
+
                             Py_DECREF(msg_obj);
                         }
                     }
@@ -2045,10 +2040,10 @@ muiobject_add_cairo_paint_area(PyMUIObject *self, PyObject *args)
 
     x2 = self->cairo_paint_area.x + self->cairo_paint_area.width;
     y2 = self->cairo_paint_area.y + self->cairo_paint_area.height;
-    
+
     self->cairo_paint_area.x = MIN(self->cairo_paint_area.x, clip.x);
     self->cairo_paint_area.y = MIN(self->cairo_paint_area.y, clip.y);
-    
+
     clip.x += clip.width;
     clip.y += clip.height;
     self->cairo_paint_area.width = MAX(x2, clip.x) - self->cairo_paint_area.x;
@@ -2196,10 +2191,10 @@ muiobject_get_font_ysize(PyMUIObject *self, void *closure)
     obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)self);
     if (NULL == obj)
         return NULL;
-    
+
     if (!_font(obj))
         Py_RETURN_NONE;
-            
+
     return Py_BuildValue("i", _font(obj)->tf_YSize);
 }
 
@@ -2740,7 +2735,7 @@ evthandler_readmsg(PyEventHandlerObject *self, PyMethodMsgObject *msg_obj)
                 Py_DECREF(o_tags);
                 return NULL;
             }
-            
+
             Py_DECREF(item);
         }
 
@@ -2874,7 +2869,7 @@ static PyObject *
 raster_new(PyTypeObject *type, PyObject *args)
 {
     PyRasterObject *self;
-    
+
     self = (PyRasterObject *)type->tp_alloc(type, 0); /* NR */
     if (self) {
         self->rp = PyMem_Malloc(sizeof(*self->rp));
@@ -3101,7 +3096,7 @@ raster_text(PyRasterObject *self, PyObject *args)
 {
     char *text;
     int length, x, y;
-    
+
     if (NULL == self->rp) {
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
@@ -3123,21 +3118,21 @@ raster_allocbm(PyRasterObject *self, PyObject *args)
     struct BitMap *friendbm=NULL;
     ULONG w, h, d;
     int target3d = 0;
-    
+
     if (!(self->flags & PYRASTERF_ALLOCATED)) {
         PyErr_SetString(PyExc_TypeError, "Works only with allocated Raster.");
         return NULL;
     }
-    
+
     if (!PyArg_ParseTuple(args, "III|O!i", &w, &h, &d, &PyMUIObject_Type, &pym, &target3d)) /* BR */
         return NULL;
-    
+
     if (self->rp->BitMap)
         FreeBitMap(self->rp->BitMap);
 
     if (pym) {
         Object *obj;
-        
+
         obj = PyBOOPSIObject_GetObject((PyBOOPSIObject *)pym);
         if ((NULL != obj) && _screen(obj)) {
             friendbm = (struct BitMap *)_screen(obj)->RastPort.BitMap;
@@ -3163,7 +3158,7 @@ raster_bltbitmaprastport(PyRasterObject *self, PyObject *args)
     PyRasterObject *pyrp;
     WORD src_x=0, src_y=0, dst_x, dst_y, w, h;
     int alpha;
-    
+
     static struct TagItem tags[] = {
             {.ti_Tag = BLTBMA_USESOURCEALPHA, .ti_Data = TRUE},
             {.ti_Tag = BLTBMA_GLOBALALPHA, .ti_Data = 0xFFFFFFFF},
@@ -3174,7 +3169,7 @@ raster_bltbitmaprastport(PyRasterObject *self, PyObject *args)
         PyErr_SetString(PyExc_TypeError, "Works only with allocated Raster.");
         return NULL;
     }
-    
+
     if (!self->rp->BitMap) {
         PyErr_SetString(PyExc_TypeError, "No allocated BitMap.");
         return NULL;
@@ -3187,7 +3182,7 @@ raster_bltbitmaprastport(PyRasterObject *self, PyObject *args)
         PyErr_SetString(PyExc_TypeError, "Not initialized destination Raster.");
         return NULL;
     }
-    
+
     if (alpha)
         BltBitMapRastPortAlpha(self->rp->BitMap, src_x, src_y, pyrp->rp, dst_x, dst_y, w, h, tags);
     else
@@ -3203,8 +3198,8 @@ raster_as_long(PyRasterObject *self)
         PyErr_SetString(PyExc_TypeError, "Uninitialized raster object.");
         return NULL;
     }
-    
-    return PyLong_FromVoidPtr(self->rp); 
+
+    return PyLong_FromVoidPtr(self->rp);
 }
 
 static PyNumberMethods raster_as_number = {

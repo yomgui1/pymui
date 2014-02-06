@@ -1,3 +1,23 @@
+###############################################################################
+#   Copyright(c) 2009-2014 Guillaume Roguez
+#
+#   This file is part of PyMUI.
+#
+#   PyMUI is free software: you can redistribute it and/or modify it under
+#   the terms of the GNU Lesser General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   PyMUI is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+#   GNU Lesser General Public License for more details.
+#
+#   You should have received a copy of the GNU Lesser General Public License
+#   along with PyMUI. If not, see <http://www.gnu.org/licenses/>.
+#
+###############################################################################
+
 ################################################################################
 #### PyMUI C types
 ################################################################################
@@ -144,7 +164,7 @@ class c_WORD(PyMUICSimpleType, _ct.c_short): pass
 class c_UBYTE(PyMUICSimpleType, _ct.c_ubyte): pass
 class c_BYTE(PyMUICSimpleType, _ct.c_byte): pass
 
-class c_CHAR(PyMUICSimpleType, _ct.c_char): 
+class c_CHAR(PyMUICSimpleType, _ct.c_char):
     def __long__(self):
         return ord(self.value)
 
@@ -287,7 +307,7 @@ class c_Message(PyMUICStructureType):
 ################################################################################
 #### Test-suite
 ################################################################################
-    
+
 if __name__ == '__main__':
     from sys import getrefcount as rc
     import gc

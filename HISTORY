@@ -1,3 +1,14 @@
+0.8:
+ - PyMUI is now LGPL licensed
+
+0.7:
+ - add more features to Raster and Window classes (for Gribouilly app)
+ - ft2 replace freetype
+ - fix getfilename()
+
+0.6.1:
+ - add more MCC support
+
 0.6:
  - Fixed a design issue at in core API causing memory leaks.
     => API change!
